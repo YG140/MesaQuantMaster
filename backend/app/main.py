@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
 from app.api.backtesting import router as backtesting_router
+from app.api.brokerages import router as brokerages_router
 from app.api.users import router as users_router
 from app.api.assets import router as assets_router
 from app.api.operations import router as operations_router
@@ -79,6 +80,8 @@ app.include_router(users_router)
 app.include_router(assets_router)
 
 app.include_router(operations_router)
+
+app.include_router(brokerages_router)
 
 app.include_router(portfolio_router)
 

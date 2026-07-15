@@ -7,6 +7,7 @@ from app.api.deps import get_current_active_user
 from app.core.database import get_db
 from app.models.user import User
 from app.repositories.asset_repository import AssetRepository
+from app.repositories.brokerage_repository import BrokerageRepository
 from app.repositories.operation_repository import OperationRepository
 from app.schemas.operation import (
     OperationCreate,
@@ -25,6 +26,7 @@ def get_service(db: Session) -> OperationService:
     return OperationService(
         operation_repository=OperationRepository(db),
         asset_repository=AssetRepository(db),
+        brokerage_repository=BrokerageRepository(db),
     )
 
 

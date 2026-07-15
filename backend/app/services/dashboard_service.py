@@ -20,12 +20,27 @@ class DashboardService:
         portfolio = self.portfolio_service.calculate(user_id)
 
         operations = self.operation_repository.list_by_user(user_id)
+        valuation_basis = PortfolioEngine.valuation_basis(portfolio.positions)
+        patrimonio_total = PortfolioEngine.total_valuation(
+            portfolio.positions,
+            valuation_basis or "invested_amount",
+        )
+        lucro_prejuizo = (
+            portfolio.total_profit
+            if valuation_basis == "market_value"
+            else Decimal("0")
+        )
+        rentabilidade = (
+            PortfolioEngine.profitability(portfolio.positions)
+            if valuation_basis == "market_value"
+            else Decimal("0")
+        )
 
         return DashboardSummary(
-            patrimonio_total=portfolio.total_market_value,
+            patrimonio_total=patrimonio_total,
             valor_investido=portfolio.total_invested,
-            lucro_prejuizo=portfolio.total_profit,
-            rentabilidade=PortfolioEngine.profitability(portfolio.positions),
+            lucro_prejuizo=lucro_prejuizo,
+            rentabilidade=rentabilidade,
             caixa=Decimal("0"),
             ativos=PortfolioEngine.total_positions(portfolio.positions),
             operacoes=len(operations),

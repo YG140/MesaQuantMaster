@@ -33,3 +33,10 @@
 - Centralizados os calculos financeiros de carteira no `PortfolioEngine`.
 - Services de portfolio, scanner, risco e dashboard foram simplificados para orquestracao.
 - Criado `AGENTS.md` com regras permanentes de arquitetura.
+# Unreleased
+
+- Adicionado frontend MVP em Streamlit consumindo a API FastAPI via HTTP.
+- Adicionados clientes HTTP centralizados para autenticacao, ativos, operacoes,
+  carteira/dashboard e backtesting.
+- Adicionados testes unitarios para formatadores e tratamento de erros do
+  cliente HTTP do frontend.

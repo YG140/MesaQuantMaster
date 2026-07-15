@@ -98,3 +98,16 @@ ruff check backend/app tests -> aprovado
 black --check backend/app tests -> aprovado
 pytest -> 44 testes coletados, 44 aprovados
 ```
+# Frontend MVP
+
+Validacoes previstas para a sprint:
+
+```powershell
+python -m compileall backend/app frontend
+python -m ruff check backend/app frontend tests
+python -m black --check backend/app frontend tests
+python -m pytest
+```
+
+Os testes unitarios do frontend usam `httpx.MockTransport` e nao dependem de
+internet nem da API real.

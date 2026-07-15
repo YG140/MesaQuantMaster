@@ -37,12 +37,15 @@ def test_get_portfolio_returns_consolidated_position(
     assert as_decimal(data["total_invested"]) == Decimal("203")
     assert as_decimal(data["total_market_value"]) == Decimal("0")
     assert as_decimal(data["total_profit"]) == Decimal("-203")
-    assert data["allocation"] == []
+    assert data["valuation_basis"] == "invested_amount"
+    assert as_decimal(data["allocation"][0]["allocation"]) == Decimal("100.00")
+    assert data["allocation"][0]["valuation_basis"] == "invested_amount"
 
     assert len(data["positions"]) == 1
     assert position["ticker"] == "PETR4"
     assert as_decimal(position["quantity"]) == Decimal("10")
     assert as_decimal(position["average_price"]) == Decimal("20.3")
     assert as_decimal(position["invested_amount"]) == Decimal("203")
+    assert as_decimal(position["allocation"]) == Decimal("100.00")
     assert "asset_id" in position
     assert "asset_name" in position

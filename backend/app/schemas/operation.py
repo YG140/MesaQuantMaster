@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class OperationBase(BaseModel):
     asset_id: UUID
+    brokerage_id: UUID | None = None
 
     operation_type: str = Field(..., max_length=30)
 
@@ -19,6 +20,7 @@ class OperationBase(BaseModel):
     taxes: Decimal = Decimal("0")
 
     notes: str | None = None
+    source: str | None = None
 
 
 class OperationCreate(OperationBase):
@@ -37,6 +39,7 @@ class OperationUpdate(BaseModel):
     taxes: Decimal | None = None
 
     notes: str | None = None
+    source: str | None = None
 
 
 class OperationResponse(OperationBase):

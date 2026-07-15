@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Generator
 from pathlib import Path
 
@@ -21,6 +22,10 @@ from app.main import app  # noqa: E402
 from app.models.asset import Asset  # noqa: E402
 from app.models.operation import Operation  # noqa: E402
 from app.models.user import User  # noqa: E402
+
+FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+if str(FRONTEND_DIR) not in sys.path:
+    sys.path.append(str(FRONTEND_DIR))
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +73,16 @@ def client(active_user: User) -> Generator[TestClient]:
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_current_active_user] = override_current_user
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def unauthenticated_client() -> Generator[TestClient]:
+    app.dependency_overrides.clear()
 
     with TestClient(app) as test_client:
         yield test_client

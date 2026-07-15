@@ -38,6 +38,12 @@ class Operation(Base):
         index=True,
     )
 
+    brokerage_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("brokerages.id"),
+        nullable=True,
+        index=True,
+    )
+
     operation_type: Mapped[str] = mapped_column(
         String(30),
         nullable=False,
@@ -74,6 +80,11 @@ class Operation(Base):
         nullable=True,
     )
 
+    source: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
@@ -87,3 +98,4 @@ class Operation(Base):
 
     user = relationship("User")
     asset = relationship("Asset")
+    brokerage = relationship("Brokerage")

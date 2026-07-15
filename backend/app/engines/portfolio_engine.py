@@ -141,7 +141,8 @@ class PortfolioEngine:
         cls,
         positions: list[PortfolioPosition],
     ) -> list[dict]:
-        total = cls.total_market_value(positions)
+        valuation_basis = cls.valuation_basis(positions)
+        total = cls.total_valuation(positions, valuation_basis)
 
         if total == 0:
             return []
@@ -149,15 +150,18 @@ class PortfolioEngine:
         allocation = []
 
         for position in positions:
-            market_value = position.market_value or Decimal("0")
-            weight = (market_value / total) * Decimal("100")
+            value = cls.position_valuation(position, valuation_basis)
+            weight = (value / total) * Decimal("100")
             rounded_weight = weight.quantize(Decimal("0.01"))
 
             allocation.append(
                 {
                     "asset_id": position.asset_id,
                     "ticker": position.ticker,
-                    "market_value": market_value,
+                    "market_value": position.market_value,
+                    "invested_amount": position.invested_amount,
+                    "valuation_value": value,
+                    "valuation_basis": valuation_basis,
                     "allocation": rounded_weight,
                     "weight": rounded_weight,
                 }
@@ -182,13 +186,55 @@ class PortfolioEngine:
     ) -> int:
         return len([position for position in positions if position.quantity > 0])
 
+    @staticmethod
+    def position_valuation(
+        position: PortfolioPosition,
+        valuation_basis: str,
+    ) -> Decimal:
+        if valuation_basis == "market_value":
+            return position.market_value or Decimal("0")
+        return position.invested_amount or Decimal("0")
+
+    @classmethod
+    def total_valuation(
+        cls,
+        positions: list[PortfolioPosition],
+        valuation_basis: str,
+    ) -> Decimal:
+        return sum(
+            (
+                cls.position_valuation(position, valuation_basis)
+                for position in positions
+            ),
+            Decimal("0"),
+        )
+
+    @classmethod
+    def valuation_basis(
+        cls,
+        positions: list[PortfolioPosition],
+    ) -> str | None:
+        market_total = cls.total_market_value(positions)
+        if market_total > 0:
+            return "market_value"
+
+        invested_total = cls.total_invested(positions)
+        if invested_total > 0:
+            return "invested_amount"
+
+        return None
+
     @classmethod
     def weight_positions(
         cls,
         positions: list[PortfolioPosition],
     ) -> list[PortfolioPosition]:
+        allocation = cls.allocation(positions)
         allocation_by_asset = {
-            item["asset_id"]: item["allocation"] for item in cls.allocation(positions)
+            item["asset_id"]: item["allocation"] for item in allocation
+        }
+        valuation_basis_by_asset = {
+            item["asset_id"]: item["valuation_basis"] for item in allocation
         }
 
         return [
@@ -202,6 +248,7 @@ class PortfolioEngine:
                         position.asset_id,
                         Decimal("0"),
                     ),
+                    "valuation_basis": valuation_basis_by_asset.get(position.asset_id),
                 }
             )
             for position in positions
@@ -220,5 +267,6 @@ class PortfolioEngine:
             total_profit=cls.total_profit(weighted_positions),
             profitability=cls.profitability(weighted_positions),
             allocation=cls.allocation(weighted_positions),
+            valuation_basis=cls.valuation_basis(weighted_positions),
             positions=weighted_positions,
         )

@@ -84,6 +84,38 @@ def test_single_buy_consolidates_position():
     assert summary.positions[0].quantity == Decimal("10")
     assert summary.positions[0].average_price == Decimal("20")
     assert summary.positions[0].invested_amount == Decimal("200")
+    assert summary.positions[0].allocation == Decimal("100.00")
+    assert summary.valuation_basis == "invested_amount"
+
+
+def test_single_position_without_quote_allocates_100_by_invested_amount():
+    asset = make_asset()
+    summary = calculate(
+        asset,
+        [make_operation(asset.id, "BUY", date(2026, 1, 1), "10", "20")],
+    )
+
+    assert summary.allocation[0]["allocation"] == Decimal("100.00")
+    assert summary.allocation[0]["valuation_basis"] == "invested_amount"
+
+
+def test_two_equal_positions_allocate_50_each_by_invested_amount():
+    asset_a = make_asset("AAA3")
+    asset_b = make_asset("BBB3")
+    positions = PortfolioEngine.calculate_positions(
+        operations=[
+            make_operation(asset_a.id, "BUY", date(2026, 1, 1), "10", "10"),
+            make_operation(asset_b.id, "BUY", date(2026, 1, 1), "5", "20"),
+        ],
+        assets_by_id={asset_a.id: asset_a, asset_b.id: asset_b},
+    )
+
+    summary = PortfolioEngine.summarize(positions)
+
+    assert {item["ticker"]: item["allocation"] for item in summary.allocation} == {
+        "AAA3": Decimal("50.00"),
+        "BBB3": Decimal("50.00"),
+    }
 
 
 def test_multiple_buys_recalculate_average_price_with_fees_and_taxes():

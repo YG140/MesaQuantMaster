@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
@@ -31,6 +32,8 @@ class PortfolioPosition(BaseModel):
 
     weight: Decimal | None = None
 
+    valuation_basis: str | None = None
+
 
 class PortfolioSummary(BaseModel):
     total_invested: Decimal
@@ -45,4 +48,48 @@ class PortfolioSummary(BaseModel):
 
     allocation: list[dict] = Field(default_factory=list)
 
+    valuation_basis: str | None = None
+
     positions: list[PortfolioPosition]
+
+
+class InvestmentCreate(BaseModel):
+    brokerage_id: UUID
+    ticker: str = Field(..., max_length=20)
+    name: str = Field(..., max_length=200)
+    asset_type: str = Field(..., max_length=50)
+    operation_date: date
+    quantity: Decimal
+    unit_price: Decimal
+    fees: Decimal = Decimal("0")
+    taxes: Decimal = Decimal("0")
+    notes: str | None = None
+
+
+class InvestmentCreateResponse(BaseModel):
+    asset_id: UUID
+    operation_id: UUID
+    brokerage_id: UUID
+    asset_created: bool
+
+
+class InitialPortfolioImportItem(BaseModel):
+    ticker: str = Field(..., max_length=20)
+    name: str | None = Field(default=None, max_length=200)
+    asset_type: str = Field(default="STOCK", max_length=50)
+    quantity: Decimal
+    average_price: Decimal
+    reference_date: date | None = None
+    notes: str | None = None
+
+
+class InitialPortfolioImport(BaseModel):
+    brokerage_id: UUID
+    positions: list[InitialPortfolioImportItem]
+
+
+class InitialPortfolioImportResponse(BaseModel):
+    assets_created: int
+    assets_reused: int
+    operations_created: int
+    brokerage_id: UUID
