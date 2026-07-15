@@ -1,0 +1,58 @@
+[project]
+name = "mesa-quant-master"
+version = "1.0.0"
+description = "Sistema profissional para gestão quantitativa de investimentos."
+readme = "README.md"
+requires-python = ">=3.13"
+
+dependencies = [
+    # API
+    "fastapi==0.116.1",
+    "uvicorn[standard]==0.35.0",
+
+    # Banco de Dados
+    "sqlalchemy==2.0.43",
+    "alembic==1.16.4",
+    "psycopg2-binary==2.9.10",
+
+    # Configurações
+    "pydantic==2.11.7",
+    "pydantic-settings==2.10.1",
+    "python-dotenv==1.1.1",
+
+    # Autenticação
+"python-jose[cryptography]==3.5.0",
+"pwdlib[argon2]>=0.3.0",
+"python-multipart>=0.0.20",
+
+    # Utilitários
+    "email-validator>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.1",
+    "pytest-cov==6.2.1",
+    "pytest-asyncio==1.1.0",
+    "httpx==0.28.1",
+    "ruff==0.12.4",
+    "black==25.1.0",
+    "mypy==1.17.1",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools]
+package-dir = {"" = "backend"}
+
+[tool.setuptools.packages.find]
+where = ["backend"]

@@ -1,0 +1,33 @@
+﻿# Environment files
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+backend/.venv/
+
+# Python caches and bytecode
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, lint and coverage artifacts
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+test_mesa_quant_master.db
+*.db-journal
+
+# Python packaging/build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE and local tooling
+.idea/
+Microsoft/
