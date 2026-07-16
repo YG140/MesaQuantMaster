@@ -1,6 +1,7 @@
 import importlib
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
 from app.api.backtesting import router as backtesting_router
@@ -46,6 +47,14 @@ Plataforma profissional para:
 • Backtesting
 • Integração com Corretoras
 """,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.FRONTEND_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
