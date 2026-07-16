@@ -21,10 +21,12 @@ from app.api.strategy import router as strategy_router
 
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.core.sqlite_compat import ensure_sqlite_compat_schema
 
 importlib.import_module("app.models")
 
 Base.metadata.create_all(bind=engine)
+ensure_sqlite_compat_schema(engine)
 
 app = FastAPI(
     title=settings.APP_NAME,
