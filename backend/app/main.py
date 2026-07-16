@@ -1,9 +1,11 @@
 import importlib
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
 from app.api.backtesting import router as backtesting_router
+from app.api.brokerages import router as brokerages_router
 from app.api.users import router as users_router
 from app.api.assets import router as assets_router
 from app.api.operations import router as operations_router
@@ -20,10 +22,12 @@ from app.api.strategy import router as strategy_router
 
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.core.sqlite_compat import ensure_sqlite_compat_schema
 
 importlib.import_module("app.models")
 
 Base.metadata.create_all(bind=engine)
+ensure_sqlite_compat_schema(engine)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -43,6 +47,14 @@ Plataforma profissional para:
 • Backtesting
 • Integração com Corretoras
 """,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.FRONTEND_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -79,6 +91,8 @@ app.include_router(users_router)
 app.include_router(assets_router)
 
 app.include_router(operations_router)
+
+app.include_router(brokerages_router)
 
 app.include_router(portfolio_router)
 

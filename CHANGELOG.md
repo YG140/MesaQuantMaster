@@ -33,3 +33,20 @@
 - Centralizados os calculos financeiros de carteira no `PortfolioEngine`.
 - Services de portfolio, scanner, risco e dashboard foram simplificados para orquestracao.
 - Criado `AGENTS.md` com regras permanentes de arquitetura.
+# Unreleased
+
+- Adicionado frontend MVP em Streamlit consumindo a API FastAPI via HTTP.
+- Adicionados clientes HTTP centralizados para autenticacao, ativos, operacoes,
+  carteira/dashboard e backtesting.
+- Adicionados testes unitarios para formatadores e tratamento de erros do
+  cliente HTTP do frontend.
+# Frontend React inicial
+
+- Criado `frontend_web/` com React, TypeScript, Vite, React Router e TanStack Query.
+- Definido React como frontend oficial; Streamlit permanece congelado como
+  prototipo temporario ate confirmacao de paridade funcional.
+- Adicionado cliente HTTP centralizado com JWT Bearer, timeout e tratamento de erros.
+- Implementadas telas de login, cadastro, dashboard, carteira, novo investimento,
+  importacao, analises, simulador historico e ativos.
+- Configurado CORS do FastAPI para origens explicitas do frontend web.
+- Adicionados testes Vitest/MSW e Playwright para o novo frontend.

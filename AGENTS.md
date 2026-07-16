@@ -75,3 +75,19 @@ Ao alterar o projeto:
 - remover codigo morto e imports nao utilizados
 - preferir compatibilidade e mudancas pequenas
 - executar testes existentes ao final
+
+## Frontend React
+
+O frontend web proprio vive em `frontend_web/`.
+
+Regras:
+
+- manter o Streamlit em `frontend/` congelado como prototipo temporario enquanto a migracao estiver ativa
+- novas funcionalidades de interface devem ser feitas em `frontend_web/`
+- remover o Streamlit somente apos confirmacao de paridade funcional
+- React acessa apenas endpoints FastAPI por HTTP/JSON
+- React nao acessa banco, repositories, engines ou providers diretamente
+- React nao replica calculos financeiros
+- autenticacao do React fica centralizada em AuthProvider/useAuth/ProtectedRoute
+- dados simulados de mercado devem ser informados claramente na interface
+- nao versionar `.env`, tokens, senhas, bancos locais, caches ou `node_modules`

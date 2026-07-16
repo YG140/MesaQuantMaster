@@ -22,11 +22,19 @@ __pycache__/
 htmlcov/
 test_mesa_quant_master.db
 *.db-journal
+*.log
 
 # Python packaging/build artifacts
 build/
 dist/
 *.egg-info/
+
+# Node / React frontend artifacts
+node_modules/
+frontend_web/node_modules/
+frontend_web/dist/
+frontend_web/test-results/
+frontend_web/playwright-report/
 
 # IDE and local tooling
 .idea/

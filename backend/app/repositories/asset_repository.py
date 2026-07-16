@@ -17,6 +17,11 @@ class AssetRepository:
         self.db.refresh(asset)
         return asset
 
+    def add(self, asset: Asset) -> Asset:
+        self.db.add(asset)
+        self.db.flush()
+        return asset
+
     def get_by_id(self, asset_id: UUID) -> Asset | None:
         return self.db.query(Asset).filter(Asset.id == asset_id).first()
 

@@ -17,6 +17,11 @@ class OperationRepository:
         self.db.refresh(operation)
         return operation
 
+    def add(self, operation: Operation) -> Operation:
+        self.db.add(operation)
+        self.db.flush()
+        return operation
+
     def get_by_id(self, operation_id: UUID) -> Operation | None:
         return self.db.query(Operation).filter(Operation.id == operation_id).first()
 

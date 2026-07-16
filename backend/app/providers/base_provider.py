@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from app.schemas.market import QuoteResponse
+from app.schemas.market import MarketAssetResponse, QuoteResponse
 
 
 class BaseMarketProvider(ABC):
@@ -11,6 +11,20 @@ class BaseMarketProvider(ABC):
     @abstractmethod
     def get_quote(self, ticker: str) -> QuoteResponse:
         """
-        Retorna a cotação atual de um ativo.
+        Retorna a cotacao atual de um ativo.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def search_assets(self, query: str, limit: int = 10) -> list[MarketAssetResponse]:
+        """
+        Pesquisa ativos por codigo ou nome.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_asset(self, ticker: str) -> MarketAssetResponse | None:
+        """
+        Retorna metadados consolidados de um ativo.
         """
         raise NotImplementedError
