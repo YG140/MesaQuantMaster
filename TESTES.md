@@ -1,5 +1,22 @@
 # Testes
 
+## Cobertura Criada na Sprint 11.0
+
+- `BrapiProvider` com `httpx.MockTransport` para pesquisa, cotacao unica,
+  cotacao em lote, perfil, ticker renomeado, resposta parcial, timeout,
+  conexao recusada, 401, 403, 404, 429, 5xx e JSON invalido.
+- `MarketService` com cache hit, cache expirado e garantia de que erros nao sao
+  armazenados.
+- API de mercado com busca por codigo e empresa, deduplicacao, perfil, cotacao
+  em lote, rate limit e indisponibilidade sem vazar detalhes tecnicos.
+- Carteira e Dashboard com cotacoes em lote, falha parcial, provider
+  indisponivel e ausencia de chamada N+1.
+- Frontend React com autocomplete normalizado, modo limitado, rate limit,
+  separacao entre cotacao e preco de compra, status parcial e botao de atualizar
+  cotacoes.
+- E2E verifica navegacao principal e ausencia de `BRAPI_API_KEY`/`VITE_BRAPI`
+  no bundle gerado.
+
 ## Como Executar
 
 ```powershell

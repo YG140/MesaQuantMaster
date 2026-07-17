@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
+import { CurrencyInput } from "../components/forms/CurrencyInput";
+import { DecimalInput } from "../components/forms/DecimalInput";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { CurrencyInput } from "../components/ui/CurrencyInput";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
 import { useAuth } from "../features/auth/useAuth";
@@ -73,7 +74,7 @@ export function ImportPortfolioPage() {
             <div className="import-row" key={`row-${index + 1}`}>
               <Input label="Ativo" value={row.code} onChange={(event) => updateRow(index, "code", event.target.value, rows, setRows)} />
               <Input label="Nome" value={row.name} onChange={(event) => updateRow(index, "name", event.target.value, rows, setRows)} />
-              <Input label="Quantidade atual" value={row.quantity} onChange={(event) => updateRow(index, "quantity", event.target.value, rows, setRows)} />
+              <DecimalInput label="Quantidade atual" value={row.quantity} onChange={(event) => updateRow(index, "quantity", event.target.value, rows, setRows)} />
               <CurrencyInput label="Preco medio" value={row.averagePrice} onChange={(event) => updateRow(index, "averagePrice", event.target.value, rows, setRows)} />
               <Input label="Data de referencia" type="date" value={row.referenceDate} onChange={(event) => updateRow(index, "referenceDate", event.target.value, rows, setRows)} />
             </div>

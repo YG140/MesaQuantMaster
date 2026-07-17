@@ -4,6 +4,8 @@ export type ApiErrorCode =
   | "FORBIDDEN"
   | "NOT_FOUND"
   | "CONFLICT"
+  | "RATE_LIMIT"
+  | "BAD_GATEWAY"
   | "VALIDATION"
   | "SERVER"
   | "NETWORK"
@@ -115,8 +117,10 @@ function toApiError(status: number, payload: unknown): ApiError {
     403: "FORBIDDEN",
     404: "NOT_FOUND",
     409: "CONFLICT",
+    429: "RATE_LIMIT",
     422: "VALIDATION",
     500: "SERVER",
+    502: "BAD_GATEWAY",
   };
   return new ApiError(message, status, codeByStatus[status] ?? "UNKNOWN", payload);
 }

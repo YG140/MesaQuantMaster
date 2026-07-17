@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DashboardSummary(BaseModel):
@@ -22,3 +22,9 @@ class DashboardSummary(BaseModel):
     proventos: Decimal
 
     ultima_atualizacao: datetime
+
+    market_data_status: str = "unavailable"
+
+    quote_updated_at: datetime | None = None
+
+    unpriced_symbols: list[str] = Field(default_factory=list)

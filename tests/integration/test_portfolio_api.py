@@ -36,8 +36,10 @@ def test_get_portfolio_returns_consolidated_position(
 
     assert as_decimal(data["total_invested"]) == Decimal("203")
     assert as_decimal(data["total_market_value"]) == Decimal("0")
-    assert as_decimal(data["total_profit"]) == Decimal("-203")
+    assert as_decimal(data["total_profit"]) == Decimal("0")
     assert data["valuation_basis"] == "invested_amount"
+    assert data["market_data_status"] == "unavailable"
+    assert data["unpriced_symbols"] == ["PETR4"]
     assert as_decimal(data["allocation"][0]["allocation"]) == Decimal("100.00")
     assert data["allocation"][0]["valuation_basis"] == "invested_amount"
 
@@ -46,6 +48,9 @@ def test_get_portfolio_returns_consolidated_position(
     assert as_decimal(position["quantity"]) == Decimal("10")
     assert as_decimal(position["average_price"]) == Decimal("20.3")
     assert as_decimal(position["invested_amount"]) == Decimal("203")
+    assert position["current_price"] is None
+    assert position["market_value"] is None
+    assert position["valuation_status"] == "unpriced"
     assert as_decimal(position["allocation"]) == Decimal("100.00")
     assert "asset_id" in position
     assert "asset_name" in position

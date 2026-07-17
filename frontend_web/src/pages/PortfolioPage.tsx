@@ -1,17 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { AllocationChart } from "../components/charts/AllocationChart";
 import { EmptyState } from "../components/feedback/EmptyState";
 import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
 import { Card } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
 import { MetricCard } from "../components/ui/MetricCard";
 import { useAuth } from "../features/auth/useAuth";
 import { endpoints } from "../services/endpoints/data";
-import { formatMoney, formatPercent, formatQuantityBR, toNumber } from "../utils/formatters";
+import { formatDateTimeBR, formatMoney, formatPercent, formatQuantityBR, toNumber } from "../utils/formatters";
 
 export function PortfolioPage() {
   const { token } = useAuth();
+  const queryClient = useQueryClient();
   const portfolio = useQuery({ queryKey: ["portfolio", token], queryFn: () => endpoints.portfolio(token!), enabled: Boolean(token) });
   const operations = useQuery({ queryKey: ["operations", token], queryFn: () => endpoints.operations(token!), enabled: Boolean(token) });
 
@@ -22,6 +24,9 @@ export function PortfolioPage() {
   const chartData = positions
     .map((item) => ({ name: item.ticker, value: toNumber(item.allocation ?? item.weight) ?? 0 }))
     .filter((item) => item.value > 0);
+  const refreshQuotes = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["portfolio", token] });
+  };
 
   return (
     <div className="page-stack">
@@ -31,10 +36,18 @@ export function PortfolioPage() {
           <p>Posicoes, alocacao e historico de movimentacoes.</p>
         </div>
         <div className="button-row">
+          <Button type="button" variant="secondary" disabled={portfolio.isFetching} onClick={() => void refreshQuotes()}>
+            {portfolio.isFetching ? "Atualizando..." : "Atualizar cotacoes"}
+          </Button>
           <Link className="button button-primary" to="/investimentos/novo">Adicionar investimento</Link>
           <Link className="button button-secondary" to="/carteira/importar">Importar carteira</Link>
         </div>
       </section>
+      <MarketDataNotice
+        status={portfolio.data?.market_data_status}
+        quoteUpdatedAt={portfolio.data?.quote_updated_at}
+        unpricedSymbols={portfolio.data?.unpriced_symbols ?? []}
+      />
       <div className="metric-grid">
         <MetricCard label="Total investido" value={formatMoney(portfolio.data?.total_invested)} />
         <MetricCard label="Valor de mercado" value={formatMoney(portfolio.data?.total_market_value)} />
@@ -73,4 +86,30 @@ export function PortfolioPage() {
       </Card>
     </div>
   );
+}
+
+function MarketDataNotice({
+  status,
+  quoteUpdatedAt,
+  unpricedSymbols,
+}: {
+  status: string | null | undefined;
+  quoteUpdatedAt: string | null | undefined;
+  unpricedSymbols: string[];
+}) {
+  if (status === "live") {
+    return <div className="success-box">Cotacoes atualizadas em {formatDateTimeBR(quoteUpdatedAt)}.</div>;
+  }
+  if (status === "partial") {
+    return (
+      <div className="warning-box">
+        Alguns ativos estao sem cotacao atual. Os demais valores foram atualizados.
+        {unpricedSymbols.length ? ` Sem cotacao: ${unpricedSymbols.join(", ")}.` : ""}
+      </div>
+    );
+  }
+  if (status === "unavailable") {
+    return <div className="warning-box">Nao foi possivel atualizar as cotacoes agora. Sua carteira continua disponivel.</div>;
+  }
+  return null;
 }

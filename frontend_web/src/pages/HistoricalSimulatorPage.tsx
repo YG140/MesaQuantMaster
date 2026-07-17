@@ -1,9 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { ErrorState } from "../components/feedback/ErrorState";
+import { CurrencyInput } from "../components/forms/CurrencyInput";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { CurrencyInput } from "../components/ui/CurrencyInput";
 import { Input } from "../components/ui/Input";
 import { MetricCard } from "../components/ui/MetricCard";
 import { useAuth } from "../features/auth/useAuth";

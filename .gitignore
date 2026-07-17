@@ -41,4 +41,5 @@ frontend_web/playwright-report/
 Microsoft/
 
 # Banco SQLite local de desenvolvimento
+/mesa_quant_master.db
 backend/mesa_quant_master.db
