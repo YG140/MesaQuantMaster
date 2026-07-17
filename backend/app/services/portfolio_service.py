@@ -14,6 +14,7 @@ from app.schemas.portfolio import (
     InvestmentCreateResponse,
     PortfolioSummary,
 )
+from app.services.market_service import MarketService
 
 
 class PortfolioService:
@@ -22,10 +23,12 @@ class PortfolioService:
         operation_repository: OperationRepository,
         asset_repository: AssetRepository,
         brokerage_repository: BrokerageRepository | None = None,
+        market_service: MarketService | None = None,
     ):
         self.operation_repository = operation_repository
         self.asset_repository = asset_repository
         self.brokerage_repository = brokerage_repository
+        self.market_service = market_service
 
     def calculate(self, user_id) -> PortfolioSummary:
         operations = self.operation_repository.list_by_user(user_id)
@@ -39,8 +42,24 @@ class PortfolioService:
             operations=operations,
             assets_by_id=assets_by_id,
         )
+        if positions:
+            quotes_by_symbol = self._get_quotes_by_symbol(
+                [position.ticker for position in positions]
+            )
+            positions = PortfolioEngine.apply_quotes(
+                positions=positions,
+                quotes_by_symbol=quotes_by_symbol,
+            )
 
         return PortfolioEngine.summarize(positions)
+
+    def _get_quotes_by_symbol(self, symbols: list[str]) -> dict:
+        try:
+            market_service = self.market_service or MarketService()
+            quotes = market_service.get_quotes(symbols)
+        except Exception:
+            return {}
+        return {quote.ticker.upper(): quote for quote in quotes.quotes}
 
     def add_investment(
         self, user_id, data: InvestmentCreate

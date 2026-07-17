@@ -1,4 +1,5 @@
 from datetime import date
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -34,6 +35,10 @@ class PortfolioPosition(BaseModel):
 
     valuation_basis: str | None = None
 
+    valuation_status: str = "unpriced"
+
+    quote_updated_at: datetime | None = None
+
 
 class PortfolioSummary(BaseModel):
     total_invested: Decimal
@@ -49,6 +54,12 @@ class PortfolioSummary(BaseModel):
     allocation: list[dict] = Field(default_factory=list)
 
     valuation_basis: str | None = None
+
+    market_data_status: str = "unavailable"
+
+    quote_updated_at: datetime | None = None
+
+    unpriced_symbols: list[str] = Field(default_factory=list)
 
     positions: list[PortfolioPosition]
 

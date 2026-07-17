@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { endpoints } from "../../services/endpoints/data";
-import { display } from "../../utils/formatters";
+import { display, formatMoney } from "../../utils/formatters";
 import type { MarketAsset } from "../../types/api";
 import { LoadingState } from "../feedback/LoadingState";
 
@@ -37,15 +37,26 @@ export function SearchAutocomplete({
         </div>
       </label>
       {search.isLoading ? <LoadingState label="Buscando ativos..." /> : null}
+      {search.error ? (
+        <p className="helper error-text">
+          {search.error instanceof Error
+            ? search.error.message
+            : "Nao foi possivel consultar o mercado agora."}
+        </p>
+      ) : null}
       {search.data?.length ? (
         <ul className="suggestions" role="listbox">
           {search.data.map((asset) => (
             <li key={asset.ticker}>
               <button type="button" onClick={() => onSelect(asset)}>
+                {asset.logo_url ? (
+                  <img className="asset-logo" src={asset.logo_url} alt="" />
+                ) : null}
                 <strong>{asset.ticker}</strong>
                 <span>
                   {display(asset.name)} - {display(asset.asset_type)} -{" "}
-                  {display(asset.exchange)} - {display(asset.country)}
+                  {display(asset.exchange)} - {display(asset.currency)} -{" "}
+                  {formatMoney(asset.current_price, asset.currency ?? "BRL")}
                 </span>
               </button>
             </li>

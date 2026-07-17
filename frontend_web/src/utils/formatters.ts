@@ -89,9 +89,11 @@ function decimalSeparatorIndex(value: string, hasComma: boolean, hasDot: boolean
   return lastDot;
 }
 export function normalizeDecimalForApi(value: NumericInput, fallback = "0") {
-  const amount = parseBrazilianNumber(value);
-  if (amount === null) return fallback;
-  return amount.toFixed(8).replace(/\.?(0+)$/, (match) => (match.startsWith(".") ? "" : ""));
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? trimDecimalString(String(value)) : fallback;
+  }
+  return decimalTextToApi(value) ?? fallback;
 }
 
 export function sanitizeBrazilianDecimalInput(value: string) {
@@ -101,8 +103,65 @@ export function sanitizeBrazilianDecimalInput(value: string) {
 }
 
 export function formatCurrencyInputBR(value: NumericInput) {
-  const amount = parseBrazilianNumber(value);
-  return amount === null ? "" : decimal2Formatter.format(amount);
+  return decimalToCurrencyDisplay(value);
+}
+
+export function digitsToCurrencyDisplay(digits: string, negative = false) {
+  const onlyDigits = digits.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  if (!onlyDigits) return "0,00";
+  const cents = onlyDigits.padStart(3, "0");
+  const integerPart = cents.slice(0, -2).replace(/^0+(?=\d)/, "") || "0";
+  const decimalPart = cents.slice(-2);
+  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${negative ? "-" : ""}${groupedInteger},${decimalPart}`;
+}
+
+export function decimalToCurrencyDisplay(value: NumericInput) {
+  const decimal = decimalTextToApi(value);
+  if (decimal === null) return "0,00";
+  const negative = decimal.startsWith("-");
+  const unsigned = negative ? decimal.slice(1) : decimal;
+  const [integerPart = "0", fractionPart = ""] = unsigned.split(".");
+  const cents = `${integerPart.replace(/^0+(?=\d)/, "") || "0"}${fractionPart.padEnd(2, "0").slice(0, 2)}`;
+  return digitsToCurrencyDisplay(cents, negative);
+}
+
+export function currencyDisplayToDecimal(value: string, options: { allowNegative?: boolean } = {}) {
+  return decimalTextToApi(value, options) ?? "0.00";
+}
+
+function decimalTextToApi(value: NumericInput, options: { allowNegative?: boolean } = {}): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const negative = options.allowNegative && raw.includes("-");
+  const cleaned = raw.replace(/\s/g, "").replace(/^R\$?/, "").replace(/[^\d,.-]/g, "");
+  const unsigned = cleaned.replace(/-/g, "");
+  if (!/\d/.test(unsigned)) return null;
+
+  const lastComma = unsigned.lastIndexOf(",");
+  const lastDot = unsigned.lastIndexOf(".");
+  const decimalIndex = decimalSeparatorIndex(unsigned, lastComma >= 0, lastDot >= 0, lastComma, lastDot);
+  let integerPart: string;
+  let fractionPart: string;
+
+  if (decimalIndex >= 0) {
+    integerPart = unsigned.slice(0, decimalIndex).replace(/[.,]/g, "") || "0";
+    fractionPart = unsigned.slice(decimalIndex + 1).replace(/[.,]/g, "");
+  } else {
+    integerPart = unsigned.replace(/[.,]/g, "") || "0";
+    fractionPart = "";
+  }
+
+  const normalizedInteger = integerPart.replace(/^0+(?=\d)/, "") || "0";
+  const normalizedFraction = fractionPart.replace(/0+$/, "");
+  const decimal = normalizedFraction ? `${normalizedInteger}.${normalizedFraction}` : normalizedInteger;
+  return `${negative ? "-" : ""}${trimDecimalString(decimal)}`;
+}
+
+function trimDecimalString(value: string) {
+  if (!value.includes(".")) return value;
+  return value.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
 }
 
 export function toNumber(value: NumericInput): number | null {
@@ -119,6 +178,16 @@ export function formatMoney(value: NumericInput, currency = "R$") {
 
 export function formatPercent(value: NumericInput) {
   return formatPercentBR(value, "Nao informado");
+}
+
+export function formatDateTimeBR(value: string | null | undefined) {
+  if (!value) return "Nao informado";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Nao informado";
+  return new Intl.DateTimeFormat(PT_BR, {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
 }
 
 export function display(value: NumericInput) {

@@ -80,6 +80,15 @@ def test_brokerages_are_isolated_by_user(db_session, active_user):
     assert service.list_by_user(active_user.id)[0].user_id == active_user.id
 
 
+def test_duplicate_brokerage_name_returns_error(client):
+    first = client.post("/brokerages", json={"name": "XP"})
+    second = client.post("/brokerages", json={"name": " xp "})
+
+    assert first.status_code == 201
+    assert second.status_code == 400
+    assert second.json()["detail"] == "Corretora ja cadastrada."
+
+
 def test_import_initial_portfolio_creates_many_positions(client):
     brokerage = client.post("/brokerages", json={"name": "Rico"}).json()
 

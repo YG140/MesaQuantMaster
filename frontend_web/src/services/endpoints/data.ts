@@ -8,6 +8,7 @@ import type {
   InitialPortfolioImport,
   InvestmentCreate,
   MarketAsset,
+  MarketQuote,
   Operation,
   PortfolioSummary,
 } from "../../types/api";
@@ -30,6 +31,11 @@ export const endpoints = {
     ),
   marketAsset: (token: string, code: string) =>
     apiRequest<MarketAsset>(`/market/assets/${encodeURIComponent(code)}`, { token }),
+  marketQuotes: (token: string, symbols: string[]) =>
+    apiRequest<{ quotes: MarketQuote[]; unavailable_symbols: string[] }>(
+      "/market/quotes",
+      { method: "POST", token, body: { symbols } },
+    ),
   addInvestment: (token: string, payload: InvestmentCreate) =>
     apiRequest<{ asset_id: string; operation_id: string; asset_created: boolean }>(
       "/portfolio/investments",

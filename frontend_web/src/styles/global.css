@@ -379,6 +379,10 @@ textarea {
   border: 1px solid rgba(245, 158, 11, 0.35);
 }
 
+.error-text {
+  color: #fecaca;
+}
+
 .asset-card {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -393,6 +397,28 @@ textarea {
   background: #08151a;
 }
 
+.brokerage-inline-form {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #08151a;
+}
+
+.asset-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: contain;
+  background: #eef6f7;
+}
+
+.asset-logo.large {
+  width: 56px;
+  height: 56px;
+}
+
 .suggestions {
   list-style: none;
   padding: 0;
@@ -404,6 +430,7 @@ textarea {
 .suggestions button {
   width: 100%;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   text-align: left;

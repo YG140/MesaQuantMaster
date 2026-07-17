@@ -39,6 +39,9 @@ export const handlers = [
       operacoes: 2,
       caixa: "0",
       proventos: "0",
+      market_data_status: "live",
+      quote_updated_at: "2026-07-16T18:30:00Z",
+      unpriced_symbols: [],
     }),
   ),
   http.get(`${api}/portfolio`, () =>
@@ -48,7 +51,10 @@ export const handlers = [
       total_profit: "0",
       profitability: "0",
       allocation: [{ ticker: "PETR4", allocation: "71.05" }],
-      valuation_basis: "invested_amount",
+      valuation_basis: "market_value",
+      market_data_status: "live",
+      quote_updated_at: "2026-07-16T18:30:00Z",
+      unpriced_symbols: [],
       positions: [
         {
           asset_id: "asset-1",
@@ -63,7 +69,9 @@ export const handlers = [
           unrealized_profit_percent: "3.55",
           allocation: "71.05",
           weight: "71.05",
-          valuation_basis: "invested_amount",
+          valuation_basis: "market_value",
+          valuation_status: "live",
+          quote_updated_at: "2026-07-16T18:30:00Z",
         },
       ],
     }),
@@ -95,20 +103,45 @@ export const handlers = [
       },
     ]),
   ),
+  http.post(`${api}/brokerages`, async ({ request }) => {
+    const body = await request.json() as { name?: string };
+    if (!body.name?.trim()) {
+      return HttpResponse.json({ detail: "Informe o nome da corretora." }, { status: 400 });
+    }
+    if (body.name.trim().toLowerCase() === "xp") {
+      return HttpResponse.json({ detail: "Corretora ja cadastrada." }, { status: 400 });
+    }
+    return HttpResponse.json({
+      id: "brokerage-new",
+      name: body.name.trim(),
+      user_id: "user-1",
+      is_active: true,
+      created_at: "2026-07-15T00:00:00",
+      updated_at: "2026-07-15T00:00:00",
+    }, { status: 201 });
+  }),
   http.get(`${api}/market/search`, ({ request }) => {
     const query = new URL(request.url).searchParams.get("q") ?? "";
     const assets = [
       {
         ticker: "PETR4",
+        symbol: "PETR4",
         name: "Petrobras PN",
+        long_name: "Petroleo Brasileiro S.A.",
         asset_type: "Acao",
+        asset_subtype: "PN",
         sector: "Energia",
+        subsector: "Petroleo",
         country: "Brasil",
         exchange: "B3",
         currency: "BRL",
+        logo_url: "https://example.com/petr4.png",
         current_price: "38.42",
-        last_updated: "2026-07-15T12:00:00",
+        change_percent: "1.10",
+        last_updated: "2026-07-16T18:30:00Z",
+        updated_at: "2026-07-16T18:30:00Z",
         provider: "BRAPI",
+        limited_mode: false,
       },
     ];
     return HttpResponse.json(query.toLowerCase().includes("petro") || query === "PETR4" ? assets : []);

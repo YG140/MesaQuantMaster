@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { AllocationChart } from "../components/charts/AllocationChart";
 import { EmptyState } from "../components/feedback/EmptyState";
@@ -10,7 +10,7 @@ import { MetricCard } from "../components/ui/MetricCard";
 import { useAuth } from "../features/auth/useAuth";
 import { endpoints } from "../services/endpoints/data";
 import type { PortfolioPosition, PortfolioSummary } from "../types/api";
-import { formatMoney, formatPercent, toNumber } from "../utils/formatters";
+import { formatDateTimeBR, formatMoney, formatPercent, toNumber } from "../utils/formatters";
 
 type ChartPoint = {
   name: string;
@@ -19,6 +19,7 @@ type ChartPoint = {
 
 export function DashboardPage() {
   const { token } = useAuth();
+  const queryClient = useQueryClient();
   const dashboard = useQuery({
     queryKey: ["dashboard", token],
     queryFn: () => endpoints.dashboard(token!),
@@ -65,15 +66,32 @@ export function DashboardPage() {
   const allocation = allocationPoints(portfolioData);
   const concentration = maxConcentration(positions, allocation);
   const operationsCount = dashboardData?.operations_count ?? dashboardData?.operacoes ?? 0;
+  const refreshing = dashboard.isFetching || portfolio.isFetching;
+  const refreshQuotes = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["dashboard", token] }),
+      queryClient.invalidateQueries({ queryKey: ["portfolio", token] }),
+    ]);
+  };
 
   return (
     <div className="page-stack">
-      <section className="page-heading">
-        <h2>Inicio</h2>
-        <p>Visao consolidada da sua carteira.</p>
+      <section className="page-heading actions">
+        <div>
+          <h2>Inicio</h2>
+          <p>Visao consolidada da sua carteira.</p>
+        </div>
+        <Button type="button" variant="secondary" disabled={refreshing} onClick={() => void refreshQuotes()}>
+          {refreshing ? "Atualizando..." : "Atualizar cotacoes"}
+        </Button>
       </section>
+      <MarketDataNotice
+        status={dashboardData?.market_data_status ?? portfolioData?.market_data_status}
+        quoteUpdatedAt={dashboardData?.quote_updated_at ?? portfolioData?.quote_updated_at}
+        unpricedSymbols={dashboardData?.unpriced_symbols ?? portfolioData?.unpriced_symbols ?? []}
+      />
       <div className="metric-grid">
-        <MetricCard label="Patrimonio" value={formatMoney(portfolioData?.total_market_value)} />
+        <MetricCard label="Patrimonio" value={formatMoney(dashboardData?.patrimonio_total ?? portfolioData?.total_market_value)} />
         <MetricCard label="Valor investido" value={formatMoney(portfolioData?.total_invested)} />
         <MetricCard label="Lucro ou prejuizo" value={formatMoney(portfolioData?.total_profit)} />
         <MetricCard label="Rentabilidade" value={formatPercent(portfolioData?.profitability)} />
@@ -96,6 +114,37 @@ export function DashboardPage() {
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function MarketDataNotice({
+  status,
+  quoteUpdatedAt,
+  unpricedSymbols,
+}: {
+  status: string | null | undefined;
+  quoteUpdatedAt: string | null | undefined;
+  unpricedSymbols: string[];
+}) {
+  if (status === "live") {
+    return (
+      <div className="success-box">
+        Cotacoes atualizadas em {formatDateTimeBR(quoteUpdatedAt)}.
+      </div>
+    );
+  }
+  if (status === "partial") {
+    return (
+      <div className="warning-box">
+        Alguns ativos estao sem cotacao atual. Os demais valores foram atualizados.
+        {unpricedSymbols.length ? ` Sem cotacao: ${unpricedSymbols.join(", ")}.` : ""}
+      </div>
+    );
+  }
+  return (
+    <div className="warning-box">
+      Nao foi possivel atualizar as cotacoes agora. Sua carteira continua disponivel.
     </div>
   );
 }

@@ -22,6 +22,12 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
+    BRAPI_BASE_URL: str = "https://brapi.dev"
+    BRAPI_API_KEY: str = ""
+    BRAPI_TIMEOUT_SECONDS: float = 10
+    BRAPI_QUOTE_CACHE_SECONDS: int = 60
+    BRAPI_SEARCH_CACHE_SECONDS: int = 600
+    BRAPI_PROFILE_CACHE_SECONDS: int = 3600
 
     @field_validator("FRONTEND_ORIGINS", mode="before")
     @classmethod

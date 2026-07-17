@@ -22,15 +22,43 @@ export type Brokerage = {
 
 export type MarketAsset = {
   ticker: string;
+  symbol?: string | null;
   name: string | null;
+  long_name?: string | null;
   asset_type: string | null;
+  asset_subtype?: string | null;
   sector: string | null;
+  subsector?: string | null;
   country: string | null;
   exchange: string | null;
   currency: string | null;
+  logo_url?: string | null;
   current_price: string | null;
+  change_value?: string | null;
+  change_percent?: string | null;
   last_updated: string | null;
+  updated_at?: string | null;
   provider: string;
+  cache_hit?: boolean;
+  limited_mode?: boolean;
+};
+
+export type MarketQuote = {
+  ticker: string;
+  symbol?: string | null;
+  requested_symbol?: string | null;
+  symbol_changed?: boolean;
+  current_price: string | null;
+  price?: string | null;
+  previous_close?: string | null;
+  change?: string | null;
+  change_value?: string | null;
+  change_percent?: string | null;
+  currency: string;
+  market_time?: string | null;
+  provider?: string | null;
+  cache_hit?: boolean;
+  limited_mode?: boolean;
 };
 
 export type PortfolioPosition = {
@@ -47,6 +75,8 @@ export type PortfolioPosition = {
   allocation: string | null;
   weight: string | null;
   valuation_basis: string | null;
+  valuation_status?: string | null;
+  quote_updated_at?: string | null;
 };
 
 export type PortfolioSummary = {
@@ -62,6 +92,9 @@ export type PortfolioSummary = {
     weight?: string | number | null;
   }>;
   valuation_basis?: string | null;
+  market_data_status?: "live" | "partial" | "unavailable" | string | null;
+  quote_updated_at?: string | null;
+  unpriced_symbols?: string[];
   positions?: PortfolioPosition[] | null;
 };
 
@@ -76,6 +109,9 @@ export type DashboardSummary = {
   caixa?: string | number | null;
   proventos?: string | number | null;
   ultima_atualizacao?: string | null;
+  market_data_status?: "live" | "partial" | "unavailable" | string | null;
+  quote_updated_at?: string | null;
+  unpriced_symbols?: string[];
 };
 
 export type Operation = {

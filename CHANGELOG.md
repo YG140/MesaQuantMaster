@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.11.0 - Dados reais de mercado
+
+- Substituido o catalogo simulado do `BrapiProvider` por chamadas HTTP reais aos
+  endpoints v2 da brapi.dev.
+- Adicionados `BRAPI_BASE_URL`, `BRAPI_API_KEY`, timeout e TTLs de cache ao
+  backend.
+- Criados cache em memoria, excecoes normalizadas de provider e cotacoes em
+  lote via `POST /market/quotes`.
+- Carteira e Dashboard passam a usar cotacoes em lote para precificacao,
+  mantendo posicoes sem cotacao disponiveis com status parcial/indisponivel.
+- Frontend React passou a exibir ultima cotacao disponivel, fonte, variacao,
+  modo limitado, falhas de rate limit/timeout e botao "Atualizar cotacoes".
+- Adicionados testes com mocks HTTP, sem dependencia de internet, e verificacao
+  de que a chave BRAPI nao aparece no bundle.
+
 ## v0.9.0 - Backtesting Engine
 
 - Criado `BacktestingEngine` puro para simulacao long-only de um unico ativo.

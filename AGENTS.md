@@ -19,6 +19,8 @@ Regras de responsabilidade:
 - Engine contem regras de negocio e calculos; nao acessa banco nem APIs externas.
 - Repository acessa banco de dados.
 - Provider acessa APIs externas.
+- Chaves de providers externos ficam apenas no backend e nunca devem ser
+  expostas em frontend, OpenAPI de resposta, logs ou bundle.
 
 ## Carteira
 
@@ -37,6 +39,9 @@ Todo calculo de carteira deve ficar nele, incluindo:
 - consolidacao de posicoes a partir das operacoes
 
 `PortfolioService` deve buscar operacoes e ativos, chamar `PortfolioEngine` e retornar o resultado.
+Quando houver cotacoes de mercado, `PortfolioService` deve busca-las em lote via
+`MarketService` e entregar os precos ao `PortfolioEngine`; nunca fazer N+1 por
+ativo e nunca chamar provider dentro do engine.
 
 ## Scanner
 
@@ -90,4 +95,6 @@ Regras:
 - React nao replica calculos financeiros
 - autenticacao do React fica centralizada em AuthProvider/useAuth/ProtectedRoute
 - dados simulados de mercado devem ser informados claramente na interface
+- dados reais de mercado devem sempre sair do backend; o frontend nunca conhece
+  URL externa da BRAPI nem `BRAPI_API_KEY`
 - nao versionar `.env`, tokens, senhas, bancos locais, caches ou `node_modules`

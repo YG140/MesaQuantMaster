@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.engines.portfolio_engine import PortfolioEngine
@@ -27,12 +27,12 @@ class DashboardService:
         )
         lucro_prejuizo = (
             portfolio.total_profit
-            if valuation_basis == "market_value"
+            if valuation_basis in {"market_value", "mixed"}
             else Decimal("0")
         )
         rentabilidade = (
             PortfolioEngine.profitability(portfolio.positions)
-            if valuation_basis == "market_value"
+            if valuation_basis in {"market_value", "mixed"}
             else Decimal("0")
         )
 
@@ -45,5 +45,8 @@ class DashboardService:
             ativos=PortfolioEngine.total_positions(portfolio.positions),
             operacoes=len(operations),
             proventos=Decimal("0"),
-            ultima_atualizacao=datetime.utcnow(),
+            ultima_atualizacao=datetime.now(timezone.utc),
+            market_data_status=portfolio.market_data_status,
+            quote_updated_at=portfolio.quote_updated_at,
+            unpriced_symbols=portfolio.unpriced_symbols,
         )

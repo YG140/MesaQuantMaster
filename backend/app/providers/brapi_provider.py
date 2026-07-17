@@ -1,131 +1,500 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
+import httpx
+
+from app.core.config import settings
 from app.providers.base_provider import BaseMarketProvider
-from app.schemas.market import MarketAssetResponse, QuoteResponse
-
-
-_ASSET_CATALOG = [
-    {
-        "ticker": "PETR4",
-        "name": "Petrobras PN",
-        "asset_type": "Acao",
-        "sector": "Energia",
-        "country": "Brasil",
-        "exchange": "B3",
-        "currency": "BRL",
-        "current_price": Decimal("38.42"),
-    },
-    {
-        "ticker": "PETR3",
-        "name": "Petrobras ON",
-        "asset_type": "Acao",
-        "sector": "Energia",
-        "country": "Brasil",
-        "exchange": "B3",
-        "currency": "BRL",
-        "current_price": Decimal("41.10"),
-    },
-    {
-        "ticker": "B3SA3",
-        "name": "B3",
-        "asset_type": "Acao",
-        "sector": "Financeiro",
-        "country": "Brasil",
-        "exchange": "B3",
-        "currency": "BRL",
-        "current_price": Decimal("12.50"),
-    },
-    {
-        "ticker": "ITUB4",
-        "name": "Itau Unibanco PN",
-        "asset_type": "Acao",
-        "sector": "Financeiro",
-        "country": "Brasil",
-        "exchange": "B3",
-        "currency": "BRL",
-        "current_price": Decimal("30.00"),
-    },
-]
+from app.providers.exceptions import (
+    MarketAssetNotFoundError,
+    MarketAuthenticationError,
+    MarketInvalidResponseError,
+    MarketPermissionError,
+    MarketProviderError,
+    MarketProviderUnavailableError,
+    MarketRateLimitError,
+)
+from app.schemas.market import MarketAssetResponse, MarketProfileResponse, QuoteResponse
+from app.services.market_normalizer import (
+    nested_get,
+    normalize_asset_subtype,
+    normalize_asset_type,
+    normalize_country,
+    unwrap_brapi_item,
+)
 
 
 class BrapiProvider(BaseMarketProvider):
     """
-    Implementacao inicial da BRAPI.
+    BRAPI provider backed by brapi.dev v2 endpoints.
 
-    Nesta sprint utilizamos dados simulados para manter os testes sem internet.
+    The API key is optional for local development, but no simulated market data is
+    returned when it is absent or when the provider fails.
     """
 
-    def get_quote(self, ticker: str) -> QuoteResponse:
-        asset = self.get_asset(ticker)
-        if asset is None:
-            return QuoteResponse(
-                ticker=ticker.upper(),
-                price=Decimal("0"),
-                current_price=None,
-                currency="BRL",
-                source="BRAPI",
-                provider="BRAPI",
-            )
+    provider_name = "BRAPI"
 
-        return QuoteResponse(
-            ticker=asset.ticker,
-            price=asset.current_price or Decimal("0"),
-            currency=asset.currency or "BRL",
-            market_time=asset.last_updated,
-            source=asset.provider,
-            name=asset.name,
-            asset_type=asset.asset_type,
-            sector=asset.sector,
-            country=asset.country,
-            exchange=asset.exchange,
-            current_price=asset.current_price,
-            last_updated=asset.last_updated,
-            provider=asset.provider,
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        timeout_seconds: float | None = None,
+        client: httpx.Client | None = None,
+    ):
+        self.base_url = (base_url or settings.BRAPI_BASE_URL).rstrip("/")
+        self.api_key = api_key if api_key is not None else settings.BRAPI_API_KEY
+        self.timeout_seconds = timeout_seconds or settings.BRAPI_TIMEOUT_SECONDS
+        self.limited_mode = not bool(self.api_key)
+        self._client = client or httpx.Client(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(self.timeout_seconds),
         )
 
     def search_assets(self, query: str, limit: int = 10) -> list[MarketAssetResponse]:
-        normalized_query = query.upper().strip()
-        if not normalized_query:
+        normalized_query = query.strip()
+        if len(normalized_query) < 2:
             return []
 
-        matches = []
-        seen = set()
-        for item in _ASSET_CATALOG:
-            ticker = item["ticker"]
-            name = item["name"]
-            if normalized_query in ticker or normalized_query in name.upper():
-                if ticker in seen:
-                    continue
-                seen.add(ticker)
-                matches.append(self._to_response(item))
-
-        matches.sort(
-            key=lambda asset: (
-                asset.ticker != normalized_query,
-                not asset.ticker.startswith(normalized_query),
-                asset.ticker,
-            )
+        payload = self._get_json(
+            "/api/v2/tickers",
+            params={"search": normalized_query, "limit": limit, "page": 1},
         )
-        return matches[:limit]
+        items = self._extract_items(payload)
+        results = [self._asset_from_ticker(item) for item in items]
+        return self._deduplicate_assets(results, normalized_query.upper())[:limit]
 
     def get_asset(self, ticker: str) -> MarketAssetResponse | None:
-        normalized_ticker = ticker.upper().strip()
-        for item in _ASSET_CATALOG:
-            if item["ticker"] == normalized_ticker:
-                return self._to_response(item)
-        return None
+        symbol = self._normalize_symbol(ticker)
+        try:
+            quote = self.get_quote(symbol)
+        except MarketAssetNotFoundError:
+            return None
 
-    def _to_response(self, item: dict) -> MarketAssetResponse:
+        profile: MarketProfileResponse | None = None
+        try:
+            profile = self.get_profile(symbol)
+        except MarketAssetNotFoundError:
+            profile = None
+        ticker_metadata = self._find_exact_asset(symbol)
+
         return MarketAssetResponse(
-            ticker=item["ticker"],
-            name=item.get("name"),
-            asset_type=item.get("asset_type"),
-            sector=item.get("sector"),
-            country=item.get("country"),
-            exchange=item.get("exchange"),
-            currency=item.get("currency"),
-            current_price=item.get("current_price"),
-            last_updated=datetime.now(timezone.utc),
-            provider="BRAPI",
+            ticker=quote.ticker,
+            symbol=quote.symbol or quote.ticker,
+            name=quote.name
+            or (profile.name if profile else None)
+            or (ticker_metadata.name if ticker_metadata else None),
+            long_name=quote.name
+            or (profile.name if profile else None)
+            or (ticker_metadata.long_name if ticker_metadata else None),
+            asset_type=quote.asset_type
+            or (ticker_metadata.asset_type if ticker_metadata else None),
+            asset_subtype=quote.asset_subtype
+            or (ticker_metadata.asset_subtype if ticker_metadata else None),
+            sector=(
+                (profile.sector if profile else None)
+                or quote.sector
+                or (ticker_metadata.sector if ticker_metadata else None)
+            ),
+            subsector=(
+                (profile.industry if profile else None)
+                or quote.subsector
+                or (ticker_metadata.subsector if ticker_metadata else None)
+            ),
+            country=quote.country
+            or (profile.country if profile else None)
+            or (ticker_metadata.country if ticker_metadata else None),
+            exchange=quote.exchange
+            or (ticker_metadata.exchange if ticker_metadata else None),
+            currency=quote.currency
+            or (ticker_metadata.currency if ticker_metadata else None),
+            logo_url=quote.logo_url
+            or (profile.logo_url if profile else None)
+            or (ticker_metadata.logo_url if ticker_metadata else None),
+            current_price=quote.current_price,
+            change_value=quote.change_value,
+            change_percent=quote.change_percent,
+            last_updated=quote.market_time,
+            updated_at=quote.market_time,
+            provider=self.provider_name,
+            limited_mode=self.limited_mode,
         )
+
+    def _find_exact_asset(self, symbol: str) -> MarketAssetResponse | None:
+        try:
+            assets = self.search_assets(symbol, limit=10)
+        except MarketProviderError:
+            return None
+        return next((asset for asset in assets if asset.ticker == symbol), None)
+
+    def get_quote(self, ticker: str) -> QuoteResponse:
+        quotes = self.get_quotes([ticker])
+        if not quotes:
+            raise MarketAssetNotFoundError("Ativo nao encontrado.")
+        return quotes[0]
+
+    def get_quotes(self, tickers: list[str]) -> list[QuoteResponse]:
+        symbols = self._normalize_symbols(tickers)
+        if not symbols:
+            return []
+
+        payload = self._get_json(
+            "/api/v2/stocks/quote",
+            params={"symbols": ",".join(symbols)},
+        )
+        items = self._extract_items(payload)
+        items = [unwrap_brapi_item(item) for item in items]
+        if not items:
+            raise MarketAssetNotFoundError("Ativo nao encontrado.")
+
+        requested_by_symbol = {symbol: symbol for symbol in symbols}
+        return [
+            self._quote_from_item(
+                item,
+                requested_symbol=requested_by_symbol.get(
+                    self._normalize_symbol(str(nested_get(item, "symbol") or "")),
+                    symbols[0] if len(symbols) == 1 else None,
+                ),
+            )
+            for item in items
+        ]
+
+    def get_profile(self, ticker: str) -> MarketProfileResponse:
+        symbol = self._normalize_symbol(ticker)
+        payload = self._get_json(
+            "/api/v2/stocks/profile",
+            params={"symbols": symbol},
+        )
+        items = self._extract_items(payload)
+        if not items:
+            raise MarketAssetNotFoundError("Ativo nao encontrado.")
+        return self._profile_from_item(items[0], requested_symbol=symbol)
+
+    def _get_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        try:
+            response = self._client.get(path, params=params, headers=headers)
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
+            raise MarketProviderUnavailableError(
+                "Provider de mercado indisponivel."
+            ) from exc
+
+        self._raise_for_status(response)
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise MarketInvalidResponseError(
+                "Resposta invalida do provider de mercado."
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise MarketInvalidResponseError(
+                "Resposta invalida do provider de mercado."
+            )
+
+        return payload
+
+    def _raise_for_status(self, response: httpx.Response) -> None:
+        status_code = response.status_code
+        if status_code < 400:
+            return
+        if status_code == 401:
+            raise MarketAuthenticationError("Token BRAPI ausente ou invalido.")
+        if status_code == 403:
+            raise MarketPermissionError("Recurso BRAPI nao permitido pelo plano.")
+        if status_code == 404:
+            raise MarketAssetNotFoundError("Ativo nao encontrado.")
+        if status_code == 429:
+            raise MarketRateLimitError("Limite de consultas ao mercado atingido.")
+        if status_code >= 500:
+            raise MarketProviderUnavailableError("Provider de mercado indisponivel.")
+        raise MarketInvalidResponseError("Resposta invalida do provider de mercado.")
+
+    @staticmethod
+    def _extract_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_items = (
+            payload.get("results")
+            or payload.get("stocks")
+            or payload.get("tickers")
+            or payload.get("data")
+            or []
+        )
+        if isinstance(raw_items, dict):
+            raw_items = [raw_items]
+        if not isinstance(raw_items, list):
+            raise MarketInvalidResponseError(
+                "Resposta invalida do provider de mercado."
+            )
+        return [unwrap_brapi_item(item) for item in raw_items if isinstance(item, dict)]
+
+    @classmethod
+    def _normalize_symbols(cls, tickers: list[str]) -> list[str]:
+        seen = set()
+        symbols = []
+        for ticker in tickers:
+            symbol = cls._normalize_symbol(ticker)
+            if symbol and symbol not in seen:
+                seen.add(symbol)
+                symbols.append(symbol)
+        return symbols
+
+    @staticmethod
+    def _normalize_symbol(ticker: str) -> str:
+        return ticker.upper().strip()
+
+    @classmethod
+    def _deduplicate_assets(
+        cls,
+        assets: list[MarketAssetResponse],
+        exact_symbol: str,
+    ) -> list[MarketAssetResponse]:
+        unique = {}
+        for asset in assets:
+            unique.setdefault(asset.ticker, asset)
+        return sorted(
+            unique.values(),
+            key=lambda asset: (
+                asset.ticker != exact_symbol,
+                not asset.ticker.startswith(exact_symbol),
+                asset.ticker,
+            ),
+        )
+
+    def _asset_from_ticker(self, item: dict[str, Any]) -> MarketAssetResponse:
+        item = unwrap_brapi_item(item)
+        symbol = self._normalize_symbol(
+            str(nested_get(item, "symbol", "ticker", "stock") or "")
+        )
+        if not symbol:
+            raise MarketInvalidResponseError("Ticker ausente na resposta da BRAPI.")
+
+        updated_at = self._parse_datetime(
+            item.get("updatedAt")
+            or item.get("updated_at")
+            or item.get("regularMarketTime")
+            or item.get("marketTime")
+        )
+
+        exchange = nested_get(item, "exchange", "stockExchange")
+        raw_type = nested_get(item, "type", "assetType")
+        raw_subtype = nested_get(
+            item,
+            "subType",
+            "subtype",
+            "category",
+            "class",
+            "assetClass",
+        )
+        change_value = self._decimal(
+            nested_get(item, "regularMarketChange", "change", "change_value")
+        )
+
+        return MarketAssetResponse(
+            ticker=symbol,
+            symbol=symbol,
+            name=nested_get(item, "name", "shortName"),
+            long_name=nested_get(item, "longName", "long_name"),
+            asset_type=normalize_asset_type(raw_type),
+            asset_subtype=normalize_asset_subtype(raw_subtype, raw_type),
+            exchange=exchange,
+            currency=nested_get(item, "currency"),
+            sector=nested_get(item, "sector", "sectorName", "summaryProfile.sector"),
+            subsector=nested_get(
+                item,
+                "subsector",
+                "subSector",
+                "industry",
+                "industryName",
+                "summaryProfile.industry",
+            ),
+            country=normalize_country(nested_get(item, "country"), exchange),
+            logo_url=nested_get(item, "logo", "logoUrl", "logourl"),
+            current_price=self._decimal(
+                nested_get(item, "regularMarketPrice", "currentPrice", "close")
+            ),
+            change_value=change_value,
+            change_percent=self._decimal(
+                nested_get(
+                    item,
+                    "regularMarketChangePercent",
+                    "changePercent",
+                )
+            ),
+            last_updated=updated_at,
+            updated_at=updated_at,
+            provider=self.provider_name,
+            limited_mode=self.limited_mode,
+        )
+
+    def _quote_from_item(
+        self,
+        item: dict[str, Any],
+        requested_symbol: str | None,
+    ) -> QuoteResponse:
+        item = unwrap_brapi_item(item)
+        symbol = self._normalize_symbol(
+            str(nested_get(item, "symbol", "ticker", "stock") or "")
+        )
+        if not symbol:
+            raise MarketInvalidResponseError("Ticker ausente na resposta da BRAPI.")
+
+        current_price = self._decimal(
+            nested_get(item, "regularMarketPrice", "currentPrice", "close", "price")
+        )
+        if current_price is None:
+            raise MarketInvalidResponseError("Cotacao ausente na resposta da BRAPI.")
+
+        market_time = self._parse_datetime(
+            nested_get(
+                item,
+                "regularMarketTime",
+                "marketTime",
+                "updatedAt",
+                "updated_at",
+            )
+        )
+        previous_close = self._decimal(
+            nested_get(
+                item,
+                "regularMarketPreviousClose",
+                "previousClose",
+                "previous_close",
+            )
+        )
+        open_price = self._decimal(nested_get(item, "regularMarketOpen", "open"))
+        day_high = self._decimal(nested_get(item, "regularMarketDayHigh", "dayHigh"))
+        day_low = self._decimal(nested_get(item, "regularMarketDayLow", "dayLow"))
+        raw_type = nested_get(item, "type", "assetType")
+        raw_subtype = nested_get(
+            item,
+            "subType",
+            "subtype",
+            "category",
+            "class",
+            "assetClass",
+        )
+        exchange = nested_get(item, "exchange", "stockExchange")
+        change_value = self._decimal(
+            nested_get(item, "regularMarketChange", "change", "change_value")
+        )
+
+        return QuoteResponse(
+            ticker=symbol,
+            symbol=symbol,
+            requested_symbol=requested_symbol or symbol,
+            symbol_changed=bool(requested_symbol and requested_symbol != symbol),
+            price=current_price,
+            current_price=current_price,
+            previous_close=previous_close,
+            open=open_price,
+            open_price=open_price,
+            high=day_high,
+            day_high=day_high,
+            low=day_low,
+            day_low=day_low,
+            change=change_value,
+            change_value=change_value,
+            change_percent=self._decimal(
+                nested_get(item, "regularMarketChangePercent", "changePercent")
+            ),
+            volume=self._int(nested_get(item, "regularMarketVolume", "volume")),
+            market_cap=self._decimal(nested_get(item, "marketCap", "market_cap")),
+            currency=str(nested_get(item, "currency") or "BRL"),
+            market_time=market_time,
+            source=self.provider_name,
+            name=nested_get(item, "shortName", "longName", "name"),
+            asset_type=normalize_asset_type(raw_type),
+            asset_subtype=normalize_asset_subtype(raw_subtype, raw_type),
+            sector=nested_get(item, "sector", "sectorName", "summaryProfile.sector"),
+            subsector=nested_get(
+                item,
+                "subsector",
+                "subSector",
+                "industry",
+                "industryName",
+                "summaryProfile.industry",
+            ),
+            country=normalize_country(nested_get(item, "country"), exchange),
+            exchange=exchange,
+            logo_url=nested_get(item, "logo", "logoUrl", "logourl"),
+            last_updated=market_time,
+            updated_at=market_time,
+            provider=self.provider_name,
+            limited_mode=self.limited_mode,
+        )
+
+    def _profile_from_item(
+        self,
+        item: dict[str, Any],
+        requested_symbol: str,
+    ) -> MarketProfileResponse:
+        item = unwrap_brapi_item(item)
+        symbol = self._normalize_symbol(
+            str(nested_get(item, "symbol", "ticker") or requested_symbol)
+        )
+        return MarketProfileResponse(
+            symbol=symbol,
+            name=nested_get(item, "name", "longName", "shortName"),
+            sector=nested_get(item, "sector", "sectorName", "summaryProfile.sector"),
+            industry=nested_get(
+                item,
+                "subsector",
+                "subSector",
+                "industry",
+                "industryName",
+                "summaryProfile.industry",
+            ),
+            country=normalize_country(
+                nested_get(item, "country"),
+                nested_get(item, "exchange", "stockExchange"),
+            ),
+            website=nested_get(item, "website"),
+            description=nested_get(
+                item, "description", "summaryProfile.longBusinessSummary"
+            ),
+            cnpj=nested_get(item, "cnpj"),
+            logo_url=nested_get(item, "logo", "logoUrl", "logourl"),
+            provider=self.provider_name,
+            limited_mode=self.limited_mode,
+        )
+
+    @staticmethod
+    def _decimal(value: Any) -> Decimal | None:
+        if value is None or value == "":
+            return None
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            return None
+
+    @staticmethod
+    def _int(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime | None:
+        if value is None or value == "":
+            return datetime.now(timezone.utc)
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, (int, float)):
+            timestamp = value / 1000 if value > 10_000_000_000 else value
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        if isinstance(value, str):
+            normalized = value.replace("Z", "+00:00")
+            try:
+                return datetime.fromisoformat(normalized)
+            except ValueError:
+                return datetime.now(timezone.utc)
+        return datetime.now(timezone.utc)

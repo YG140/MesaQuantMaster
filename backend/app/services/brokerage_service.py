@@ -17,7 +17,7 @@ class BrokerageService:
 
         existing = self.repository.get_by_user_and_name(user_id, normalized_name)
         if existing is not None:
-            return existing
+            raise ValueError("Corretora ja cadastrada.")
 
         return self.repository.create(
             Brokerage(
