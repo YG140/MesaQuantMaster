@@ -14,7 +14,7 @@ export function AllocationChart({ data }: { data: AllocationItem[] }) {
     return null;
   }
   return (
-    <div className="chart-box" aria-label="Grafico de alocacao">
+    <div className="chart-box" aria-label="Gráfico de alocação">
       <ResponsiveContainer width="100%" height={280}>
         <PieChart>
           <Pie data={validData} dataKey="value" nameKey="name" outerRadius={96} label>

@@ -34,7 +34,7 @@ export function DashboardPage() {
   if (dashboard.isLoading || portfolio.isLoading) return <LoadingState />;
   if (dashboard.error || portfolio.error) {
     return (
-      <ErrorState message="Nao foi possivel carregar o inicio. Verifique se a API esta disponivel.">
+      <ErrorState message="Não foi possível carregar o início. Verifique se a API está disponível.">
         <Button type="button" variant="secondary" onClick={() => void Promise.all([dashboard.refetch(), portfolio.refetch()])}>
           Tentar novamente
         </Button>
@@ -50,10 +50,10 @@ export function DashboardPage() {
     return (
       <div className="page-stack">
         <section className="page-heading">
-          <h2>Inicio</h2>
-          <p>Visao consolidada da sua carteira.</p>
+          <h2>Início</h2>
+          <p>Visão consolidada da sua carteira.</p>
         </section>
-        <EmptyState title="Sua carteira ainda esta vazia.">
+        <EmptyState title="Sua carteira ainda está vazia.">
           <div className="button-row">
             <Link className="button button-primary" to="/investimentos/novo">Adicionar investimento</Link>
             <Link className="button button-secondary" to="/carteira/importar">Importar carteira existente</Link>
@@ -78,11 +78,11 @@ export function DashboardPage() {
     <div className="page-stack">
       <section className="page-heading actions">
         <div>
-          <h2>Inicio</h2>
-          <p>Visao consolidada da sua carteira.</p>
+          <h2>Início</h2>
+          <p>Visão consolidada da sua carteira.</p>
         </div>
         <Button type="button" variant="secondary" disabled={refreshing} onClick={() => void refreshQuotes()}>
-          {refreshing ? "Atualizando..." : "Atualizar cotacoes"}
+          {refreshing ? "Atualizando..." : "Atualizar cotações"}
         </Button>
       </section>
       <MarketDataNotice
@@ -91,21 +91,21 @@ export function DashboardPage() {
         unpricedSymbols={dashboardData?.unpriced_symbols ?? portfolioData?.unpriced_symbols ?? []}
       />
       <div className="metric-grid">
-        <MetricCard label="Patrimonio" value={formatMoney(dashboardData?.patrimonio_total ?? portfolioData?.total_market_value)} />
+        <MetricCard label="Patrimônio" value={formatMoney(dashboardData?.patrimonio_total ?? portfolioData?.total_market_value)} />
         <MetricCard label="Valor investido" value={formatMoney(portfolioData?.total_invested)} />
-        <MetricCard label="Lucro ou prejuizo" value={formatMoney(portfolioData?.total_profit)} />
+        <MetricCard label="Lucro ou prejuízo" value={formatMoney(portfolioData?.total_profit)} />
         <MetricCard label="Rentabilidade" value={formatPercent(portfolioData?.profitability)} />
         <MetricCard label="Ativos" value={dashboardData?.ativos ?? positions.length} />
-        <MetricCard label="Movimentacoes" value={operationsCount} />
+        <MetricCard label="Movimentações" value={operationsCount} />
       </div>
       <div className="two-column">
-        <Card title="Alocacao">
-          {allocation.length ? <AllocationChart data={allocation} /> : <p>Ainda nao ha informacao de alocacao para exibir.</p>}
+        <Card title="Alocação">
+          {allocation.length ? <AllocationChart data={allocation} /> : <p>Ainda não há informação de alocação para exibir.</p>}
         </Card>
         <Card title="Resumo de risco">
           <div className="metric-grid compact">
-            <MetricCard label="Posicoes" value={positions.length} />
-            <MetricCard label="Maior concentracao" value={formatPercent(concentration)} />
+            <MetricCard label="Posições" value={positions.length} />
+            <MetricCard label="Maior concentração" value={formatPercent(concentration)} />
             <MetricCard
               label="Risco"
               value={concentration !== null && concentration >= 50 ? "Concentrado" : "Diversificado"}
@@ -130,21 +130,21 @@ function MarketDataNotice({
   if (status === "live") {
     return (
       <div className="success-box">
-        Cotacoes atualizadas em {formatDateTimeBR(quoteUpdatedAt)}.
+        Cotações atualizadas em {formatDateTimeBR(quoteUpdatedAt)}.
       </div>
     );
   }
   if (status === "partial") {
     return (
       <div className="warning-box">
-        Alguns ativos estao sem cotacao atual. Os demais valores foram atualizados.
-        {unpricedSymbols.length ? ` Sem cotacao: ${unpricedSymbols.join(", ")}.` : ""}
+        Alguns ativos estão sem cotação atual. Os demais valores foram atualizados.
+        {unpricedSymbols.length ? ` Sem cotação: ${unpricedSymbols.join(", ")}.` : ""}
       </div>
     );
   }
   return (
     <div className="warning-box">
-      Nao foi possivel atualizar as cotacoes agora. Sua carteira continua disponivel.
+      Não foi possível atualizar as cotações agora. Sua carteira continua disponível.
     </div>
   );
 }

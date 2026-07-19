@@ -23,7 +23,7 @@ describe("autenticacao", () => {
     await user.type(screen.getByLabelText("Senha"), "senha-correta");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
 
-    expect(await screen.findByText("Patrimonio", {}, { timeout: 10_000 })).toBeInTheDocument();
+    expect(await screen.findByText("Patrimônio", {}, { timeout: 10_000 })).toBeInTheDocument();
   });
 
   it("mostra erro no login invalido", async () => {
@@ -66,7 +66,7 @@ describe("autenticacao", () => {
     const user = userEvent.setup();
     sessionStorage.setItem("mesa_quant_session", "test-token");
     renderWithProviders(<AppRouter />, "/");
-    await screen.findByText("Patrimonio", {}, { timeout: 10_000 });
+    await screen.findByText("Patrimônio", {}, { timeout: 10_000 });
 
     await user.click(screen.getByRole("button", { name: "Sair" }));
     expect(await screen.findByRole("heading", { name: /Mesa Quant Master/i })).toBeInTheDocument();

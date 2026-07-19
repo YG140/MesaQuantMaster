@@ -26,7 +26,7 @@ export function LoginPage() {
     try {
       await auth.login(values.email, values.password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nao foi possivel entrar.");
+      setError(err instanceof Error ? err.message : "Não foi possível entrar.");
     }
   }
 
@@ -47,7 +47,7 @@ export function LoginPage() {
           </Button>
         </form>
         <p className="auth-link">
-          Ainda nao tem conta? <Link to="/cadastro">Criar conta</Link>
+          Ainda não tem conta? <Link to="/cadastro">Criar conta</Link>
         </p>
       </Card>
     </main>

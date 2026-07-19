@@ -57,13 +57,13 @@ export function ImportPortfolioPage() {
   });
 
   if (brokerages.isLoading) return <LoadingState />;
-  if (brokerages.error) return <ErrorState message="Nao foi possivel carregar corretoras." />;
+  if (brokerages.error) return <ErrorState message="Não foi possível carregar corretoras." />;
 
   return (
     <div className="page-stack">
-      <section className="page-heading"><h2>Importar carteira</h2><p>Registre posicoes atuais consolidadas.</p></section>
-      <Card title="Importacao">
-        {mutation.error ? <ErrorState message="Revise as linhas antes de confirmar a importacao." /> : null}
+      <section className="page-heading"><h2>Importar carteira</h2><p>Registre posições atuais consolidadas.</p></section>
+      <Card title="Importação">
+        {mutation.error ? <ErrorState message="Revise as linhas antes de confirmar a importação." /> : null}
         {mutation.isSuccess ? <div className="success-box">Carteira importada com sucesso.</div> : null}
         <Select label="Corretora" value={brokerageId} onChange={(event) => setBrokerageId(event.target.value)}>
           <option value="">Selecione</option>
@@ -75,16 +75,16 @@ export function ImportPortfolioPage() {
               <Input label="Ativo" value={row.code} onChange={(event) => updateRow(index, "code", event.target.value, rows, setRows)} />
               <Input label="Nome" value={row.name} onChange={(event) => updateRow(index, "name", event.target.value, rows, setRows)} />
               <DecimalInput label="Quantidade atual" value={row.quantity} onChange={(event) => updateRow(index, "quantity", event.target.value, rows, setRows)} />
-              <CurrencyInput label="Preco medio" value={row.averagePrice} onChange={(event) => updateRow(index, "averagePrice", event.target.value, rows, setRows)} />
+              <CurrencyInput label="Preço médio" value={row.averagePrice} onChange={(event) => updateRow(index, "averagePrice", event.target.value, rows, setRows)} />
               <Input label="Data de referencia" type="date" value={row.referenceDate} onChange={(event) => updateRow(index, "referenceDate", event.target.value, rows, setRows)} />
             </div>
           ))}
         </div>
         <div className="button-row">
           <Button type="button" variant="secondary" onClick={() => setRows((current) => [...current, emptyRow()])}>Adicionar linha</Button>
-          <Button type="button" disabled={!brokerageId || !validRows.length || invalidRows > 0 || mutation.isPending} onClick={() => mutation.mutate()}>Confirmar importacao</Button>
+          <Button type="button" disabled={!brokerageId || !validRows.length || invalidRows > 0 || mutation.isPending} onClick={() => mutation.mutate()}>Confirmar importação</Button>
         </div>
-        <p className="helper">{validRows.length} linhas validas. {invalidRows ? `${invalidRows} linhas com erro.` : "Nenhum erro por linha."}</p>
+        <p className="helper">{validRows.length} linhas válidas. {invalidRows ? `${invalidRows} linhas com erro.` : "Nenhum erro por linha."}</p>
       </Card>
     </div>
   );

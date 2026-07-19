@@ -4,6 +4,8 @@ import type {
   BacktestingRequest,
   BacktestingResult,
   Brokerage,
+  BuildPortfolioRequest,
+  BuildPortfolioResponse,
   DashboardSummary,
   InitialPortfolioImport,
   InvestmentCreate,
@@ -11,6 +13,9 @@ import type {
   MarketQuote,
   Operation,
   PortfolioSummary,
+  PortfolioIntelligence,
+  PortfolioPolicy,
+  PortfolioPolicyPayload,
 } from "../../types/api";
 
 export const endpoints = {
@@ -58,6 +63,22 @@ export const endpoints = {
   }) => apiRequest<Asset>("/assets", { method: "POST", token, body: payload }),
   runSimulation: (token: string, payload: BacktestingRequest) =>
     apiRequest<BacktestingResult>("/backtesting/run", {
+      method: "POST",
+      token,
+      body: payload,
+    }),
+  portfolioIntelligence: (token: string) =>
+    apiRequest<PortfolioIntelligence>("/intelligence/portfolio", { token }),
+  portfolioPolicy: (token: string) =>
+    apiRequest<PortfolioPolicy | null>("/intelligence/policy", { token }),
+  savePortfolioPolicy: (token: string, payload: PortfolioPolicyPayload) =>
+    apiRequest<PortfolioPolicy>("/intelligence/policy", {
+      method: "PUT",
+      token,
+      body: payload,
+    }),
+  buildPortfolio: (token: string, payload: BuildPortfolioRequest) =>
+    apiRequest<BuildPortfolioResponse>("/intelligence/build-portfolio", {
       method: "POST",
       token,
       body: payload,

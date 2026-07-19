@@ -33,14 +33,14 @@ export function AssetsPage() {
   });
 
   if (assets.isLoading) return <LoadingState />;
-  if (assets.error) return <ErrorState message="Nao foi possivel carregar ativos." />;
+  if (assets.error) return <ErrorState message="Não foi possível carregar ativos." />;
 
   return (
     <div className="page-stack">
       <section className="page-heading"><h2>Ativos</h2><p>Pesquisa e cadastro auxiliar de ativos.</p></section>
       <Card title="Pesquisar ativo">
         <SearchAutocomplete token={token!} query={query} onQueryChange={setQuery} onSelect={setAsset} />
-        {asset ? <div className="asset-card"><div><span>Codigo</span><strong>{asset.ticker}</strong></div><div><span>Nome</span><strong>{display(asset.name)}</strong></div><div><span>Preco atual demonstrativo</span><strong>{formatMoney(asset.current_price)}</strong></div></div> : null}
+        {asset ? <div className="asset-card"><div><span>Código</span><strong>{asset.ticker}</strong></div><div><span>Nome</span><strong>{display(asset.name)}</strong></div><div><span>Preço atual demonstrativo</span><strong>{formatMoney(asset.current_price)}</strong></div></div> : null}
         <Button type="button" disabled={!asset || createAsset.isPending} onClick={() => createAsset.mutate()}>Cadastrar ativo</Button>
       </Card>
       <Card title="Ativos cadastrados">

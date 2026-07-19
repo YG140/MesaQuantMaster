@@ -33,7 +33,7 @@ export function HistoricalSimulatorPage() {
     <div className="page-stack">
       <section className="page-heading"><h2>Simulador historico</h2><p>Simule como uma estrategia teria se comportado usando precos do passado. Isso nao preve resultados futuros.</p></section>
       <Card title="Parametros">
-        {mutation.error ? <ErrorState message="Revise os dados da simulacao." /> : null}
+        {mutation.error ? <ErrorState message="Revise os dados da simulação." /> : null}
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
           <CurrencyInput label="Capital inicial" value={initialCapital} onChange={(event) => setInitialCapital(event.target.value)} />
           <Input label="Janela momentum" value={windowSize} onChange={(event) => setWindowSize(event.target.value)} />
@@ -46,7 +46,7 @@ export function HistoricalSimulatorPage() {
       {mutation.data ? (
         <Card title="Resultado">
           <div className="metric-grid">
-            <MetricCard label="Patrimonio final" value={formatMoney(mutation.data.final_equity)} />
+            <MetricCard label="Patrimônio final" value={formatMoney(mutation.data.final_equity)} />
             <MetricCard label="Retorno" value={formatPercent(mutation.data.total_return_percent)} />
             <MetricCard label="Benchmark" value={formatPercent(mutation.data.benchmark_return_percent)} />
             <MetricCard label="Excesso de retorno" value={formatPercent(mutation.data.excess_return_percent)} />

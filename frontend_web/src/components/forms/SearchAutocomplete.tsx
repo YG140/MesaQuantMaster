@@ -41,7 +41,7 @@ export function SearchAutocomplete({
         <p className="helper error-text">
           {search.error instanceof Error
             ? search.error.message
-            : "Nao foi possivel consultar o mercado agora."}
+            : "Não foi possível consultar o mercado agora."}
         </p>
       ) : null}
       {search.data?.length ? (

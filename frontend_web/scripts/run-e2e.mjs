@@ -18,6 +18,10 @@ async function main() {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    env: {
+      ...process.env,
+      VITE_API_BASE_URL: url,
+    },
   });
 
   server.stdout.on("data", (chunk) => process.stdout.write(chunk));
@@ -64,6 +68,7 @@ function runPlaywright() {
       env: {
         ...process.env,
         PLAYWRIGHT_BASE_URL: url,
+        VITE_API_BASE_URL: url,
       },
     });
     child.on("close", (code) => resolve(code ?? 1));

@@ -71,6 +71,7 @@ class PortfolioEngine:
                     asset_id=asset.id,
                     ticker=asset.ticker,
                     asset_name=asset.name,
+                    asset_type=getattr(asset, "asset_type", None),
                     quantity=data["quantity"],
                     average_price=average_price,
                     invested_amount=data["invested"],

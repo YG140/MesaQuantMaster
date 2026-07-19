@@ -13,9 +13,9 @@ export function AnalysisPage() {
   const { token } = useAuth();
   const portfolio = useQuery({ queryKey: ["portfolio", token], queryFn: () => endpoints.portfolio(token!), enabled: Boolean(token) });
   if (portfolio.isLoading) return <LoadingState />;
-  if (portfolio.error) return <ErrorState message="Nao foi possivel carregar analises." />;
+  if (portfolio.error) return <ErrorState message="Não foi possível carregar análises." />;
   const positions = Array.isArray(portfolio.data?.positions) ? portfolio.data.positions : [];
-  if (!positions.length) return <EmptyState title="Sua carteira ainda esta vazia." />;
+  if (!positions.length) return <EmptyState title="Sua carteira ainda está vazia." />;
   const largest = positions.reduce((max, item) => (toNumber(item.allocation ?? item.weight) ?? 0) > (toNumber(max.allocation ?? max.weight) ?? 0) ? item : max, positions[0]);
   const largestAllocation = toNumber(largest.allocation ?? largest.weight);
   const chartData = positions
@@ -23,15 +23,15 @@ export function AnalysisPage() {
     .filter((item) => item.value > 0);
   return (
     <div className="page-stack">
-      <section className="page-heading"><h2>Analises</h2><p>Diversificacao, concentracao e distribuicao da carteira.</p></section>
+      <section className="page-heading"><h2>Análises</h2><p>Diversificação, concentração e distribuição da carteira.</p></section>
       <div className="metric-grid">
-        <MetricCard label="Posicoes analisadas" value={positions.length} />
+        <MetricCard label="Posições analisadas" value={positions.length} />
         <MetricCard label="Maior concentracao" value={formatPercent(largestAllocation)} />
         <MetricCard label="Ativo mais representativo" value={largest.ticker} />
-        <MetricCard label="Base da alocacao" value={portfolio.data?.valuation_basis ?? "Nao informado"} />
+        <MetricCard label="Base da alocação" value={portfolio.data?.valuation_basis ?? "Não informado"} />
       </div>
-      <Card title="Distribuicao">{chartData.length ? <AllocationChart data={chartData} /> : <p>Ainda nao ha informacao de alocacao para exibir.</p>}</Card>
-      <Card title="Alertas de risco"><p>{(largestAllocation ?? 0) >= 50 ? "Carteira concentrada em uma posicao relevante." : "Sem alertas criticos de concentracao."}</p></Card>
+      <Card title="Distribuição">{chartData.length ? <AllocationChart data={chartData} /> : <p>Ainda não há informação de alocação para exibir.</p>}</Card>
+      <Card title="Alertas de risco"><p>{(largestAllocation ?? 0) >= 50 ? "Carteira concentrada em uma posição relevante." : "Sem alertas críticos de concentração."}</p></Card>
     </div>
   );
 }
