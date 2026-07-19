@@ -56,15 +56,18 @@ describe("paginas autenticadas", () => {
     await login();
     expect(screen.getByText("Minha carteira")).toBeInTheDocument();
     expect(screen.getByText("Adicionar investimento")).toBeInTheDocument();
+    expect(screen.getByText("Inteligência de Carteira")).toBeInTheDocument();
+    expect(screen.queryByText("Analises")).not.toBeInTheDocument();
+    expect(screen.queryByText("Simulador historico")).not.toBeInTheDocument();
     expect(screen.queryByText("Operas")).not.toBeInTheDocument();
     expect(screen.queryByText("Backtesting")).not.toBeInTheDocument();
   });
 
   it("mantem a rota / protegida e renderiza dashboard com dados", async () => {
     await login("/");
-    expect(await screen.findByText("Patrimonio")).toBeInTheDocument();
+    expect(await screen.findByText("Patrimônio")).toBeInTheDocument();
     expect(screen.getByText("Resumo de risco")).toBeInTheDocument();
-    expect(screen.getByText(/Cotacoes atualizadas em/)).toBeInTheDocument();
+    expect(screen.getByText(/Cotações atualizadas em/)).toBeInTheDocument();
     expect(screen.getAllByText("R$ 521,00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("2").length).toBeGreaterThan(0);
   });
@@ -73,11 +76,11 @@ describe("paginas autenticadas", () => {
     mockEmptyPortfolio();
     await login();
 
-    expect(await screen.findByText("Sua carteira ainda esta vazia.")).toBeInTheDocument();
+    expect(await screen.findByText("Sua carteira ainda está vazia.")).toBeInTheDocument();
     expect(screen.getAllByText("Adicionar investimento").length).toBeGreaterThan(0);
     expect(screen.getByText("Importar carteira existente")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Grafico de alocacao")).not.toBeInTheDocument();
-    expect(screen.queryByText("Patrimonio")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Gráfico de alocação")).not.toBeInTheDocument();
+    expect(screen.queryByText("Patrimônio")).not.toBeInTheDocument();
   });
 
   it("renderiza metricas com valores numericos recebidos como string", async () => {
@@ -125,8 +128,8 @@ describe("paginas autenticadas", () => {
     );
 
     await login();
-    expect(await screen.findByText("Ainda nao ha informacao de alocacao para exibir.")).toBeInTheDocument();
-    expect(screen.getAllByText("Nao informado").length).toBeGreaterThan(0);
+    expect(await screen.findByText("Ainda não há informação de alocação para exibir.")).toBeInTheDocument();
+    expect(screen.getAllByText("Não informado").length).toBeGreaterThan(0);
     expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
   });
 
@@ -167,8 +170,8 @@ describe("paginas autenticadas", () => {
     );
 
     await login();
-    expect(await screen.findByText("Ainda nao ha informacao de alocacao para exibir.")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Grafico de alocacao")).not.toBeInTheDocument();
+    expect(await screen.findByText("Ainda não há informação de alocação para exibir.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Gráfico de alocação")).not.toBeInTheDocument();
   });
 
   it("nao renderiza grafico com dados invalidos", async () => {
@@ -208,8 +211,8 @@ describe("paginas autenticadas", () => {
     );
 
     await login();
-    expect(await screen.findByText("Ainda nao ha informacao de alocacao para exibir.")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Grafico de alocacao")).not.toBeInTheDocument();
+    expect(await screen.findByText("Ainda não há informação de alocação para exibir.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Gráfico de alocação")).not.toBeInTheDocument();
     expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
   });
 
@@ -217,7 +220,7 @@ describe("paginas autenticadas", () => {
     server.use(http.get(`${api}/dashboard`, () => HttpResponse.json({ detail: "Erro interno" }, { status: 500 })));
     await login();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Nao foi possivel carregar o inicio");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o início");
     expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
   });
 
@@ -225,7 +228,7 @@ describe("paginas autenticadas", () => {
     server.use(http.get(`${api}/dashboard`, () => HttpResponse.error()));
     await login();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Nao foi possivel carregar o inicio");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o início");
     expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
   });
 
@@ -257,14 +260,14 @@ describe("paginas autenticadas", () => {
     renderWithProviders(<AppRouter />, "/");
 
     await user.click(await screen.findByRole("button", { name: "Tentar novamente" }));
-    expect(await screen.findByText("Patrimonio")).toBeInTheDocument();
+    expect(await screen.findByText("Patrimônio")).toBeInTheDocument();
   });
 
   it("renderiza carteira e historico", async () => {
     const user = await login();
     await user.click(screen.getByText("Minha carteira"));
     expect(await screen.findByText("Petrobras PN")).toBeInTheDocument();
-    expect(screen.getByText("Historico de movimentacoes")).toBeInTheDocument();
+    expect(screen.getByText("Histórico de movimentações")).toBeInTheDocument();
   });
 
   it("pesquisa PETR4 e Petrobras, separa preco atual de preco de compra e salva", async () => {
@@ -272,13 +275,13 @@ describe("paginas autenticadas", () => {
     await user.click(screen.getByText("Adicionar investimento"));
     await user.type(await screen.findByLabelText("Ativo ou empresa"), "PETR4");
     await user.click(await screen.findByText("PETR4"));
-    expect(screen.getByText("Ultima cotacao disponivel")).toBeInTheDocument();
-    expect(screen.getByText("Variacao")).toBeInTheDocument();
+    expect(screen.getByText("Última cotação disponível")).toBeInTheDocument();
+    expect(screen.getByText("Variação")).toBeInTheDocument();
     expect(screen.queryByText("STOCK")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Preco de compra")).toBeInTheDocument();
+    expect(screen.getByLabelText("Preço de compra")).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Corretora"), "brokerage-1");
     await user.type(screen.getByLabelText("Quantidade"), "10");
-    await user.type(screen.getByLabelText("Preco de compra"), "37.10");
+    await user.type(screen.getByLabelText("Preço de compra"), "37.10");
     await user.click(screen.getByRole("button", { name: "Salvar investimento" }));
     expect(await screen.findByText("Investimento salvo com sucesso.")).toBeInTheDocument();
   });
@@ -288,7 +291,7 @@ describe("paginas autenticadas", () => {
     const user = await login();
     await user.click(screen.getByText("Adicionar investimento"));
 
-    expect(await screen.findByText("Voce ainda nao cadastrou uma corretora.")).toBeInTheDocument();
+    expect(await screen.findByText("Você ainda não cadastrou uma corretora.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "+ Cadastrar corretora" }));
     await user.click(screen.getByRole("button", { name: "Salvar corretora" }));
     expect(await screen.findByText("Informe o nome da corretora.")).toBeInTheDocument();
@@ -365,9 +368,9 @@ describe("paginas autenticadas", () => {
 
     await login();
 
-    expect(await screen.findByText(/Alguns ativos estao sem cotacao atual/)).toBeInTheDocument();
+    expect(await screen.findByText(/Alguns ativos estão sem cotação atual/)).toBeInTheDocument();
     expect(screen.getByText(/VALE3/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Atualizar cotacoes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Atualizar cotações" })).toBeInTheDocument();
   });
 
   it("mostra limite de consultas ao mercado no autocomplete", async () => {
@@ -392,10 +395,54 @@ describe("paginas autenticadas", () => {
     await user.selectOptions(await screen.findByLabelText("Corretora"), "brokerage-1");
     await user.type(screen.getByLabelText("Ativo"), "PETR4");
     await user.type(screen.getByLabelText("Quantidade atual"), "10");
-    await user.type(screen.getByLabelText("Preco medio"), "37.10");
-    expect(screen.getByText(/1 linhas validas/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Confirmar importacao" }));
+    await user.type(screen.getByLabelText("Preço médio"), "37.10");
+    expect(screen.getByText(/1 linhas válidas/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirmar importação" }));
     expect(await screen.findByText("Carteira importada com sucesso.")).toBeInTheDocument();
+  });
+
+  it("renderiza inteligencia de carteira com diagnostico e recomendacoes", async () => {
+    const user = await login();
+    await user.click(screen.getByText("Inteligência de Carteira"));
+
+    expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Minha estratégia" })).toBeInTheDocument();
+    expect(screen.getByText("Total da alocação: 100,00%")).toBeInTheDocument();
+    expect(screen.getAllByText("Minha estratégia").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Salvar estratégia" }));
+    expect(await screen.findByText("Estratégia salva com sucesso.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Visão geral" }));
+    expect(screen.getByText("Patrimônio atual")).toBeInTheDocument();
+    expect(screen.getByText("Carteira em formação")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Diagnóstico" }));
+    expect(screen.getByText("Pontuação da carteira")).toBeInTheDocument();
+    expect(screen.getAllByText("Há concentração relevante em uma única posição.").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: "Recomendações" }));
+    expect(screen.getByText("Ações - Reduzir exposição")).toBeInTheDocument();
+    expect(screen.getByText("Dados insuficientes")).toBeInTheDocument();
+    expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
+  });
+
+  it("monta carteira com dados determinísticos", async () => {
+    const user = await login("/inteligencia-carteira");
+    await user.click(await screen.findByRole("button", { name: "Montar carteira" }));
+    await user.click(screen.getByRole("button", { name: "Gerar resultado" }));
+
+    expect(await screen.findByText("Etapa 1 - Alocação entre classes")).toBeInTheDocument();
+    expect(screen.getAllByText("Ações").length).toBeGreaterThan(0);
+    expect(screen.getByText("R$ 6.000,00")).toBeInTheDocument();
+    expect(screen.getByText("R$ 4.000,00")).toBeInTheDocument();
+    expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
+  });
+
+  it("redireciona rotas antigas de analise para inteligencia de carteira", async () => {
+    await login("/analises");
+    expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
+
+    await login("/simulador-historico");
+    expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
   });
 
   it("formata valores monetarios e percentuais", () => {
@@ -407,7 +454,7 @@ describe("paginas autenticadas", () => {
     sessionStorage.setItem("mesa_quant_session", "test-token");
     renderWithProviders(<AppRouter />, "/");
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument(), { timeout: 10_000 });
-    expect(await screen.findByText("Patrimonio")).toBeInTheDocument();
+    expect(await screen.findByText("Patrimônio")).toBeInTheDocument();
     expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
   });
 });

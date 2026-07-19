@@ -65,6 +65,7 @@ export type PortfolioPosition = {
   asset_id: string;
   ticker: string;
   asset_name: string;
+  asset_type?: string | null;
   quantity: string;
   average_price: string;
   invested_amount: string;
@@ -196,4 +197,174 @@ export type BacktestingResult = {
     net_profit: string;
     return_percent: string;
   }>;
+};
+
+export type IndicatorStatus = {
+  name: string;
+  status: string;
+  value?: string | number | null;
+  explanation: string;
+};
+
+export type IntelligenceRecommendation = {
+  asset_id: string | null;
+  symbol: string;
+  name: string;
+  asset_class: string;
+  recommendation: string;
+  valuation_status: string;
+  confidence: string;
+  current_weight: string | number | null;
+  target_weight: string | number | null;
+  current_value: string | number | null;
+  suggested_value: string | number | null;
+  positive_reasons: string[];
+  risk_reasons: string[];
+  missing_data: string[];
+  indicators: IndicatorStatus[];
+  generated_at: string;
+  data_updated_at: string | null;
+};
+
+export type IntelligenceOverview = {
+  current_equity: string | number | null;
+  total_invested: string | number | null;
+  profit_loss: string | number | null;
+  profitability: string | number | null;
+  received_income: string | number | null;
+  investments_count: number;
+  fixed_income_percentage: string | number | null;
+  variable_income_percentage: string | number | null;
+  portfolio_classification: string;
+  risk_level: string;
+  data_quality: string;
+  last_updated_at: string | null;
+  market_data_status: string;
+  insufficient_data_message: string;
+};
+
+export type PortfolioDiagnosis = {
+  portfolio_score: string | number | null;
+  risk_level: string;
+  diversification_score: string | number | null;
+  concentration_score: string | number | null;
+  liquidity_score: string | number | null;
+  income_score: string | number | null;
+  data_quality: string;
+  warnings: string[];
+  strengths: string[];
+  weaknesses: string[];
+  class_allocations: ClassAllocationDiagnosis[];
+  unclassified_assets: string[];
+  calculated_at: string;
+};
+
+export type ClassAllocationDiagnosis = {
+  asset_class: string;
+  current_value: string | number | null;
+  current_percentage: string | number | null;
+  target_percentage: string | number | null;
+  minimum_percentage: string | number | null;
+  maximum_percentage: string | number | null;
+  difference_percentage: string | number | null;
+  status: string;
+};
+
+export type AllocationSuggestion = {
+  asset_class: string;
+  current_percentage: string | number;
+  target_percentage: string | number;
+  difference_percentage: string | number;
+  current_value: string | number;
+  target_value: string | number;
+  suggested_contribution: string | number;
+  missing_value: string | number;
+  excess_value: string | number;
+  status: string;
+  explanation: string;
+};
+
+export type Opportunity = {
+  asset_class: string;
+  classification: string;
+  indicators: IndicatorStatus[];
+  highlight_reason: string;
+  risks: string[];
+  confidence: string;
+  updated_at: string | null;
+};
+
+export type PortfolioIntelligence = {
+  overview: IntelligenceOverview;
+  diagnosis: PortfolioDiagnosis;
+  recommendations: IntelligenceRecommendation[];
+  rebalancing: AllocationSuggestion[];
+  opportunities: Opportunity[];
+  policy: PortfolioPolicy | null;
+  available_indicators: Record<string, string[]>;
+  unavailable_indicators: Record<string, string[]>;
+  generated_at: string;
+};
+
+export type PortfolioPolicyAllocation = {
+  id?: string | null;
+  asset_class: string;
+  target_percentage: string | number;
+  minimum_percentage: string | number;
+  maximum_percentage: string | number;
+  enabled: boolean;
+};
+
+export type PortfolioPolicy = {
+  id: string;
+  user_id: string;
+  name: string;
+  objective: string;
+  risk_profile: string;
+  investment_horizon: string;
+  monthly_contribution: string | number;
+  liquidity_need: string;
+  income_need: boolean;
+  emergency_reserve_months: number;
+  maximum_weight_per_asset: string | number;
+  maximum_weight_per_sector: string | number;
+  maximum_weight_per_issuer: string | number;
+  rebalance_tolerance: string | number;
+  allocations: PortfolioPolicyAllocation[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type PortfolioPolicyPayload = Omit<PortfolioPolicy, "id" | "user_id" | "created_at" | "updated_at">;
+
+export type BuildPortfolioRequest = {
+  available_amount: string;
+  objective: string;
+  horizon: string;
+  risk_profile: string;
+  needs_emergency_reserve: boolean;
+  emergency_months: number;
+  monthly_contribution: string;
+  needs_income: boolean;
+  needs_liquidity: boolean;
+  volatility_tolerance: string;
+  max_percentage_per_asset: string;
+  max_percentage_per_class: string;
+  max_percentage_per_sector: string;
+  allowed_classes: string[];
+};
+
+export type BuildPortfolioResponse = {
+  class_allocations: Array<{
+    asset_class: string;
+    percentage: string | number;
+    amount: string | number;
+    explanation: string;
+  }>;
+  selections: Array<{
+    asset_class: string;
+    message: string;
+    data_status: string;
+  }>;
+  generated_at: string;
 };

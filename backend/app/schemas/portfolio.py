@@ -13,6 +13,8 @@ class PortfolioPosition(BaseModel):
 
     asset_name: str
 
+    asset_type: str | None = None
+
     quantity: Decimal
 
     average_price: Decimal

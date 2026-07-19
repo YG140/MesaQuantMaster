@@ -348,6 +348,29 @@ textarea {
   color: white;
 }
 
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tabs button.active,
+.tabs button:hover {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
 .state {
   padding: var(--space-5);
 }
@@ -404,6 +427,24 @@ textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: #08151a;
+}
+
+.class-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.class-grid label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+}
+
+.class-grid input {
+  width: auto;
 }
 
 .asset-logo {

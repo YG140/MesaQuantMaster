@@ -18,7 +18,7 @@ export function PortfolioPage() {
   const operations = useQuery({ queryKey: ["operations", token], queryFn: () => endpoints.operations(token!), enabled: Boolean(token) });
 
   if (portfolio.isLoading || operations.isLoading) return <LoadingState />;
-  if (portfolio.error || operations.error) return <ErrorState message="Nao foi possivel carregar a carteira." />;
+  if (portfolio.error || operations.error) return <ErrorState message="Não foi possível carregar a carteira." />;
 
   const positions = Array.isArray(portfolio.data?.positions) ? portfolio.data.positions : [];
   const chartData = positions
@@ -33,11 +33,11 @@ export function PortfolioPage() {
       <section className="page-heading actions">
         <div>
           <h2>Minha carteira</h2>
-          <p>Posicoes, alocacao e historico de movimentacoes.</p>
+          <p>Posições, alocação e histórico de movimentações.</p>
         </div>
         <div className="button-row">
           <Button type="button" variant="secondary" disabled={portfolio.isFetching} onClick={() => void refreshQuotes()}>
-            {portfolio.isFetching ? "Atualizando..." : "Atualizar cotacoes"}
+            {portfolio.isFetching ? "Atualizando..." : "Atualizar cotações"}
           </Button>
           <Link className="button button-primary" to="/investimentos/novo">Adicionar investimento</Link>
           <Link className="button button-secondary" to="/carteira/importar">Importar carteira</Link>
@@ -51,19 +51,19 @@ export function PortfolioPage() {
       <div className="metric-grid">
         <MetricCard label="Total investido" value={formatMoney(portfolio.data?.total_invested)} />
         <MetricCard label="Valor de mercado" value={formatMoney(portfolio.data?.total_market_value)} />
-        <MetricCard label="Lucro ou prejuizo" value={formatMoney(portfolio.data?.total_profit)} />
+        <MetricCard label="Lucro ou prejuízo" value={formatMoney(portfolio.data?.total_profit)} />
         <MetricCard label="Rentabilidade" value={formatPercent(portfolio.data?.profitability)} />
       </div>
       {!positions.length ? (
-        <EmptyState title="Sua carteira ainda esta vazia." />
+        <EmptyState title="Sua carteira ainda está vazia." />
       ) : (
         <>
-          <Card title="Posicoes">
+          <Card title="Posições">
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Ativo</th><th>Nome</th><th>Quantidade</th><th>Preco medio</th><th>Valor investido</th><th>Preco atual</th><th>Valor de mercado</th><th>Lucro ou prejuizo</th><th>Alocacao</th>
+                    <th>Ativo</th><th>Nome</th><th>Quantidade</th><th>Preço médio</th><th>Valor investido</th><th>Preço atual</th><th>Valor de mercado</th><th>Lucro ou prejuízo</th><th>Alocação</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -76,13 +76,13 @@ export function PortfolioPage() {
               </table>
             </div>
           </Card>
-          <Card title="Grafico de alocacao">{chartData.length ? <AllocationChart data={chartData} /> : <p>Ainda nao ha informacao de alocacao para exibir.</p>}</Card>
+          <Card title="Gráfico de alocação">{chartData.length ? <AllocationChart data={chartData} /> : <p>Ainda não há informação de alocação para exibir.</p>}</Card>
         </>
       )}
-      <Card title="Historico de movimentacoes">
+      <Card title="Histórico de movimentações">
         {operations.data?.length ? (
-          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Quantidade</th><th>Preco de compra</th><th>Taxas</th></tr></thead><tbody>{operations.data.map((item) => <tr key={item.id}><td>{item.operation_date}</td><td>{item.operation_type === "BUY" ? "Compra" : "Venda"}</td><td>{formatQuantityBR(item.quantity)}</td><td>{formatMoney(item.unit_price)}</td><td>{formatMoney(item.fees)}</td></tr>)}</tbody></table></div>
-        ) : <p>Nenhuma movimentacao registrada.</p>}
+          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Quantidade</th><th>Preço de compra</th><th>Taxas</th></tr></thead><tbody>{operations.data.map((item) => <tr key={item.id}><td>{item.operation_date}</td><td>{item.operation_type === "BUY" ? "Compra" : "Venda"}</td><td>{formatQuantityBR(item.quantity)}</td><td>{formatMoney(item.unit_price)}</td><td>{formatMoney(item.fees)}</td></tr>)}</tbody></table></div>
+        ) : <p>Nenhuma movimentação registrada.</p>}
       </Card>
     </div>
   );
@@ -98,18 +98,18 @@ function MarketDataNotice({
   unpricedSymbols: string[];
 }) {
   if (status === "live") {
-    return <div className="success-box">Cotacoes atualizadas em {formatDateTimeBR(quoteUpdatedAt)}.</div>;
+    return <div className="success-box">Cotações atualizadas em {formatDateTimeBR(quoteUpdatedAt)}.</div>;
   }
   if (status === "partial") {
     return (
       <div className="warning-box">
-        Alguns ativos estao sem cotacao atual. Os demais valores foram atualizados.
-        {unpricedSymbols.length ? ` Sem cotacao: ${unpricedSymbols.join(", ")}.` : ""}
+        Alguns ativos estão sem cotação atual. Os demais valores foram atualizados.
+        {unpricedSymbols.length ? ` Sem cotação: ${unpricedSymbols.join(", ")}.` : ""}
       </div>
     );
   }
   if (status === "unavailable") {
-    return <div className="warning-box">Nao foi possivel atualizar as cotacoes agora. Sua carteira continua disponivel.</div>;
+    return <div className="warning-box">Não foi possível atualizar as cotações agora. Sua carteira continua disponível.</div>;
   }
   return null;
 }

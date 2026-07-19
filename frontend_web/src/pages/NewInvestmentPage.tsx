@@ -17,14 +17,14 @@ import { endpoints } from "../services/endpoints/data";
 import type { Brokerage, MarketAsset } from "../types/api";
 import { display, formatCurrencyInputBR, formatDateTimeBR, formatMoney, formatPercent, normalizeDecimalForApi, parseBrazilianNumber } from "../utils/formatters";
 
-const requiredDecimal = (message: string) => z.string().min(1, message).refine((value) => parseBrazilianNumber(value) !== null, "Informe um numero valido.");
+const requiredDecimal = (message: string) => z.string().min(1, message).refine((value) => parseBrazilianNumber(value) !== null, "Informe um número válido.");
 
 const schema = z.object({
   brokerageId: z.string().min(1, "Selecione uma corretora."),
   newBrokerage: z.string().optional(),
   operationDate: z.string().min(1, "Informe a data da compra."),
   quantity: requiredDecimal("Informe a quantidade."),
-  unitPrice: requiredDecimal("Informe o preco de compra."),
+  unitPrice: requiredDecimal("Informe o preço de compra."),
   fees: z.string(),
   taxes: z.string(),
   notes: z.string().optional(),
@@ -92,7 +92,7 @@ export function NewInvestmentPage() {
       setShowBrokerageForm(false);
     },
     onError: (error) => {
-      setBrokerageError(error instanceof Error ? error.message : "Nao foi possivel cadastrar a corretora.");
+      setBrokerageError(error instanceof Error ? error.message : "Não foi possível cadastrar a corretora.");
     },
   });
 
@@ -106,11 +106,11 @@ export function NewInvestmentPage() {
   };
 
   if (brokerages.isLoading) return <LoadingState />;
-  if (brokerages.error) return <ErrorState message="Nao foi possivel carregar corretoras." />;
+  if (brokerages.error) return <ErrorState message="Não foi possível carregar corretoras." />;
 
   return (
     <div className="page-stack">
-      <section className="page-heading"><h2>Adicionar investimento</h2><p>Busque o ativo e registre o preco realmente pago.</p></section>
+      <section className="page-heading"><h2>Adicionar investimento</h2><p>Busque o ativo e registre o preço realmente pago.</p></section>
       <Card title="Dados do ativo">
         <SearchAutocomplete token={token!} query={query} onQueryChange={setQuery} onSelect={setSelectedAsset} />
         {selectedAsset?.limited_mode ? (
@@ -119,24 +119,24 @@ export function NewInvestmentPage() {
         {selectedAsset ? (
           <div className="asset-card">
             {selectedAsset.logo_url ? <img className="asset-logo large" src={selectedAsset.logo_url} alt="" /> : null}
-            <div><span>Codigo</span><strong>{selectedAsset.ticker}</strong></div>
+            <div><span>Código</span><strong>{selectedAsset.ticker}</strong></div>
             <div><span>Nome</span><strong>{display(selectedAsset.name)}</strong></div>
             <div><span>Tipo</span><strong>{display(selectedAsset.asset_type)}</strong></div>
             <div><span>Subtipo</span><strong>{display(selectedAsset.asset_subtype)}</strong></div>
             <div><span>Setor</span><strong>{display(selectedAsset.sector)}</strong></div>
             <div><span>Subsetor</span><strong>{display(selectedAsset.subsector)}</strong></div>
-            <div><span>Pais</span><strong>{display(selectedAsset.country)}</strong></div>
+            <div><span>País</span><strong>{display(selectedAsset.country)}</strong></div>
             <div><span>Bolsa</span><strong>{display(selectedAsset.exchange)}</strong></div>
             <div><span>Moeda</span><strong>{display(selectedAsset.currency)}</strong></div>
-            <div><span>Ultima cotacao disponivel</span><strong>{formatMoney(selectedAsset.current_price, selectedAsset.currency ?? "BRL")}</strong></div>
-            <div><span>Variacao</span><strong>{formatPercent(selectedAsset.change_percent)}</strong></div>
-            <div><span>Horario da cotacao</span><strong>{formatDateTimeBR(selectedAsset.updated_at ?? selectedAsset.last_updated)}</strong></div>
+            <div><span>Última cotação disponível</span><strong>{formatMoney(selectedAsset.current_price, selectedAsset.currency ?? "BRL")}</strong></div>
+            <div><span>Variação</span><strong>{formatPercent(selectedAsset.change_percent)}</strong></div>
+            <div><span>Horário da cotação</span><strong>{formatDateTimeBR(selectedAsset.updated_at ?? selectedAsset.last_updated)}</strong></div>
             <div><span>Fonte</span><strong>{selectedAsset.provider}</strong></div>
           </div>
         ) : null}
       </Card>
       <Card title="Dados da compra">
-        {mutation.error ? <ErrorState message={mutation.error instanceof Error ? mutation.error.message : "Nao foi possivel salvar."} /> : null}
+        {mutation.error ? <ErrorState message={mutation.error instanceof Error ? mutation.error.message : "Não foi possível salvar."} /> : null}
         {mutation.isSuccess ? <div className="success-box">Investimento salvo com sucesso.</div> : null}
         <form className="form-grid two" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
           <div className="form-grid span-2">
@@ -146,7 +146,7 @@ export function NewInvestmentPage() {
                 {brokerages.data.map((brokerage) => <option key={brokerage.id} value={brokerage.id}>{brokerage.name}</option>)}
               </Select>
             ) : (
-              <div className="warning-box">Voce ainda nao cadastrou uma corretora.</div>
+              <div className="warning-box">Você ainda não cadastrou uma corretora.</div>
             )}
             {!showBrokerageForm ? (
               <Button type="button" variant="secondary" onClick={() => setShowBrokerageForm(true)}>
@@ -174,11 +174,11 @@ export function NewInvestmentPage() {
           </div>
           <Input label="Data da compra" type="date" {...form.register("operationDate")} error={form.formState.errors.operationDate?.message} />
           <DecimalInput label="Quantidade" {...form.register("quantity")} error={form.formState.errors.quantity?.message} />
-          <CurrencyInput label="Preco de compra" {...form.register("unitPrice")} error={form.formState.errors.unitPrice?.message} />
-          <Button type="button" variant="secondary" disabled={!selectedAsset?.current_price} onClick={() => form.setValue("unitPrice", formatCurrencyInputBR(selectedAsset?.current_price))}>Usar esta cotacao como preco de compra</Button>
+          <CurrencyInput label="Preço de compra" {...form.register("unitPrice")} error={form.formState.errors.unitPrice?.message} />
+          <Button type="button" variant="secondary" disabled={!selectedAsset?.current_price} onClick={() => form.setValue("unitPrice", formatCurrencyInputBR(selectedAsset?.current_price))}>Usar esta cotação como preço de compra</Button>
           <CurrencyInput label="Taxas" {...form.register("fees")} />
           <CurrencyInput label="Impostos" {...form.register("taxes")} />
-          <Input label="Observacao" {...form.register("notes")} />
+          <Input label="Observação" {...form.register("notes")} />
           <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Salvando..." : "Salvar investimento"}</Button>
         </form>
       </Card>

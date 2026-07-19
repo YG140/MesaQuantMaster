@@ -88,7 +88,7 @@ export async function apiRequest<T>(
       throw new ApiError("A API demorou demais para responder.", null, "TIMEOUT");
     }
     throw new ApiError(
-      "Nao foi possivel conectar ao backend. Verifique se a API esta rodando.",
+      "Não foi possível conectar ao backend. Verifique se a API está rodando.",
       null,
       "NETWORK",
     );
@@ -155,7 +155,7 @@ function fallbackMessage(status: number): string {
     {
       400: "Requisicao invalida.",
       401: "Sessao expirada. Entre novamente.",
-      403: "Voce nao tem permissao para esta acao.",
+      403: "Você não tem permissão para esta ação.",
       404: "Registro nao encontrado.",
       409: "Conflito ao processar a requisicao.",
       422: "Dados invalidos.",

@@ -39,7 +39,7 @@ export function RegisterPage() {
       });
       navigate("/login", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nao foi possivel criar a conta.");
+      setError(err instanceof Error ? err.message : "Não foi possível criar a conta.");
     }
   }
 

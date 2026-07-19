@@ -19,22 +19,22 @@ const quantityFormatter = new Intl.NumberFormat(PT_BR, {
   maximumFractionDigits: 8,
 });
 
-export function formatCurrencyBR(value: NumericInput, fallback = "Nao informado") {
+export function formatCurrencyBR(value: NumericInput, fallback = "Não informado") {
   const amount = parseBrazilianNumber(value);
   return amount === null ? fallback : currencyFormatter.format(amount).replace(/\u00a0/g, " ");
 }
 
-export function formatPercentBR(value: NumericInput, fallback = "Nao informado") {
+export function formatPercentBR(value: NumericInput, fallback = "Não informado") {
   const amount = parseBrazilianNumber(value);
   return amount === null ? fallback : `${decimal2Formatter.format(amount)}%`;
 }
 
-export function formatQuantityBR(value: NumericInput, fallback = "Nao informado") {
+export function formatQuantityBR(value: NumericInput, fallback = "Não informado") {
   const amount = parseBrazilianNumber(value);
   return amount === null ? fallback : quantityFormatter.format(amount);
 }
 
-export function formatDecimalBR(value: NumericInput, fractionDigits = 2, fallback = "Nao informado") {
+export function formatDecimalBR(value: NumericInput, fractionDigits = 2, fallback = "Não informado") {
   const amount = parseBrazilianNumber(value);
   if (amount === null) return fallback;
   return new Intl.NumberFormat(PT_BR, {
@@ -170,20 +170,20 @@ export function toNumber(value: NumericInput): number | null {
 
 export function formatMoney(value: NumericInput, currency = "R$") {
   if (currency === "R$" || currency === "BRL") {
-    return formatCurrencyBR(value, "Nao informado");
+    return formatCurrencyBR(value, "Não informado");
   }
   const amount = parseBrazilianNumber(value);
-  return amount === null ? "Nao informado" : `${currency} ${decimal2Formatter.format(amount)}`;
+  return amount === null ? "Não informado" : `${currency} ${decimal2Formatter.format(amount)}`;
 }
 
 export function formatPercent(value: NumericInput) {
-  return formatPercentBR(value, "Nao informado");
+  return formatPercentBR(value, "Não informado");
 }
 
 export function formatDateTimeBR(value: string | null | undefined) {
-  if (!value) return "Nao informado";
+  if (!value) return "Não informado";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Nao informado";
+  if (Number.isNaN(date.getTime())) return "Não informado";
   return new Intl.DateTimeFormat(PT_BR, {
     dateStyle: "short",
     timeStyle: "short",
@@ -191,6 +191,6 @@ export function formatDateTimeBR(value: string | null | undefined) {
 }
 
 export function display(value: NumericInput) {
-  if (value === null || value === undefined || value === "") return "Nao informado";
+  if (value === null || value === undefined || value === "") return "Não informado";
   return String(value);
 }

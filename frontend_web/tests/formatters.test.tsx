@@ -61,7 +61,7 @@ describe("CurrencyInput", () => {
     const user = userEvent.setup();
     render(<CurrencyInputHarness />);
 
-    const input = screen.getByLabelText("Preco de compra");
+    const input = screen.getByLabelText("Preço de compra");
     expect(input).toHaveAttribute("type", "text");
     expect(input).toHaveAttribute("inputmode", "numeric");
     expect(input).toHaveValue("0,00");
@@ -84,7 +84,7 @@ describe("CurrencyInput", () => {
     const user = userEvent.setup();
     render(<CurrencyInputHarness />);
 
-    const input = screen.getByLabelText("Preco de compra");
+    const input = screen.getByLabelText("Preço de compra");
     await user.type(input, "123456");
     expect(input).toHaveValue("1.234,56");
 
@@ -107,7 +107,7 @@ describe("CurrencyInput", () => {
 
     for (const pasted of values) {
       render(<CurrencyInputHarness />);
-      const input = screen.getByLabelText("Preco de compra");
+      const input = screen.getByLabelText("Preço de compra");
       fireEvent.paste(input, {
         clipboardData: {
           getData: () => pasted,
@@ -123,7 +123,7 @@ describe("CurrencyInput", () => {
     const user = userEvent.setup();
     render(<CurrencyInputHarness />);
 
-    const input = screen.getByLabelText("Preco de compra");
+    const input = screen.getByLabelText("Preço de compra");
     await user.type(input, "abc1x2");
 
     expect(input).toHaveValue("0,12");
@@ -166,7 +166,7 @@ describe("DecimalInput", () => {
   });
 });
 
-function CurrencyInputHarness({ label = "Preco de compra" }: { label?: string }) {
+function CurrencyInputHarness({ label = "Preço de compra" }: { label?: string }) {
   const [value, setValue] = useState("");
   return <CurrencyInput label={label} value={value} onChange={(event) => setValue(event.target.value)} />;
 }
