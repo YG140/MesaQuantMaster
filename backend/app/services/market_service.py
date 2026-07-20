@@ -9,7 +9,10 @@ from app.schemas.market import (
     MarketProfileResponse,
     QuoteResponse,
     QuotesResponse,
+    ProviderCapabilitiesResponse,
 )
+from datetime import datetime, timezone
+from app.providers.exceptions import MarketPermissionError, MarketAuthenticationError
 from app.services.market_cache import TTLCache
 
 
@@ -49,7 +52,15 @@ class MarketService:
                 quotes.append(cached.model_copy(update={"cache_hit": True}))
 
         if missing_symbols:
-            fetched = self.provider.get_quotes(missing_symbols)
+            try:
+                fetched = self.provider.get_quotes(missing_symbols)
+            except MarketProviderError as exc:
+                if len(missing_symbols) <= 1:
+                    raise
+                fetched = self._fetch_individually_after_batch_error(
+                    missing_symbols, exc
+                )
+            fetched = self._fetch_missing_individually(missing_symbols, fetched)
             for quote in fetched:
                 quote = quote.model_copy(
                     update={
@@ -76,6 +87,39 @@ class MarketService:
             limited_mode=self._limited_mode(),
             unavailable_symbols=unavailable,
         )
+
+    def _fetch_missing_individually(
+        self, symbols: list[str], fetched: list[QuoteResponse]
+    ) -> list[QuoteResponse]:
+        fetched_by_symbol = {quote.ticker.upper(): quote for quote in fetched}
+        missing = [symbol for symbol in symbols if symbol not in fetched_by_symbol]
+        if len(symbols) <= 1 or not missing:
+            return fetched
+
+        completed = list(fetched)
+        for symbol in missing:
+            try:
+                completed.extend(self.provider.get_quotes([symbol]))
+            except MarketAssetNotFoundError:
+                continue
+        return completed
+
+    def _fetch_individually_after_batch_error(
+        self, symbols: list[str], batch_error: MarketProviderError
+    ) -> list[QuoteResponse]:
+        completed: list[QuoteResponse] = []
+        provider_errors = 0
+        for symbol in symbols:
+            try:
+                completed.extend(self.provider.get_quotes([symbol]))
+            except MarketAssetNotFoundError:
+                continue
+            except MarketProviderError:
+                provider_errors += 1
+                continue
+        if not completed and provider_errors == len(symbols):
+            raise batch_error
+        return completed
 
     def search_assets(self, query: str, limit: int = 10) -> list[MarketAssetResponse]:
         normalized_query = query.strip()
@@ -176,6 +220,64 @@ class MarketService:
             settings.BRAPI_PROFILE_CACHE_SECONDS,
         )
         return profile
+
+    def provider_capabilities(self) -> ProviderCapabilitiesResponse:
+        supported = [
+            "quotes",
+            "profiles",
+            "statistics",
+            "financials",
+            "statements",
+            "dividends",
+            "historical",
+            "fiis",
+            "treasury",
+            "macro",
+        ]
+        accessible: list[str] = []
+        restricted: list[str] = []
+        reachable: bool | None = None
+        probes = {
+            "quotes": lambda: self.provider.get_quotes(["PETR4"]),
+            "statistics": lambda: self.provider.get_stock_dataset(
+                "statistics", ["PETR4"], mode="current"
+            ),
+            "fiis": lambda: self.provider.get_fii_dataset("indicators", ["MXRF11"]),
+            "treasury": lambda: self.provider.get_treasury(
+                "indicators", ["tesouro-selic-01032031"]
+            ),
+            "macro": lambda: self.provider.get_macro(["selic"]),
+        }
+        for domain, probe in probes.items():
+            try:
+                probe()
+                accessible.append(domain)
+                reachable = True
+            except (MarketPermissionError, MarketAuthenticationError):
+                restricted.append(domain)
+                reachable = True
+            except Exception:
+                if reachable is None:
+                    reachable = False
+        if "quotes" in accessible:
+            accessible.append("profiles")
+        if "statistics" in accessible:
+            accessible.extend(["financials", "statements", "dividends", "historical"])
+        return ProviderCapabilitiesResponse(
+            provider=getattr(self.provider, "provider_name", "BRAPI"),
+            configured=bool(getattr(self.provider, "api_key", None)),
+            reachable=reachable,
+            supported_domains=supported,
+            accessible_domains=list(dict.fromkeys(accessible)),
+            restricted_domains=list(dict.fromkeys(restricted)),
+            last_checked_at=datetime.now(timezone.utc),
+        )
+
+    def get_stock_dataset(self, dataset: str, symbols: list[str], **params):
+        return self.provider.get_stock_dataset(dataset, symbols, **params)
+
+    def get_fii_dataset(self, dataset: str, symbols: list[str], **params):
+        return self.provider.get_fii_dataset(dataset, symbols, **params)
 
     @classmethod
     def clear_caches(cls) -> None:

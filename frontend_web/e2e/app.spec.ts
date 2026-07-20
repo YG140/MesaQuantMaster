@@ -128,6 +128,78 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
     const body = route.request().postDataJSON();
     await route.fulfill({ json: { ...body, id: "policy-1", user_id: "user-1", created_at: "2026-07-16T18:30:00Z", updated_at: "2026-07-16T18:30:00Z" } });
   });
+  await page.route("**/intelligence/portfolio/recommendations", async (route) => {
+    await route.fulfill({
+      json: {
+        snapshots: [
+          {
+            asset_id: "asset-1",
+            symbol: "PETR4",
+            name: "Petrobras PN",
+            asset_class: "stock",
+            current_price: "38.42",
+            currency: "BRL",
+            market_updated_at: "2026-07-16T18:30:00Z",
+            indicators: [
+              { key: "current_price", label: "Pre\u00e7o atual", value: "38.42", display_value: "BRL 38.42", unit: "currency", status: "available", source: "BRAPI", reference_date: "2026-07-16T18:30:00Z", collected_at: "2026-07-16T18:30:00Z", confidence: "medium", period: "\u00faltima cota\u00e7\u00e3o", unavailable_reason: null },
+              { key: "price_earnings", label: "P/L", value: null, display_value: null, unit: "ratio", status: "unavailable", source: "BRAPI", reference_date: "2026-07-16T18:30:00Z", collected_at: "2026-07-16T18:30:00Z", confidence: "insufficient", period: null, unavailable_reason: "O provedor atual n\u00e3o entrega este indicador para o ativo." },
+            ],
+            quality_score: null,
+            valuation_score: null,
+            income_score: null,
+            growth_score: null,
+            risk_score: null,
+            liquidity_score: null,
+            strategy_fit_score: "25",
+            overall_score: null,
+            recommendation: "insufficient_data",
+            valuation_status: "insufficient_data",
+            valuation: { status: "insufficient_data", methods: [], used_indicators: [], missing_indicators: ["P/L"], historical_comparison: null, peer_comparison: null, estimated_range_low: null, estimated_range_high: null, confidence: "insufficient", data_date: null },
+            confidence: "insufficient",
+            coverage_percentage: "25",
+            available_indicators_count: 1,
+            missing_indicators_count: 1,
+            stale_indicators_count: 0,
+            positive_reasons: ["Cota\u00e7\u00e3o real dispon\u00edvel no provedor de mercado."],
+            warning_reasons: ["N\u00e3o existem dados suficientes para uma an\u00e1lise confi\u00e1vel deste investimento."],
+            missing_data: ["P/L"],
+            calculated_at: "2026-07-16T18:30:00Z",
+          },
+        ],
+        errors: [],
+        provider_calls: 1,
+        calculated_at: "2026-07-16T18:30:00Z",
+      },
+    });
+  });
+  await page.route("**/intelligence/macro", async (route) => {
+    await route.fulfill({
+      json: [
+        {
+          key: "selic",
+          label: "Selic",
+          value: null,
+          period: null,
+          source: "Provedor macroecon\u00f4mico ainda n\u00e3o integrado",
+          updated_at: null,
+          frequency: "mensal",
+          history_available: false,
+          state: "unavailable",
+        },
+        {
+          key: "ipca",
+          label: "IPCA",
+          value: null,
+          period: null,
+          source: "Provedor macroecon\u00f4mico ainda n\u00e3o integrado",
+          updated_at: null,
+          frequency: "mensal",
+          history_available: false,
+          state: "unavailable",
+        },
+      ],
+    });
+  });
   await page.route("**/intelligence/build-portfolio", async (route) => {
     await route.fulfill({
       json: {
@@ -154,7 +226,6 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await expect(page.getByText(/Sua carteira ainda.*vazia/)).toBeVisible();
   await page.getByRole("link", { name: /Intelig.ncia de Carteira/ }).click();
   await expect(page.getByRole("heading", { name: /Intelig.ncia de Carteira/ })).toBeVisible();
-  await page.getByRole("button", { name: /Minha estrat.gia/ }).click();
   await expect(page.getByText(/Total da aloca..o: 100,00%/)).toBeVisible();
   await page.getByRole("button", { name: /Salvar estrat.gia/ }).click();
   await expect(page.getByText(/Estrat.gia salva com sucesso/)).toBeVisible();
@@ -163,13 +234,22 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await page.getByRole("button", { name: "Rebalanceamento" }).click();
   await expect(page.getByText("R$ 900,00")).toBeVisible();
   await page.getByRole("button", { name: /Recomenda..es/ }).click();
-  await expect(page.getByText(/A..es - Reduzir exposi..o/)).toBeVisible();
+  await expect(page.getByText(/PETR4 - Dados insuficientes/)).toBeVisible();
+  await expect(page.getByText(/Indicadores por categoria/)).toBeVisible();
+  await expect(page.getByText(/P\/L: O provedor atual/)).toBeVisible();
+  await expect(page.locator("details.details-panel").first()).toBeVisible();
   await page.getByRole("button", { name: "Montar carteira" }).click();
   await page.getByLabel(/Valor dispon.vel/).fill("20000");
   await page.getByRole("button", { name: "Gerar resultado" }).click();
   await expect(page.getByText(/Etapa 1 - Aloca..o entre classes/)).toBeVisible();
   await expect(page.getByText("R$ 12.000,00")).toBeVisible();
   await expect(page.getByText("R$ 8.000,00")).toBeVisible();
+  await page.getByRole("button", { name: "Oportunidades" }).click();
+  await expect(page.getByText(/Grupos de an.lise/)).toBeVisible();
+  await expect(page.getByText(/Tracking error: diferen.a/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Cen.rio econ.mico/ })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("heading", { name: /Intelig.ncia de Carteira/ })).toBeVisible();
   await expect(page.getByText(/JSON|undefined|null|NaN/)).not.toBeVisible();
   await page.getByRole("button", { name: "Sair" }).click();
   await expect(page.getByRole("heading", { name: "Mesa Quant Master" })).toBeVisible();

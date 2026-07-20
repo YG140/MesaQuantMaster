@@ -28,6 +28,7 @@ class OperationCreate(OperationBase):
 
 
 class OperationUpdate(BaseModel):
+    brokerage_id: UUID | None = None
     operation_type: str | None = Field(default=None, max_length=30)
 
     operation_date: date | None = None

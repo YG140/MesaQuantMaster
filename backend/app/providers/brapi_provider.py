@@ -37,6 +37,27 @@ class BrapiProvider(BaseMarketProvider):
 
     provider_name = "BRAPI"
 
+    STOCK_DATASETS = {
+        "statistics": "/api/v2/stocks/statistics",
+        "financial_data": "/api/v2/stocks/financial-data",
+        "balance_sheet": "/api/v2/stocks/balance-sheet",
+        "income_statement": "/api/v2/stocks/income-statement",
+        "cash_flow": "/api/v2/stocks/cash-flow",
+        "value_added": "/api/v2/stocks/value-added",
+        "dividends": "/api/v2/stocks/dividends",
+        "historical": "/api/v2/stocks/historical",
+    }
+    FII_DATASETS = {
+        "list": "/api/v2/fii/list",
+        "indicators": "/api/v2/fii/indicators",
+        "indicators_history": "/api/v2/fii/indicators/history",
+        "historical": "/api/v2/fii/historical",
+        "properties": "/api/v2/fii/properties",
+        "portfolio": "/api/v2/fii/portfolio",
+        "reports": "/api/v2/fii/reports",
+        "dividends": "/api/v2/fii/dividends",
+    }
+
     def __init__(
         self,
         base_url: str | None = None,
@@ -171,6 +192,57 @@ class BrapiProvider(BaseMarketProvider):
         if not items:
             raise MarketAssetNotFoundError("Ativo nao encontrado.")
         return self._profile_from_item(items[0], requested_symbol=symbol)
+
+    def get_stock_dataset(
+        self,
+        dataset: str,
+        symbols: list[str],
+        **params: Any,
+    ) -> dict[str, Any]:
+        path = self.STOCK_DATASETS.get(dataset)
+        if path is None:
+            raise ValueError("Conjunto de dados de ações não suportado.")
+        query = {"symbols": ",".join(self._normalize_symbols(symbols)), **params}
+        return self._get_json(
+            path,
+            params={key: value for key, value in query.items() if value is not None},
+        )
+
+    def get_fii_dataset(
+        self,
+        dataset: str,
+        symbols: list[str],
+        **params: Any,
+    ) -> dict[str, Any]:
+        path = self.FII_DATASETS.get(dataset)
+        if path is None:
+            raise ValueError("Conjunto de dados de FIIs não suportado.")
+        query = {"symbols": ",".join(self._normalize_symbols(symbols)), **params}
+        return self._get_json(
+            path,
+            params={key: value for key, value in query.items() if value is not None},
+        )
+
+    def get_treasury(
+        self, resource: str, symbols: list[str] | None = None, **params: Any
+    ) -> dict[str, Any]:
+        paths = {
+            "list": "/api/v2/treasury/list",
+            "indicators": "/api/v2/treasury/indicators",
+            "history": "/api/v2/treasury/indicators/history",
+        }
+        if resource not in paths:
+            raise ValueError("Recurso do Tesouro Direto não suportado.")
+        query = dict(params)
+        if symbols:
+            query["symbols"] = ",".join(symbols)
+        return self._get_json(paths[resource], params=query)
+
+    def get_macro(self, symbols: list[str], **params: Any) -> dict[str, Any]:
+        return self._get_json(
+            "/api/v2/macro",
+            params={"symbols": ",".join(symbols), **params},
+        )
 
     def _get_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         headers = {}

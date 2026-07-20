@@ -90,3 +90,13 @@ class QuotesResponse(BaseModel):
     cache_hit: bool = False
     limited_mode: bool = False
     unavailable_symbols: list[str] = Field(default_factory=list)
+
+
+class ProviderCapabilitiesResponse(BaseModel):
+    provider: str
+    configured: bool
+    reachable: bool | None
+    supported_domains: list[str]
+    accessible_domains: list[str]
+    restricted_domains: list[str]
+    last_checked_at: datetime

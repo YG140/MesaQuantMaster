@@ -13,6 +13,7 @@ import { Select } from "../components/ui/Select";
 import { useAuth } from "../features/auth/useAuth";
 import { endpoints } from "../services/endpoints/data";
 import type {
+  AssetIntelligenceSnapshot,
   BuildPortfolioResponse,
   PortfolioIntelligence,
   PortfolioPolicy,
@@ -253,7 +254,23 @@ function Diagnosis({ data }: { data: PortfolioIntelligence }) {
 }
 
 function Recommendations({ data }: { data: PortfolioIntelligence }) {
+  const { token } = useAuth();
+  const market = useQuery({
+    queryKey: ["portfolio-market-recommendations", token],
+    queryFn: () => endpoints.portfolioMarketRecommendations(token!),
+    enabled: Boolean(token) && Boolean(data.overview.investments_count),
+  });
   if (!data.policy) return <EmptyState title="Configure sua estratégia para receber análises e sugestões personalizadas." />;
+  if (market.isLoading) return <LoadingState label="Carregando recomendações de mercado..." />;
+  if (market.error) return <ErrorState message="Os dados de mercado estão temporariamente indisponíveis." />;
+  if (market.data?.snapshots.length) {
+    return (
+      <div className="page-stack">
+        {market.data.errors.length ? <div className="warning-box">Alguns investimentos estão sem dados de mercado suficientes.</div> : null}
+        {market.data.snapshots.map((item) => <MarketRecommendationCard key={item.symbol} item={item} />)}
+      </div>
+    );
+  }
   if (!data.recommendations.length) return <EmptyState title="Dados insuficientes para calcular." />;
   return (
     <div className="page-stack">
@@ -272,6 +289,70 @@ function Recommendations({ data }: { data: PortfolioIntelligence }) {
           <TextList items={[...item.risk_reasons, ...item.missing_data]} fallback="Sem pontos de atenção com os dados disponíveis." />
         </Card>
       ))}
+    </div>
+  );
+}
+
+function MarketRecommendationCard({ item }: { item: AssetIntelligenceSnapshot }) {
+  const missing = item.indicators.filter((indicator) => indicator.status !== "available");
+  const grouped = groupedIndicators(item.indicators);
+  return (
+    <Card key={item.symbol} title={`${item.symbol} - ${recommendationLabel(item.recommendation)}`}>
+      <div className="metric-grid">
+        <MetricCard label="Investimento" value={item.name || item.symbol} />
+        <MetricCard label="Classe" value={assetClassLabel(item.asset_class)} />
+        <MetricCard label="Pontuação geral" value={formatPercent(item.overall_score)} />
+        <MetricCard label="Avaliação de preço" value={valuationLabel(item.valuation_status)} />
+        <MetricCard label="Confiança" value={confidenceLabel(item.confidence)} />
+        <MetricCard label="Cobertura dos dados" value={formatPercent(item.coverage_percentage)} />
+        <MetricCard label="Qualidade dos dados" value={formatPercent(item.data_quality_score)} />
+        <MetricCard label="Preço atual" value={formatMoney(item.current_price)} />
+        <MetricCard label="Atualização" value={formatDateTimeBR(item.market_updated_at)} />
+      </div>
+      {item.warning_reasons.length ? <div className="warning-box">{item.warning_reasons[0]}</div> : null}
+      {item.data_quality?.anomaly_flags.length ? (
+        <div className="warning-box">{item.data_quality.anomaly_flags.join(" ")}</div>
+      ) : null}
+      <h3>Indicadores por categoria</h3>
+      {Object.entries(grouped).map(([category, indicators]) => (
+        <details key={category} className="details-panel" open={category === "preço e mercado"}>
+          <summary>{category}</summary>
+          <IndicatorTable items={indicators} />
+        </details>
+      ))}
+      <h3>Dados ausentes</h3>
+      <TextList
+        items={missing.map((indicator) => `${indicator.label}: ${indicator.unavailable_reason || statusLabel(indicator.status)}`)}
+        fallback="Nenhum dado ausente nos indicadores analisados."
+      />
+      <h3>Motivos</h3>
+      <TextList items={item.positive_reasons} />
+      <h3>Pontos de atenção</h3>
+      <TextList items={item.warning_reasons} fallback="Sem pontos de atenção com os dados disponíveis." />
+    </Card>
+  );
+}
+
+function IndicatorTable({ items }: { items: AssetIntelligenceSnapshot["indicators"] }) {
+  if (!items.length) return <p>Não existem dados suficientes para uma análise confiável deste investimento.</p>;
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead><tr><th>Indicador</th><th>Valor</th><th>Período</th><th>Status</th><th>Fonte</th><th>Atualização</th><th>Explicação</th></tr></thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.key}>
+              <td>{item.label}</td>
+              <td>{item.display_value || "Não informado"}</td>
+              <td>{item.period || "Não informado"}</td>
+              <td>{statusLabel(item.status)}</td>
+              <td>{item.source}</td>
+              <td>{formatDateTimeBR(item.reference_date)}</td>
+              <td>{item.explanation || item.description || "Não informado"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -358,19 +439,57 @@ function BuildResult({ data }: { data: BuildPortfolioResponse }) {
 }
 
 function Opportunities({ data }: { data: PortfolioIntelligence }) {
-  if (!data.opportunities.length) return <EmptyState title="Dados insuficientes para calcular." />;
+  const { token } = useAuth();
+  const macro = useQuery({
+    queryKey: ["macro-context", token],
+    queryFn: () => endpoints.macroContext(token!),
+    enabled: Boolean(token),
+  });
   return (
     <div className="page-stack">
-      {data.opportunities.map((item) => (
-        <Card key={item.asset_class} title={item.asset_class}>
-          <div className="metric-grid compact">
-            <MetricCard label="Classificação" value={item.classification} />
-            <MetricCard label="Confiança" value={item.confidence} />
+      <Card title="Grupos de análise">
+        <div className="metric-grid compact">
+          {["Ações", "FIIs", "ETFs", "Tesouro Direto", "Renda fixa privada", "BDRs", "Ativos internacionais", "Criptomoedas", "Cenário econômico"].map((item) => (
+            <MetricCard key={item} label={item} value="Estrutura preparada" />
+          ))}
+        </div>
+      </Card>
+      <Card title="Termos técnicos">
+        <TextList
+          items={[
+            "Tracking error: diferença de comportamento entre o ETF e o índice que ele busca acompanhar.",
+            "Duration: estimativa da sensibilidade do preço do título às mudanças nas taxas de juros.",
+            "Rating: avaliação de risco de crédito feita por uma agência especializada.",
+            "MVRV: relação entre o valor de mercado e uma estimativa do valor pago pelos participantes da rede.",
+          ]}
+        />
+      </Card>
+      <Card title="Cenário econômico">
+        {macro.isLoading ? <LoadingState label="Carregando cenário econômico..." /> : null}
+        {macro.error ? <ErrorState message="Não foi possível carregar o cenário econômico." /> : null}
+        {macro.data ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Indicador</th><th>Estado</th><th>Frequência</th><th>Fonte</th></tr></thead>
+              <tbody>{macro.data.map((item) => <tr key={item.key}><td>{item.label}</td><td>{statusLabel(item.state)}</td><td>{item.frequency}</td><td>{item.source}</td></tr>)}</tbody>
+            </table>
           </div>
-          <p>{item.highlight_reason}</p>
-          <TextList items={item.risks} />
-        </Card>
-      ))}
+        ) : null}
+      </Card>
+      {data.opportunities.length ? (
+        data.opportunities.map((item) => (
+          <Card key={item.asset_class} title={item.asset_class}>
+            <div className="metric-grid compact">
+              <MetricCard label="Classificação" value={item.classification} />
+              <MetricCard label="Confiança" value={item.confidence} />
+            </div>
+            <p>{item.highlight_reason}</p>
+            <TextList items={item.risks} />
+          </Card>
+        ))
+      ) : (
+        <EmptyState title="Dados insuficientes para calcular." />
+      )}
     </div>
   );
 }
@@ -499,4 +618,78 @@ function updateAllocation(
     ...current,
     allocations: current.allocations.map((item) => item.asset_class === assetClass ? { ...item, ...value } : item),
   }));
+}
+
+function recommendationLabel(value: string) {
+  return ({
+    analyze_to_buy: "Analisar para compra",
+    buy_gradually: "Comprar aos poucos",
+    increase_position: "Aumentar posição",
+    hold: "Manter",
+    wait: "Aguardar",
+    reduce_exposure: "Reduzir exposição",
+    consider_selling: "Considerar venda",
+    review_data: "Revisar dados",
+    insufficient_data: "Dados insuficientes",
+  } as Record<string, string>)[value] ?? "Dados insuficientes";
+}
+
+function valuationLabel(value: string) {
+  return ({
+    very_attractive: "Potencialmente muito atrativo",
+    attractive: "Potencialmente atrativo",
+    near_estimated_value: "Próximo do valor estimado",
+    elevated: "Potencialmente elevado",
+    very_elevated: "Potencialmente muito elevado",
+    insufficient_data: "Dados insuficientes",
+  } as Record<string, string>)[value] ?? "Dados insuficientes";
+}
+
+function confidenceLabel(value: string) {
+  return ({
+    high: "Alta",
+    medium: "Média",
+    low: "Baixa",
+    insufficient: "Insuficiente",
+  } as Record<string, string>)[value] ?? "Insuficiente";
+}
+
+function statusLabel(value: string) {
+  return ({
+    available: "Disponível",
+    unavailable: "Indisponível",
+    stale: "Desatualizado",
+    not_applicable: "Não aplicável",
+    insufficient_data: "Dados insuficientes",
+    potentially_inconsistent: "Potencialmente inconsistente",
+    partial: "Parcial",
+    invalid: "Inválido",
+  } as Record<string, string>)[value] ?? "Indisponível";
+}
+
+function assetClassLabel(value: string) {
+  return ({
+    stock: "Ações",
+    fii: "FIIs",
+    etf: "ETFs",
+    treasury: "Tesouro Direto",
+    cdb: "CDB",
+    lci: "LCI",
+    lca: "LCA",
+    debenture: "Debênture",
+    investment_fund: "Fundo de investimento",
+    bdr: "BDR",
+    international: "Ativo internacional",
+    crypto: "Criptomoeda",
+    unknown: "Não informado",
+  } as Record<string, string>)[value] ?? "Não informado";
+}
+
+function groupedIndicators(items: AssetIntelligenceSnapshot["indicators"]) {
+  return items.reduce<Record<string, AssetIntelligenceSnapshot["indicators"]>>((groups, item) => {
+    const category = item.category || "qualidade dos dados";
+    groups[category] = groups[category] ?? [];
+    groups[category].push(item);
+    return groups;
+  }, {});
 }

@@ -407,7 +407,7 @@ describe("paginas autenticadas", () => {
 
     expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Minha estratégia" })).toBeInTheDocument();
-    expect(screen.getByText("Total da alocação: 100,00%")).toBeInTheDocument();
+    expect(await screen.findByText("Total da alocação: 100,00%")).toBeInTheDocument();
     expect(screen.getAllByText("Minha estratégia").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Salvar estratégia" }));
     expect(await screen.findByText("Estratégia salva com sucesso.")).toBeInTheDocument();
@@ -420,7 +420,8 @@ describe("paginas autenticadas", () => {
     expect(screen.getAllByText("Há concentração relevante em uma única posição.").length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole("button", { name: "Recomendações" }));
-    expect(screen.getByText("Ações - Reduzir exposição")).toBeInTheDocument();
+    expect(await screen.findByText("PETR4 - Dados insuficientes")).toBeInTheDocument();
+    expect(screen.getByText(/P\/L: O provedor atual/)).toBeInTheDocument();
     expect(screen.getByText("Dados insuficientes")).toBeInTheDocument();
     expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
   });
