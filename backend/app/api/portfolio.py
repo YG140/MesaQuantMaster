@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -15,11 +17,34 @@ from app.schemas.portfolio import (
     PortfolioSummary,
 )
 from app.services.portfolio_service import PortfolioService
+from app.services.operation_service import OperationService
+from app.schemas.operation import OperationResponse
 
 router = APIRouter(
     prefix="/portfolio",
     tags=["Carteira"],
 )
+
+
+@router.get(
+    "/positions/{asset_id}/operations",
+    response_model=list[OperationResponse],
+)
+def list_position_operations(
+    asset_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    service = OperationService(
+        OperationRepository(db), AssetRepository(db), BrokerageRepository(db)
+    )
+    try:
+        return service.list_position_operations(current_user.id, asset_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
 
 
 def get_service(db: Session) -> PortfolioService:

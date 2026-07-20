@@ -46,6 +46,22 @@ class QuoteProvider:
         raise AssertionError("not used")
 
 
+class EmptyBatchProvider(QuoteProvider):
+    def get_quotes(self, tickers: list[str]):
+        if len(tickers) > 1:
+            self.calls += 1
+            return []
+        return super().get_quotes(tickers)
+
+
+class FailingBatchProvider(QuoteProvider):
+    def get_quotes(self, tickers: list[str]):
+        if len(tickers) > 1:
+            self.calls += 1
+            raise MarketProviderUnavailableError("batch down")
+        return super().get_quotes(tickers)
+
+
 def setup_function():
     MarketService.clear_caches()
 
@@ -86,3 +102,25 @@ def test_market_service_does_not_cache_errors():
 
     assert response.quotes[0].current_price == Decimal("10")
     assert provider.calls == 2
+
+
+def test_market_service_falls_back_to_individual_quotes_when_batch_is_empty():
+    provider = EmptyBatchProvider()
+    service = MarketService(provider=provider)
+
+    response = service.get_quotes(["ITSA4", "PETR4"])
+
+    assert [quote.ticker for quote in response.quotes] == ["ITSA4", "PETR4"]
+    assert response.unavailable_symbols == []
+    assert provider.calls == 3
+
+
+def test_market_service_falls_back_to_individual_quotes_when_batch_fails():
+    provider = FailingBatchProvider()
+    service = MarketService(provider=provider)
+
+    response = service.get_quotes(["ITSA4", "PETR4"])
+
+    assert [quote.ticker for quote in response.quotes] == ["ITSA4", "PETR4"]
+    assert response.unavailable_symbols == []
+    assert provider.calls == 3

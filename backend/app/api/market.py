@@ -16,6 +16,7 @@ from app.schemas.market import (
     QuoteResponse,
     QuotesRequest,
     QuotesResponse,
+    ProviderCapabilitiesResponse,
 )
 from app.services.market_service import MarketService
 
@@ -23,6 +24,11 @@ router = APIRouter(
     prefix="/market",
     tags=["Mercado"],
 )
+
+
+@router.get("/provider-capabilities", response_model=ProviderCapabilitiesResponse)
+def get_provider_capabilities(current_user: User = Depends(get_current_active_user)):
+    return MarketService().provider_capabilities()
 
 
 @router.get(

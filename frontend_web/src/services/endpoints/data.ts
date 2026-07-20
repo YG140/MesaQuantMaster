@@ -1,8 +1,10 @@
 import { apiRequest } from "../apiClient";
 import type {
   Asset,
+  AssetIntelligenceSnapshot,
   BacktestingRequest,
   BacktestingResult,
+  BatchAssetAnalysisResponse,
   Brokerage,
   BuildPortfolioRequest,
   BuildPortfolioResponse,
@@ -10,6 +12,8 @@ import type {
   InitialPortfolioImport,
   InvestmentCreate,
   MarketAsset,
+  MacroIndicatorSnapshot,
+  ProviderCapabilities,
   MarketQuote,
   Operation,
   PortfolioSummary,
@@ -22,6 +26,12 @@ export const endpoints = {
   dashboard: (token: string) => apiRequest<DashboardSummary>("/dashboard", { token }),
   portfolio: (token: string) => apiRequest<PortfolioSummary>("/portfolio", { token }),
   operations: (token: string) => apiRequest<Operation[]>("/operations", { token }),
+  positionOperations: (token: string, assetId: string) =>
+    apiRequest<Operation[]>(`/portfolio/positions/${assetId}/operations`, { token }),
+  updateOperation: (token: string, operationId: string, payload: Partial<Operation>) =>
+    apiRequest<Operation>(`/operations/${operationId}`, { method: "PATCH", token, body: payload }),
+  deleteOperation: (token: string, operationId: string) =>
+    apiRequest<void>(`/operations/${operationId}`, { method: "DELETE", token }),
   brokerages: (token: string) => apiRequest<Brokerage[]>("/brokerages", { token }),
   createBrokerage: (token: string, name: string) =>
     apiRequest<Brokerage>("/brokerages", {
@@ -83,4 +93,24 @@ export const endpoints = {
       token,
       body: payload,
     }),
+  assetIntelligence: (token: string, symbol: string) =>
+    apiRequest<AssetIntelligenceSnapshot>(
+      `/intelligence/assets/${encodeURIComponent(symbol)}`,
+      { token },
+    ),
+  analyzeAssets: (token: string, symbols: string[]) =>
+    apiRequest<BatchAssetAnalysisResponse>("/intelligence/assets/analyze", {
+      method: "POST",
+      token,
+      body: { symbols },
+    }),
+  portfolioMarketRecommendations: (token: string) =>
+    apiRequest<BatchAssetAnalysisResponse>(
+      "/intelligence/portfolio/recommendations",
+      { token },
+    ),
+  macroContext: (token: string) =>
+    apiRequest<MacroIndicatorSnapshot[]>("/intelligence/macro", { token }),
+  providerCapabilities: (token: string) =>
+    apiRequest<ProviderCapabilities>("/market/provider-capabilities", { token, timeoutMs: 60_000 }),
 };

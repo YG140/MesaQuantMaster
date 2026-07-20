@@ -126,6 +126,7 @@ export type Operation = {
   fees: string;
   taxes: string;
   notes: string | null;
+  source?: string | null;
 };
 
 export type Asset = {
@@ -367,4 +368,115 @@ export type BuildPortfolioResponse = {
     data_status: string;
   }>;
   generated_at: string;
+};
+
+export type NormalizedIndicator = {
+  key: string;
+  label: string;
+  description?: string | null;
+  category?: string | null;
+  layer?: string | null;
+  value: string | number | null;
+  display_value: string | null;
+  unit: string;
+  status: string;
+  impact?: string | null;
+  source: string;
+  reference_date: string | null;
+  collected_at: string;
+  confidence: string;
+  period: string | null;
+  unavailable_reason: string | null;
+  sector_comparison?: string | null;
+  historical_comparison?: string | null;
+  explanation?: string | null;
+};
+
+export type DataQualityReport = {
+  data_quality_score: string | number | null;
+  data_completeness: string | number;
+  data_freshness: string | number;
+  anomaly_flags: string[];
+  missing_indicators: string[];
+  non_applicable_indicators: string[];
+  recommendation_blocked: boolean;
+  blocking_reason: string | null;
+};
+
+export type AssetValuationAssessment = {
+  status: string;
+  methods: string[];
+  used_indicators: string[];
+  missing_indicators: string[];
+  historical_comparison: string | null;
+  peer_comparison: string | null;
+  estimated_range_low: string | number | null;
+  estimated_range_high: string | number | null;
+  confidence: string;
+  data_date: string | null;
+};
+
+export type AssetIntelligenceSnapshot = {
+  asset_id: string | null;
+  symbol: string;
+  name: string | null;
+  asset_class: string;
+  current_price: string | number | null;
+  currency: string | null;
+  market_updated_at: string | null;
+  indicators: NormalizedIndicator[];
+  quality_score: string | number | null;
+  valuation_score: string | number | null;
+  income_score: string | number | null;
+  growth_score: string | number | null;
+  debt_score: string | number | null;
+  risk_score: string | number | null;
+  liquidity_score: string | number | null;
+  data_quality_score: string | number | null;
+  strategy_fit_score: string | number | null;
+  overall_score: string | number | null;
+  recommendation: string;
+  valuation_status: string;
+  valuation: AssetValuationAssessment;
+  confidence: string;
+  coverage_percentage: string | number;
+  available_indicators_count: number;
+  missing_indicators_count: number;
+  stale_indicators_count: number;
+  non_applicable_indicators_count: number;
+  anomaly_flags: string[];
+  data_quality: DataQualityReport | null;
+  positive_reasons: string[];
+  warning_reasons: string[];
+  missing_data: string[];
+  calculated_at: string;
+};
+
+export type BatchAssetAnalysisResponse = {
+  snapshots: AssetIntelligenceSnapshot[];
+  errors: Array<{ symbol: string; message: string }>;
+  provider_calls: number;
+  calculated_at: string;
+};
+
+export type MacroIndicatorSnapshot = {
+  key: string;
+  label: string;
+  value: string | number | null;
+  period: string | null;
+  source: string;
+  updated_at: string | null;
+  frequency: string;
+  history_available: boolean;
+  state: string;
+};
+
+export type ProviderCapabilities = {
+  provider: string;
+  configured: boolean;
+  reachable: boolean | null;
+  supported_domains: string[];
+  accessible_domains: string[];
+  restricted_domains: string[];
+  last_checked_at: string;
 };

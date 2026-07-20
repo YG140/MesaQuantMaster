@@ -486,6 +486,23 @@ textarea {
   overflow-x: auto;
 }
 
+.details-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+.details-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.details-panel .table-wrap {
+  margin-top: 10px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

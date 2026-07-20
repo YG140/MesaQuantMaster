@@ -49,6 +49,14 @@ class OperationRepository:
         self.db.refresh(operation)
         return operation
 
+    def list_by_user_and_asset(self, user_id: UUID, asset_id: UUID) -> list[Operation]:
+        return (
+            self.db.query(Operation)
+            .filter(Operation.user_id == user_id, Operation.asset_id == asset_id)
+            .order_by(Operation.operation_date.asc(), Operation.created_at.asc())
+            .all()
+        )
+
     def delete(self, operation: Operation) -> None:
         self.db.delete(operation)
         self.db.commit()

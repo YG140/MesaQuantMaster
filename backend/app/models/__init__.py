@@ -5,6 +5,8 @@ from app.models.operation import Operation
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
 from app.models.watchlist import Watchlist
 from app.models.alert import Alert
+from app.models.manual_indicator import ManualIndicator
+from app.models.indicator_snapshot import IndicatorSnapshot
 
 __all__ = [
     "User",
@@ -15,4 +17,6 @@ __all__ = [
     "PortfolioPolicyAllocation",
     "Watchlist",
     "Alert",
+    "ManualIndicator",
+    "IndicatorSnapshot",
 ]

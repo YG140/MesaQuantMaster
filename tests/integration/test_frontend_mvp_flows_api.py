@@ -156,7 +156,18 @@ def test_invalid_import_line_blocks_entire_import(client, db_session):
     assert db_session.query(Asset).count() == 0
 
 
-def test_imported_positions_use_invested_allocation_when_no_quotes(client):
+def test_imported_positions_use_invested_allocation_when_no_quotes(client, monkeypatch):
+    from app.schemas.market import QuotesResponse
+    from app.services.market_service import MarketService
+
+    def no_quotes(self, symbols: list[str]) -> QuotesResponse:
+        return QuotesResponse(
+            quotes=[],
+            unavailable_symbols=[symbol.upper() for symbol in symbols],
+        )
+
+    monkeypatch.setattr(MarketService, "get_quotes", no_quotes)
+
     brokerage = client.post("/brokerages", json={"name": "BTG"}).json()
     client.post(
         "/portfolio/import-initial",

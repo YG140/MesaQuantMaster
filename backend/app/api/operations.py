@@ -113,7 +113,7 @@ def update_operation(
                 detail="Acesso negado.",
             )
 
-        return service.update(operation_id, operation)
+        return service.update(operation_id, operation, current_user.id)
 
     except ValueError as e:
         raise HTTPException(
@@ -142,10 +142,26 @@ def delete_operation(
                 detail="Acesso negado.",
             )
 
-        service.delete(operation_id)
+        service.delete(operation_id, current_user.id)
 
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
+        ) from e
+
+
+@router.patch("/{operation_id}", response_model=OperationResponse)
+def patch_operation(
+    operation_id: UUID,
+    operation: OperationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        return get_service(db).update(operation_id, operation, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
