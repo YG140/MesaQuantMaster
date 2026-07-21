@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -70,6 +71,7 @@ def get_market_intelligence_service(db: Session) -> MarketIntelligenceService:
         portfolio_service=portfolio_service,
         policy_repository=PortfolioPolicyRepository(db),
         snapshot_repository=IndicatorSnapshotRepository(db),
+        manual_repository=ManualIndicatorRepository(db),
     )
 
 
@@ -267,15 +269,10 @@ def get_portfolio_market_recommendations(
 
 @router.get("/macro", response_model=list[MacroIndicatorSnapshot])
 def get_macro_context(
+    db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_active_user),
 ):
-    return [
-        MacroIndicatorSnapshot(
-            key=item.key,
-            label=item.label,
-            source=item.source,
-            frequency=item.frequency,
-            state=item.state,
-        )
-        for item in MACRO_INDICATOR_REGISTRY
-    ]
+    service = get_market_intelligence_service(db)
+    return service.resolver.resolve_macro(
+        MACRO_INDICATOR_REGISTRY, datetime.now(timezone.utc)
+    )

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     BRAPI_QUOTE_CACHE_SECONDS: int = 60
     BRAPI_SEARCH_CACHE_SECONDS: int = 600
     BRAPI_PROFILE_CACHE_SECONDS: int = 3600
+    TESOURO_TRANSPARENTE_DATASET_URL: str = ""
 
     @field_validator("FRONTEND_ORIGINS", mode="before")
     @classmethod

@@ -57,6 +57,12 @@ class IndicatorNormalizationService:
         "shares_outstanding": ("sharesOutstanding",),
         "monthly_return": ("monthlyReturn",),
         "segment": ("segmentType", "segmentoAtuacao"),
+        "treasury_title": ("bondType", "name"),
+        "indexer": ("indexer",),
+        "treasury_rate": ("buyRate", "sellRate"),
+        "maturity_date": ("maturityDate",),
+        "duration": ("durationYears", "durationDays"),
+        "market_price": ("buyPrice", "sellPrice", "basePrice"),
     }
 
     def normalize_quote(

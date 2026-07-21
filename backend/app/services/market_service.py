@@ -24,6 +24,7 @@ class MarketService:
     _search_cache: TTLCache[list[MarketAssetResponse]] = TTLCache()
     _quote_cache: TTLCache[QuoteResponse] = TTLCache()
     _profile_cache: TTLCache[MarketProfileResponse] = TTLCache()
+    _restricted_domains: set[str] = set()
 
     def __init__(self, provider: BaseMarketProvider | None = None):
         self.provider = provider or ProviderFactory.get_provider()
@@ -274,16 +275,35 @@ class MarketService:
         )
 
     def get_stock_dataset(self, dataset: str, symbols: list[str], **params):
-        return self.provider.get_stock_dataset(dataset, symbols, **params)
+        capability = f"stocks:{dataset}"
+        if capability in self._restricted_domains:
+            raise MarketPermissionError(
+                "Recurso BRAPI não permitido pelo plano configurado."
+            )
+        try:
+            return self.provider.get_stock_dataset(dataset, symbols, **params)
+        except MarketPermissionError:
+            self._restricted_domains.add(capability)
+            raise
 
     def get_fii_dataset(self, dataset: str, symbols: list[str], **params):
-        return self.provider.get_fii_dataset(dataset, symbols, **params)
+        capability = f"fii:{dataset}"
+        if capability in self._restricted_domains:
+            raise MarketPermissionError(
+                "Recurso BRAPI não permitido pelo plano configurado."
+            )
+        try:
+            return self.provider.get_fii_dataset(dataset, symbols, **params)
+        except MarketPermissionError:
+            self._restricted_domains.add(capability)
+            raise
 
     @classmethod
     def clear_caches(cls) -> None:
         cls._search_cache.clear()
         cls._quote_cache.clear()
         cls._profile_cache.clear()
+        cls._restricted_domains.clear()
 
     def _limited_mode(self) -> bool:
         return bool(getattr(self.provider, "limited_mode", False))
