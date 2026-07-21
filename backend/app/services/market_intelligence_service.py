@@ -33,6 +33,7 @@ from app.services.indicator_normalization_service import (
 )
 from app.services.indicator_validation_service import IndicatorValidationService
 from app.services.market_service import MarketService
+from app.services.indicator_resolver_service import IndicatorResolverService
 from app.services.portfolio_service import PortfolioService
 
 
@@ -47,6 +48,8 @@ class MarketIntelligenceService:
         normalizer: IndicatorNormalizationService | None = None,
         validator: IndicatorValidationService | None = None,
         snapshot_repository=None,
+        manual_repository=None,
+        resolver: IndicatorResolverService | None = None,
     ):
         self.market_service = market_service
         self.asset_repository = asset_repository
@@ -55,6 +58,12 @@ class MarketIntelligenceService:
         self.normalizer = normalizer or IndicatorNormalizationService()
         self.validator = validator or IndicatorValidationService()
         self.snapshot_repository = snapshot_repository
+        self.resolver = resolver or IndicatorResolverService(
+            market_service=market_service,
+            normalizer=self.normalizer,
+            snapshot_repository=snapshot_repository,
+            manual_repository=manual_repository,
+        )
 
     def analyze_asset(self, symbol: str, user_id) -> AssetIntelligenceSnapshot:
         response = self.analyze_assets(
@@ -113,6 +122,7 @@ class MarketIntelligenceService:
                     position=positions.get(symbol),
                     policy=policy,
                     collected_at=now,
+                    user_id=user_id,
                 )
             )
 
@@ -154,6 +164,7 @@ class MarketIntelligenceService:
         position: PortfolioPosition | None,
         policy,
         collected_at: datetime,
+        user_id=None,
     ) -> AssetIntelligenceSnapshot:
         asset_type = (
             local_asset.asset_type
@@ -178,11 +189,14 @@ class MarketIntelligenceService:
                 asset_type=asset_class.value,
                 collected_at=collected_at,
             )
-        provider_payloads = self._load_detailed_payloads(symbol, asset_class)
-        if provider_payloads:
-            indicators = self.normalizer.merge_provider_payloads(
-                indicators, provider_payloads, collected_at=collected_at
-            )
+        indicators = self.resolver.resolve_asset(
+            symbol=symbol,
+            asset_class=asset_class,
+            asset_id=local_asset.id if local_asset is not None else None,
+            user_id=user_id,
+            baseline=indicators,
+            collected_at=collected_at,
+        )
         indicators, data_quality = self.validator.validate(
             indicators,
             sector=(
@@ -240,43 +254,6 @@ class MarketIntelligenceService:
                 snapshot.symbol, snapshot.asset_class.value, snapshot.indicators
             )
         return snapshot
-
-    def _load_detailed_payloads(
-        self, symbol: str, asset_class: InvestmentClass
-    ) -> list[dict]:
-        payloads = []
-        datasets = (
-            ["indicators", "properties", "portfolio", "reports", "dividends"]
-            if asset_class == InvestmentClass.FII
-            else [
-                "statistics",
-                "financial_data",
-                "balance_sheet",
-                "income_statement",
-                "cash_flow",
-                "dividends",
-            ]
-        )
-        for dataset in datasets:
-            try:
-                if asset_class == InvestmentClass.FII:
-                    payloads.append(
-                        self.market_service.get_fii_dataset(dataset, [symbol])
-                    )
-                else:
-                    period = (
-                        "annual"
-                        if dataset in {"balance_sheet", "income_statement", "cash_flow"}
-                        else None
-                    )
-                    payloads.append(
-                        self.market_service.get_stock_dataset(
-                            dataset, [symbol], mode="current", period=period
-                        )
-                    )
-            except Exception:
-                continue
-        return payloads
 
     def _missing_snapshot(
         self,

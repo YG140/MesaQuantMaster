@@ -38,9 +38,7 @@ class IndicatorSnapshotRepository:
                     unit=indicator.unit,
                     period=indicator.period,
                     source=indicator.source,
-                    source_type=(
-                        "official" if indicator.source != "BRAPI" else "provider"
-                    ),
+                    source_type=getattr(indicator, "source_type", "provider"),
                     reference_date=indicator.reference_date,
                     collected_at=indicator.collected_at,
                     valid_until=valid_until,
@@ -55,3 +53,24 @@ class IndicatorSnapshotRepository:
             .order_by(IndicatorSnapshot.collected_at.desc())
             .all()
         )
+
+    def valid_for_symbol(
+        self, symbol: str, now: datetime | None = None
+    ) -> list[IndicatorSnapshot]:
+        reference = now or datetime.now(timezone.utc)
+        rows = (
+            self.db.query(IndicatorSnapshot)
+            .filter(
+                IndicatorSnapshot.symbol == symbol.upper().strip(),
+                IndicatorSnapshot.valid_until > reference,
+            )
+            .order_by(
+                IndicatorSnapshot.indicator_key,
+                IndicatorSnapshot.collected_at.desc(),
+            )
+            .all()
+        )
+        latest = {}
+        for row in rows:
+            latest.setdefault(row.indicator_key, row)
+        return list(latest.values())

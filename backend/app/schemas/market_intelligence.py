@@ -122,8 +122,11 @@ class NormalizedIndicator(BaseModel):
     unit: str
     status: IndicatorStatus
     source: str
+    source_type: str = "provider"
     reference_date: datetime | None = None
     collected_at: datetime
+    valid_until: datetime | None = None
+    freshness_status: str = "current"
     confidence: ConfidenceLevel
     period: str | None = None
     unavailable_reason: str | None = None
