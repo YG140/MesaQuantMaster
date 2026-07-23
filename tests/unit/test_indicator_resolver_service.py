@@ -228,3 +228,36 @@ def test_total_absence_does_not_become_zero():
     result = resolve(resolver())
     assert result.value is None
     assert result.status == IndicatorStatus.UNAVAILABLE
+
+
+def test_cvm_persisted_data_fills_gap_before_manual():
+    account = SimpleNamespace(
+        normalized_key="price_to_book",
+        normalized_value=Decimal("1.40"),
+        acquisition_method="reported",
+        account_code="2.03",
+        account_description="Patrimônio Líquido",
+        original_value=Decimal("1.40"),
+    )
+    document = SimpleNamespace(
+        period_end=date(2026, 6, 30),
+        collected_at=NOW,
+        period_kind="year_to_date",
+        document_type="ITR",
+        scope="consolidated",
+    )
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+
+    class CvmRepository:
+        def latest_normalized(self, asset_id):
+            return [(account, document, issuer)]
+
+    service = IndicatorResolverService(
+        market_service=FakeMarket(MarketPermissionError("plano")),
+        normalizer=IndicatorNormalizationService(),
+        cvm_repository=CvmRepository(),
+    )
+    result = resolve(service, asset_id="asset")
+    assert result.value == Decimal("1.40")
+    assert result.source_type == "official"
+    assert result.provenance["document_type"] == "ITR"

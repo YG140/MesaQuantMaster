@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import json
 
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,11 @@ class IndicatorSnapshotRepository:
                     reference_date=indicator.reference_date,
                     collected_at=indicator.collected_at,
                     valid_until=valid_until,
+                    provenance_json=json.dumps(
+                        getattr(indicator, "provenance", {}),
+                        ensure_ascii=False,
+                        default=str,
+                    ),
                 )
             )
         self.db.commit()

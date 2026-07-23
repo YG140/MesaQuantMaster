@@ -1,0 +1,326 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
+
+import httpx
+import pytest
+
+from app.engines.cvm_financial_engine import CvmFinancialEngine
+from app.models.asset import Asset
+from app.models.cvm_financial import CvmFinancialAccount, CvmFinancialDocument
+from app.providers.cvm_open_data_provider import (
+    CvmArchiveError,
+    CvmOpenDataProvider,
+    CvmRawAccount,
+    CvmSizeLimitError,
+)
+from app.repositories.asset_repository import AssetRepository
+from app.repositories.cvm_financial_repository import CvmFinancialRepository
+from app.services.cvm_financial_service import CvmFinancialService
+
+
+COLLECTED = datetime(2026, 7, 20, tzinfo=timezone.utc)
+HEADER_BALANCE = "CNPJ_CIA;DT_REFER;VERSAO;DENOM_CIA;CD_CVM;GRUPO_DFP;MOEDA;ESCALA_MOEDA;ORDEM_EXERC;DT_FIM_EXERC;CD_CONTA;DS_CONTA;VL_CONTA;ST_CONTA_FIXA\n"
+HEADER_FLOW = "CNPJ_CIA;DT_REFER;VERSAO;DENOM_CIA;CD_CVM;GRUPO_DFP;MOEDA;ESCALA_MOEDA;ORDEM_EXERC;DT_INI_EXERC;DT_FIM_EXERC;CD_CONTA;DS_CONTA;VL_CONTA;ST_CONTA_FIXA\n"
+
+
+def row(
+    statement="BPA",
+    *,
+    version=1,
+    scope="con",
+    code="1",
+    value="123.45",
+    order="ÚLTIMO",
+    start=None,
+    reference="2025-12-31",
+    end="2025-12-31",
+):
+    group = f"DF {'Consolidado' if scope == 'con' else 'Individual'} - {statement}"
+    fields = [
+        "12.345.678/0001-90",
+        reference,
+        str(version),
+        "COMPANHIA AÇÃO S.A.",
+        "012345",
+        group,
+        "REAL",
+        "MIL",
+        order,
+    ]
+    if start is not None:
+        fields.append(start)
+    fields.extend([end, code, "Descrição çã", value, "S"])
+    return ";".join(fields) + "\n"
+
+
+def archive_bytes(entries: dict[str, str | bytes]) -> bytes:
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        for name, content in entries.items():
+            archive.writestr(
+                name, content.encode("cp1252") if isinstance(content, str) else content
+            )
+    return output.getvalue()
+
+
+def write_archive(tmp_path: Path, entries: dict[str, str | bytes]) -> Path:
+    path = tmp_path / "sample.zip"
+    path.write_bytes(archive_bytes(entries))
+    return path
+
+
+def provider(tmp_path, **kwargs):
+    return CvmOpenDataProvider(cache_dir=tmp_path / "cache", **kwargs)
+
+
+def test_valid_dfp_parses_encoding_scale_decimal_cnpj_and_cvm_code(tmp_path):
+    path = write_archive(
+        tmp_path, {"dfp_cia_aberta_BPA_con_2025.csv": HEADER_BALANCE + row()}
+    )
+    account = list(provider(tmp_path).iter_accounts(path, "DFP", COLLECTED))[0]
+    assert account.account_description == "Descrição çã"
+    assert account.original_value == Decimal("123.45")
+    assert account.normalized_value == Decimal("123450.00")
+    assert account.cnpj == "12345678000190"
+    assert account.cvm_code == "012345"
+    assert account.period_kind == "annual"
+
+
+def test_valid_itr_preserves_year_to_date_period(tmp_path):
+    path = write_archive(
+        tmp_path,
+        {
+            "itr_cia_aberta_DRE_con_2025.csv": HEADER_FLOW
+            + row("DRE", code="3.01", start="2025-01-01")
+        },
+    )
+    account = list(provider(tmp_path).iter_accounts(path, "ITR", COLLECTED))[0]
+    assert account.period_kind == "year_to_date"
+    assert account.period_start == date(2025, 1, 1)
+
+
+def test_penultimate_exercise_is_not_imported(tmp_path):
+    path = write_archive(
+        tmp_path,
+        {"dfp_cia_aberta_BPA_con_2025.csv": HEADER_BALANCE + row(order="PENÚLTIMO")},
+    )
+    assert list(provider(tmp_path).iter_accounts(path, "DFP")) == []
+
+
+def test_direct_and_indirect_cash_flow_are_supported(tmp_path):
+    entries = {
+        "dfp_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW
+        + row("DFC_MD", code="6.01", start="2025-01-01"),
+        "dfp_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW
+        + row("DFC_MI", code="6.03", start="2025-01-01"),
+    }
+    accounts = list(
+        provider(tmp_path).iter_accounts(write_archive(tmp_path, entries), "DFP")
+    )
+    assert {item.statement_type for item in accounts} == {"DFC_MD", "DFC_MI"}
+    assert {CvmFinancialEngine.normalized_key(item) for item in accounts} == {
+        "operating_cash_flow",
+        "financing_cash_flow",
+    }
+
+
+def test_unmapped_or_non_fixed_account_remains_unmapped(tmp_path):
+    path = write_archive(
+        tmp_path, {"dfp_cia_aberta_BPA_con_2025.csv": HEADER_BALANCE + row(code="1.99")}
+    )
+    account = list(provider(tmp_path).iter_accounts(path, "DFP"))[0]
+    assert CvmFinancialEngine.normalized_key(account) is None
+
+
+def raw_itr(value, end, start=date(2025, 1, 1)):
+    return CvmRawAccount(
+        "ITR",
+        "DRE",
+        "consolidated",
+        "123",
+        "1",
+        "CIA",
+        end,
+        1,
+        start,
+        end,
+        "year_to_date",
+        "REAL",
+        "MIL",
+        "3.11",
+        "Lucro",
+        Decimal(value),
+        Decimal(value) * 1000,
+        True,
+        COLLECTED,
+    )
+
+
+def test_isolated_quarter_is_calculated_only_from_compatible_accumulated_periods():
+    previous = raw_itr("10", date(2025, 3, 31))
+    current = raw_itr("25", date(2025, 6, 30))
+    result = CvmFinancialEngine.isolated_quarter(current, previous)
+    assert result is not None
+    assert result.normalized_value == Decimal("15000")
+    assert result.period_kind == "quarterly_calculated"
+
+
+def test_isolated_quarter_is_not_calculated_when_periods_are_incompatible():
+    previous = raw_itr("10", date(2025, 3, 31), date(2025, 2, 1))
+    assert (
+        CvmFinancialEngine.isolated_quarter(raw_itr("25", date(2025, 6, 30)), previous)
+        is None
+    )
+
+
+def test_invalid_zip_and_path_traversal_are_rejected(tmp_path):
+    invalid = tmp_path / "invalid.zip"
+    invalid.write_bytes(b"not a zip")
+    with pytest.raises(CvmArchiveError):
+        provider(tmp_path).validate_archive(invalid)
+    traversal = write_archive(tmp_path, {"../escape.csv": "x"})
+    with pytest.raises(CvmArchiveError, match="inseguro"):
+        provider(tmp_path).validate_archive(traversal)
+
+
+def test_uncompressed_size_limit_is_enforced(tmp_path):
+    path = write_archive(tmp_path, {"large.csv": b"x" * 100})
+    with pytest.raises(CvmSizeLimitError):
+        provider(tmp_path, max_uncompressed_bytes=50).validate_archive(path)
+
+
+def test_download_uses_fresh_cache_without_http_call(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    archive = cache / "dfp_cia_aberta_2025.zip"
+    archive.write_bytes(archive_bytes({"ok.csv": "x"}))
+    (cache / "dfp_cia_aberta_2025.json").write_text(
+        '{"checked_at":"2026-07-20T00:00:00+00:00","collected_at":"2026-07-20T00:00:00+00:00","size_bytes":100}',
+        encoding="utf-8",
+    )
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
+
+    cvm = CvmOpenDataProvider(
+        cache_dir=cache,
+        cache_ttl_hours=99999,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = cvm.download_year("DFP", 2025)
+    assert result.cache_hit is True
+    assert calls == 0
+
+
+def test_stale_cache_uses_conditional_headers_and_304(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    archive = cache / "dfp_cia_aberta_2025.zip"
+    archive.write_bytes(archive_bytes({"ok.csv": "x"}))
+    (cache / "dfp_cia_aberta_2025.json").write_text(
+        '{"checked_at":"2020-01-01T00:00:00+00:00","collected_at":"2020-01-01T00:00:00+00:00","etag":"abc","last_modified":"y"}',
+        encoding="utf-8",
+    )
+
+    def handler(request):
+        assert request.headers["if-none-match"] == "abc"
+        assert request.headers["if-modified-since"] == "y"
+        return httpx.Response(304)
+
+    cvm = CvmOpenDataProvider(
+        cache_dir=cache,
+        cache_ttl_hours=1,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    assert cvm.download_year("DFP", 2025).cache_hit is True
+
+
+def test_import_is_idempotent_and_prefers_latest_consolidated_version(
+    tmp_path, db_session
+):
+    content = HEADER_BALANCE + row(version=1, value="10") + row(version=2, value="20")
+    individual = HEADER_BALANCE + row(version=3, scope="ind", value="99")
+    path = write_archive(
+        tmp_path,
+        {
+            "dfp_cia_aberta_BPA_con_2025.csv": content,
+            "dfp_cia_aberta_BPA_ind_2025.csv": individual,
+        },
+    )
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    first = service.import_archive(path, "DFP", COLLECTED)
+    second = service.import_archive(path, "DFP", COLLECTED)
+    assert first["accounts_imported"] == 1
+    assert second["accounts_imported"] == 0
+    stored = CvmFinancialRepository(db_session).list_issuers()
+    assert len(stored) == 1
+    stored_account = db_session.query(CvmFinancialAccount).one()
+    stored_document = db_session.get(CvmFinancialDocument, stored_account.document_id)
+    assert stored_account.normalized_value == Decimal("20000")
+    assert stored_document.scope == "consolidated"
+    assert stored_document.version == 2
+
+
+def test_asset_without_explicit_issuer_link_is_pending(db_session):
+    asset = Asset(ticker="TEST3", name="Teste", asset_type="STOCK", currency="BRL")
+    db_session.add(asset)
+    db_session.commit()
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(Path(".pytest_cache")),
+    )
+    result = service.asset_link(asset.id)
+    assert result["status"] == "pending"
+    assert result["issuer"] is None
+
+
+def test_itr_compatible_accumulated_values_persist_calculated_quarter(
+    tmp_path, db_session
+):
+    content = (
+        HEADER_FLOW
+        + row(
+            "DRE",
+            code="3.11",
+            value="10",
+            start="2025-01-01",
+            reference="2025-03-31",
+            end="2025-03-31",
+        )
+        + row(
+            "DRE",
+            code="3.11",
+            value="25",
+            start="2025-01-01",
+            reference="2025-06-30",
+            end="2025-06-30",
+        )
+    )
+    path = write_archive(tmp_path, {"itr_cia_aberta_DRE_con_2025.csv": content})
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    service.import_archive(path, "ITR", COLLECTED)
+    calculated = (
+        db_session.query(CvmFinancialAccount)
+        .filter(CvmFinancialAccount.acquisition_method == "calculated")
+        .one()
+    )
+    document = db_session.get(CvmFinancialDocument, calculated.document_id)
+    assert calculated.normalized_value == Decimal("15000")
+    assert document.period_kind == "quarterly_calculated"
