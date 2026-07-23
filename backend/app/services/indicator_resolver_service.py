@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+import json
 
 from app.core.config import settings
 from app.providers.bcb_sgs_provider import BcbSgsProvider
@@ -9,6 +10,7 @@ from app.providers.cvm_open_data_provider import CvmOpenDataProvider
 from app.providers.tesouro_transparente_provider import TesouroTransparenteProvider
 from app.repositories.indicator_snapshot_repository import IndicatorSnapshotRepository
 from app.repositories.manual_indicator_repository import ManualIndicatorRepository
+from app.repositories.cvm_financial_repository import CvmFinancialRepository
 from app.schemas.market_intelligence import (
     AnalysisImpact,
     ConfidenceLevel,
@@ -37,6 +39,7 @@ class IndicatorResolverService:
         bcb_provider: BcbSgsProvider | None = None,
         treasury_provider: TesouroTransparenteProvider | None = None,
         cvm_provider: CvmOpenDataProvider | None = None,
+        cvm_repository: CvmFinancialRepository | None = None,
     ):
         self.market_service = market_service
         self.normalizer = normalizer
@@ -45,6 +48,7 @@ class IndicatorResolverService:
         self.bcb_provider = bcb_provider or BcbSgsProvider()
         self.treasury_provider = treasury_provider or self._default_treasury_provider()
         self.cvm_provider = cvm_provider or CvmOpenDataProvider()
+        self.cvm_repository = cvm_repository
 
     def resolve_asset(
         self,
@@ -75,12 +79,8 @@ class IndicatorResolverService:
                 source_type="official",
             )
 
-        # Contrato real atual: CVM é somente sincronização agendada, sem DFP/ITR
-        # disponível para resolução síncrona nesta etapa.
-        try:
-            self.cvm_provider.synchronization_metadata()
-        except Exception:
-            pass
+        if asset_id is not None and self._has_unresolved(resolved):
+            self._apply_cvm(resolved, asset_id, collected_at)
         if asset_id is not None and self.manual_repository is not None:
             self._apply_manual(resolved, user_id, asset_id, collected_at)
         return list(resolved.values())
@@ -154,6 +154,9 @@ class IndicatorResolverService:
                     "confidence": ConfidenceLevel.HIGH,
                     "period": row.period,
                     "unavailable_reason": None,
+                    "provenance": json.loads(
+                        getattr(row, "provenance_json", None) or "{}"
+                    ),
                 }
             )
 
@@ -246,6 +249,62 @@ class IndicatorResolverService:
                     "period": "informado pelo usuário",
                     "unavailable_reason": None,
                     "impact": AnalysisImpact.INFORMATIONAL,
+                }
+            )
+
+    def _apply_cvm(self, resolved, asset_id, collected_at) -> None:
+        if self.cvm_repository is None:
+            return
+        grouped = {}
+        for account, document, issuer in self.cvm_repository.latest_normalized(
+            asset_id
+        ):
+            grouped.setdefault(account.normalized_key, []).append(
+                (account, document, issuer)
+            )
+        for key, rows in grouped.items():
+            current = resolved.get(key)
+            if current is None or current.status == IndicatorStatus.AVAILABLE:
+                continue
+            value = sum(
+                (Decimal(account.normalized_value) for account, _, _ in rows),
+                Decimal("0"),
+            )
+            account, document, issuer = rows[0]
+            reference = datetime.combine(
+                document.period_end, time.min, tzinfo=timezone.utc
+            )
+            resolved[key] = current.model_copy(
+                update={
+                    "value": value,
+                    "display_value": display_value(value, "currency", None),
+                    "unit": "currency",
+                    "status": IndicatorStatus.AVAILABLE,
+                    "source": "CVM Dados Abertos",
+                    "source_type": "official",
+                    "reference_date": reference,
+                    "collected_at": self._aware(document.collected_at) or collected_at,
+                    "valid_until": reference + timedelta(days=100),
+                    "freshness_status": "current",
+                    "confidence": ConfidenceLevel.HIGH,
+                    "period": document.period_kind,
+                    "unavailable_reason": None,
+                    "provenance": {
+                        "provider": "cvm",
+                        "document_type": document.document_type,
+                        "scope": document.scope,
+                        "method": account.acquisition_method,
+                        "cnpj": issuer.cnpj,
+                        "cvm_code": issuer.cvm_code,
+                        "accounts": [
+                            {
+                                "code": item.account_code,
+                                "description": item.account_description,
+                                "original_value": str(item.original_value),
+                            }
+                            for item, _, _ in rows
+                        ],
+                    },
                 }
             )
 

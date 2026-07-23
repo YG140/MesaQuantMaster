@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Numeric, String
+from sqlalchemy import DateTime, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,3 +32,4 @@ class IndicatorSnapshot(Base):
         DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )
     valid_until: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)

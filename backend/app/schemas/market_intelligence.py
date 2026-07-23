@@ -127,6 +127,7 @@ class NormalizedIndicator(BaseModel):
     collected_at: datetime
     valid_until: datetime | None = None
     freshness_status: str = "current"
+    provenance: dict = Field(default_factory=dict)
     confidence: ConfidenceLevel
     period: str | None = None
     unavailable_reason: str | None = None

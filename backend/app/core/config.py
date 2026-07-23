@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     BRAPI_SEARCH_CACHE_SECONDS: int = 600
     BRAPI_PROFILE_CACHE_SECONDS: int = 3600
     TESOURO_TRANSPARENTE_DATASET_URL: str = ""
+    CVM_CACHE_DIR: str = ".cache/cvm"
+    CVM_TIMEOUT_SECONDS: float = 60
+    CVM_MAX_DOWNLOAD_BYTES: int = 83886080
+    CVM_MAX_UNCOMPRESSED_BYTES: int = 1073741824
+    CVM_CACHE_TTL_HOURS: int = 24
 
     @field_validator("FRONTEND_ORIGINS", mode="before")
     @classmethod

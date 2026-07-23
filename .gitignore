@@ -18,11 +18,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.cache/cvm/
 .coverage
 htmlcov/
 test_mesa_quant_master.db
 *.db-journal
 *.log
+cvm_sample_*.zip
 
 # Python packaging/build artifacts
 build/

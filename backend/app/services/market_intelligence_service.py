@@ -49,6 +49,7 @@ class MarketIntelligenceService:
         validator: IndicatorValidationService | None = None,
         snapshot_repository=None,
         manual_repository=None,
+        cvm_repository=None,
         resolver: IndicatorResolverService | None = None,
     ):
         self.market_service = market_service
@@ -63,6 +64,7 @@ class MarketIntelligenceService:
             normalizer=self.normalizer,
             snapshot_repository=snapshot_repository,
             manual_repository=manual_repository,
+            cvm_repository=cvm_repository,
         )
 
     def analyze_asset(self, symbol: str, user_id) -> AssetIntelligenceSnapshot:

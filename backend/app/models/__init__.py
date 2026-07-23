@@ -7,6 +7,13 @@ from app.models.watchlist import Watchlist
 from app.models.alert import Alert
 from app.models.manual_indicator import ManualIndicator
 from app.models.indicator_snapshot import IndicatorSnapshot
+from app.models.cvm_financial import (
+    AssetCvmIssuer,
+    CvmFinancialAccount,
+    CvmFinancialDocument,
+    CvmIssuer,
+    CvmSyncRun,
+)
 
 __all__ = [
     "User",
@@ -19,4 +26,9 @@ __all__ = [
     "Alert",
     "ManualIndicator",
     "IndicatorSnapshot",
+    "CvmIssuer",
+    "AssetCvmIssuer",
+    "CvmFinancialDocument",
+    "CvmFinancialAccount",
+    "CvmSyncRun",
 ]
