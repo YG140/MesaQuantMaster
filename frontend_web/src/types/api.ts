@@ -129,6 +129,24 @@ export type Operation = {
   source?: string | null;
 };
 
+export type OperationUpdate = {
+  brokerage_id: string | null;
+  operation_type: "BUY" | "SELL";
+  operation_date: string;
+  quantity: string;
+  unit_price: string;
+  fees: string;
+  taxes: string;
+  notes: string | null;
+};
+
+export type PositionDeleteResponse = {
+  asset_id: string;
+  ticker: string;
+  operations_deleted: number;
+  message: string;
+};
+
 export type Asset = {
   id: string;
   ticker: string;

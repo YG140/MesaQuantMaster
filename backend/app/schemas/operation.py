@@ -13,11 +13,11 @@ class OperationBase(BaseModel):
 
     operation_date: date
 
-    quantity: Decimal
-    unit_price: Decimal
+    quantity: Decimal = Field(gt=0)
+    unit_price: Decimal = Field(gt=0)
 
-    fees: Decimal = Decimal("0")
-    taxes: Decimal = Decimal("0")
+    fees: Decimal = Field(default=Decimal("0"), ge=0)
+    taxes: Decimal = Field(default=Decimal("0"), ge=0)
 
     notes: str | None = None
     source: str | None = None
@@ -33,11 +33,11 @@ class OperationUpdate(BaseModel):
 
     operation_date: date | None = None
 
-    quantity: Decimal | None = None
-    unit_price: Decimal | None = None
+    quantity: Decimal | None = Field(default=None, gt=0)
+    unit_price: Decimal | None = Field(default=None, gt=0)
 
-    fees: Decimal | None = None
-    taxes: Decimal | None = None
+    fees: Decimal | None = Field(default=None, ge=0)
+    taxes: Decimal | None = Field(default=None, ge=0)
 
     notes: str | None = None
     source: str | None = None

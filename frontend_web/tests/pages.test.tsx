@@ -52,6 +52,61 @@ function mockEmptyPortfolio() {
 }
 
 describe("paginas autenticadas", () => {
+  it("edita a operação que forma uma posição sem editar o agregado", async () => {
+    let patchBody: unknown;
+    server.use(
+      http.patch(`${api}/operations/:operationId`, async ({ request }) => {
+        patchBody = await request.json();
+        return HttpResponse.json({
+          id: "op-1",
+          asset_id: "asset-1",
+          brokerage_id: "brokerage-1",
+          operation_type: "BUY",
+          operation_date: "2026-07-15",
+          quantity: "12.50000000",
+          unit_price: "37.10",
+          fees: "1",
+          taxes: "0",
+          notes: null,
+        });
+      }),
+    );
+    const user = await login("/carteira");
+    await user.click((await screen.findAllByText("Editar"))[0]);
+    await user.click(await screen.findByRole("button", { name: /Compra em 2026-07-15/ }));
+    const quantity = screen.getByLabelText("Quantidade");
+    await user.clear(quantity);
+    await user.type(quantity, "12.50000000");
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    await waitFor(() => expect(patchBody).toMatchObject({ quantity: "12.50000000" }));
+    expect(await screen.findByText("Operação atualizada e posição recalculada.")).toBeInTheDocument();
+  });
+
+  it("confirma e exclui somente a posição da carteira", async () => {
+    let deleteBody: unknown;
+    server.use(
+      http.delete(`${api}/portfolio/positions/:assetId`, async ({ request }) => {
+        deleteBody = await request.json();
+        return HttpResponse.json({
+          asset_id: "asset-1",
+          ticker: "PETR4",
+          operations_deleted: 1,
+          message: "Posição excluída da carteira.",
+        });
+      }),
+    );
+    const user = await login("/carteira");
+    await user.click((await screen.findAllByText("Excluir da carteira"))[0]);
+
+    expect(await screen.findByText(/O ativo global e os dados de mercado serão preservados/)).toBeInTheDocument();
+    expect(screen.getByText("Operações afetadas")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Excluir da minha carteira" }));
+
+    await waitFor(() => expect(deleteBody).toEqual({ ticker: "PETR4", expected_operations: 1 }));
+    expect(await screen.findByText(/PETR4: 1 operação/)).toBeInTheDocument();
+  });
+
   it("mostra menu correto e nao mostra nomes incorretos", async () => {
     await login();
     expect(screen.getByText("Minha carteira")).toBeInTheDocument();
@@ -266,7 +321,7 @@ describe("paginas autenticadas", () => {
   it("renderiza carteira e historico", async () => {
     const user = await login();
     await user.click(screen.getByText("Minha carteira"));
-    expect(await screen.findByText("Petrobras PN")).toBeInTheDocument();
+    expect((await screen.findAllByText("Petrobras PN")).length).toBeGreaterThan(0);
     expect(screen.getByText("Histórico de movimentações")).toBeInTheDocument();
   });
 

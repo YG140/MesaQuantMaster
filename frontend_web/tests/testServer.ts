@@ -92,6 +92,46 @@ export const handlers = [
       },
     ]),
   ),
+  http.get(`${api}/portfolio/positions/:assetId/operations`, () =>
+    HttpResponse.json([
+      {
+        id: "op-1",
+        asset_id: "asset-1",
+        brokerage_id: "brokerage-1",
+        operation_type: "BUY",
+        operation_date: "2026-07-15",
+        quantity: "10",
+        unit_price: "37.10",
+        fees: "1",
+        taxes: "0",
+        notes: null,
+        source: "initial_import",
+      },
+    ]),
+  ),
+  http.patch(`${api}/operations/:operationId`, async ({ request }) =>
+    HttpResponse.json({
+      id: "op-1",
+      asset_id: "asset-1",
+      brokerage_id: "brokerage-1",
+      operation_type: "BUY",
+      operation_date: "2026-07-15",
+      quantity: "10",
+      unit_price: "37.10",
+      fees: "1",
+      taxes: "0",
+      notes: null,
+      ...(await request.json() as object),
+    }),
+  ),
+  http.delete(`${api}/portfolio/positions/:assetId`, () =>
+    HttpResponse.json({
+      asset_id: "asset-1",
+      ticker: "PETR4",
+      operations_deleted: 1,
+      message: "Posição excluída da carteira.",
+    }),
+  ),
   http.get(`${api}/brokerages`, () =>
     HttpResponse.json([
       {

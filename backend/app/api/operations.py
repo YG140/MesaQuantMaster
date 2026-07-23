@@ -75,17 +75,9 @@ def get_operation(
     service = get_service(db)
 
     try:
-        operation = service.get_by_id(operation_id)
+        return service.get_owned(operation_id, current_user.id)
 
-        if operation.user_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Acesso negado.",
-            )
-
-        return operation
-
-    except ValueError as e:
+    except LookupError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e),
@@ -105,19 +97,16 @@ def update_operation(
     service = get_service(db)
 
     try:
-        current = service.get_by_id(operation_id)
-
-        if current.user_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Acesso negado.",
-            )
-
         return service.update(operation_id, operation, current_user.id)
 
-    except ValueError as e:
+    except LookupError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
 
@@ -134,16 +123,13 @@ def delete_operation(
     service = get_service(db)
 
     try:
-        current = service.get_by_id(operation_id)
-
-        if current.user_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Acesso negado.",
-            )
-
         service.delete(operation_id, current_user.id)
 
+    except LookupError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -160,6 +146,11 @@ def patch_operation(
 ):
     try:
         return get_service(db).update(operation_id, operation, current_user.id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

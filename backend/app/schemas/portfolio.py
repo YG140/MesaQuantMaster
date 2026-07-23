@@ -106,3 +106,15 @@ class InitialPortfolioImportResponse(BaseModel):
     assets_reused: int
     operations_created: int
     brokerage_id: UUID
+
+
+class PositionDeleteRequest(BaseModel):
+    expected_operations: int = Field(gt=0)
+    ticker: str = Field(min_length=1, max_length=20)
+
+
+class PositionDeleteResponse(BaseModel):
+    asset_id: UUID
+    ticker: str
+    operations_deleted: int
+    message: str
