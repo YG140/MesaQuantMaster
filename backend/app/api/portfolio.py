@@ -15,6 +15,8 @@ from app.schemas.portfolio import (
     InvestmentCreate,
     InvestmentCreateResponse,
     PortfolioSummary,
+    PositionDeleteRequest,
+    PositionDeleteResponse,
 )
 from app.services.portfolio_service import PortfolioService
 from app.services.operation_service import OperationService
@@ -40,10 +42,47 @@ def list_position_operations(
     )
     try:
         return service.list_position_operations(current_user.id, asset_id)
-    except ValueError as exc:
+    except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
+        ) from exc
+
+
+@router.delete(
+    "/positions/{asset_id}",
+    response_model=PositionDeleteResponse,
+    summary="Exclui somente as operações do usuário que formam uma posição",
+)
+def delete_position(
+    asset_id: UUID,
+    confirmation: PositionDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    service = OperationService(
+        OperationRepository(db), AssetRepository(db), BrokerageRepository(db)
+    )
+    try:
+        deleted = service.delete_position(
+            current_user.id,
+            asset_id,
+            confirmation.expected_operations,
+            confirmation.ticker,
+        )
+        return PositionDeleteResponse(
+            asset_id=asset_id,
+            ticker=confirmation.ticker.strip().upper(),
+            operations_deleted=deleted,
+            message="Posição excluída da carteira.",
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
 
 

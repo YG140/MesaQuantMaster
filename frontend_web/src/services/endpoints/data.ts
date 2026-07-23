@@ -16,6 +16,8 @@ import type {
   ProviderCapabilities,
   MarketQuote,
   Operation,
+  OperationUpdate,
+  PositionDeleteResponse,
   PortfolioSummary,
   PortfolioIntelligence,
   PortfolioPolicy,
@@ -28,10 +30,16 @@ export const endpoints = {
   operations: (token: string) => apiRequest<Operation[]>("/operations", { token }),
   positionOperations: (token: string, assetId: string) =>
     apiRequest<Operation[]>(`/portfolio/positions/${assetId}/operations`, { token }),
-  updateOperation: (token: string, operationId: string, payload: Partial<Operation>) =>
+  updateOperation: (token: string, operationId: string, payload: OperationUpdate) =>
     apiRequest<Operation>(`/operations/${operationId}`, { method: "PATCH", token, body: payload }),
   deleteOperation: (token: string, operationId: string) =>
     apiRequest<void>(`/operations/${operationId}`, { method: "DELETE", token }),
+  deletePosition: (token: string, assetId: string, ticker: string, expectedOperations: number) =>
+    apiRequest<PositionDeleteResponse>(`/portfolio/positions/${assetId}`, {
+      method: "DELETE",
+      token,
+      body: { ticker, expected_operations: expectedOperations },
+    }),
   brokerages: (token: string) => apiRequest<Brokerage[]>("/brokerages", { token }),
   createBrokerage: (token: string, name: string) =>
     apiRequest<Brokerage>("/brokerages", {

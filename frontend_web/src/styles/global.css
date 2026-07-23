@@ -486,6 +486,107 @@ textarea {
   overflow-x: auto;
 }
 
+.portfolio-cards {
+  display: none;
+}
+
+.position-actions {
+  position: relative;
+}
+
+.position-actions summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.position-actions > div {
+  display: grid;
+  min-width: 170px;
+  position: absolute;
+  z-index: 4;
+  right: 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+
+.position-actions button,
+.operation-list button {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 10px;
+  text-align: left;
+}
+
+.position-actions button:hover,
+.position-actions button:focus-visible,
+.operation-list button:hover,
+.operation-list button:focus-visible {
+  background: var(--surface-2);
+}
+
+.position-actions .danger-link {
+  color: #b42318;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(10 30 34 / 65%);
+}
+
+.modal-card {
+  width: min(680px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--space-5);
+  box-shadow: 0 18px 60px rgb(0 0 0 / 28%);
+}
+
+.operation-list {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.operation-list button {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.confirmation-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.confirmation-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.confirmation-summary dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+}
+
+.form-span {
+  grid-column: 1 / -1;
+}
+
 .details-panel {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -562,5 +663,40 @@ th {
   .page-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .portfolio-table {
+    display: none;
+  }
+
+  .portfolio-cards {
+    display: grid;
+    gap: 12px;
+  }
+
+  .position-card {
+    display: grid;
+    gap: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+  }
+
+  .position-card > div:first-child,
+  .position-card dl div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .position-card dl {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+  }
+
+  .position-card dd {
+    margin: 0;
+    font-weight: 700;
   }
 }
