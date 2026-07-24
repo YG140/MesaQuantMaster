@@ -1,13 +1,13 @@
 """add user-owned manual indicators
 
 Revision ID: 20260720_manual_indicators
-Revises: 20260717_portfolio_policy
+Revises: 20260717_add_portfolio_policy
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "20260720_manual_indicators"
-down_revision = "20260717_portfolio_policy"
+down_revision = "20260717_add_portfolio_policy"
 branch_labels = None
 depends_on = None
 

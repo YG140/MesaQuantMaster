@@ -1,7 +1,7 @@
 """add brokerages and operation metadata
 
 Revision ID: 20260716_add_brokerages_operation_metadata
-Revises: 17f115172169
+Revises: 20260711_expand_alembic_version
 Create Date: 2026-07-16 13:40:00.000000
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy import inspect
 
 
 revision: str = "20260716_add_brokerages_operation_metadata"
-down_revision: str | Sequence[str] | None = "17f115172169"
+down_revision: str | Sequence[str] | None = "20260711_expand_alembic_version"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
