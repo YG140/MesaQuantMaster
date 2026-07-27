@@ -1,4 +1,5 @@
 from app.models.user import User
+from app.models.auth_token import AuthToken
 from app.models.asset import Asset
 from app.models.brokerage import Brokerage
 from app.models.operation import Operation
@@ -18,6 +19,7 @@ from app.models.cvm_financial import (
 
 __all__ = [
     "User",
+    "AuthToken",
     "Asset",
     "Brokerage",
     "Operation",

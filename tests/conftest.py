@@ -6,15 +6,21 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+
+from app.core.database_guard import assert_safe_test_database
 from fastapi.testclient import TestClient
 
 Path(".pytest_cache").mkdir(exist_ok=True)
 
 os.environ["DEBUG"] = "false"
-os.environ["DATABASE_URL"] = "sqlite:///./.pytest_cache/test_mesa_quant_master.db"
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["APP_ENV"] = "test"
 os.environ["SECRET_KEY"] = "test-secret"
 os.environ["ALGORITHM"] = "HS256"
 os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "60"
+
+
+assert_safe_test_database(os.environ["DATABASE_URL"])
 
 from app.api.deps import get_current_active_user  # noqa: E402
 from app.core.database import Base, SessionLocal, engine, get_db  # noqa: E402

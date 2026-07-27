@@ -42,6 +42,10 @@ class User(BaseModel):
         default=False,
         nullable=False,
     )
+    is_email_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    auth_version: Mapped[int] = mapped_column(default=0, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

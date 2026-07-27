@@ -37,7 +37,7 @@ export function RegisterPage() {
         email: values.email,
         password: values.password,
       });
-      navigate("/login", { replace: true });
+      navigate(`/verifique-seu-email?email=${encodeURIComponent(values.email)}`, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Não foi possível criar a conta.");
     }

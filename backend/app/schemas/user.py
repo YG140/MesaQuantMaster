@@ -30,4 +30,5 @@ class UserResponse(BaseModel):
     email: EmailStr
     is_active: bool
     is_superuser: bool
+    is_email_verified: bool
     created_at: datetime

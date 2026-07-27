@@ -24,6 +24,7 @@ def get_current_user(
         payload = decode_access_token(token)
 
         email = payload.get("email")
+        token_version = payload.get("ver")
 
         if email is None:
             raise credentials_exception
@@ -35,6 +36,8 @@ def get_current_user(
     user = repository.get_by_email(email)
 
     if user is None:
+        raise credentials_exception
+    if token_version != user.auth_version:
         raise credentials_exception
 
     return user

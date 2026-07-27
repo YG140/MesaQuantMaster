@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 from typing import Any
 
 from jose import jwt
@@ -51,3 +53,12 @@ def decode_access_token(token: str) -> dict[str, Any]:
         settings.SECRET_KEY,
         algorithms=[settings.ALGORITHM],
     )
+
+
+def create_one_time_token() -> tuple[str, str]:
+    token = secrets.token_urlsafe(32)
+    return token, hash_one_time_token(token)
+
+
+def hash_one_time_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

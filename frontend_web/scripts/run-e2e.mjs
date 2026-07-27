@@ -1,108 +1,102 @@
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import { resolve } from "node:path";
 import process from "node:process";
 
-const isWindows = process.platform === "win32";
-const viteBin = isWindows ? "node_modules\\.bin\\vite.cmd" : "node_modules/.bin/vite";
-const playwrightBin = isWindows
-  ? "node_modules\\.bin\\playwright.cmd"
-  : "node_modules/.bin/playwright";
 const host = "127.0.0.1";
-const port = "5173";
-const url = `http://${host}:${port}`;
+const port = 5173;
+const frontendUrl = `http://${host}:${port}`;
+const mockedApiUrl = "http://127.0.0.1:8000";
+const viteEntry = resolve("node_modules/vite/bin/vite.js");
+const playwrightEntry = resolve("node_modules/@playwright/test/cli.js");
+let vite;
 
-let server;
-
-async function main() {
-  await assertPortFree();
-  server = spawnCommand(viteBin, ["--host", host, "--port", port, "--strictPort"], {
-    cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-    env: {
-      ...process.env,
-      VITE_API_BASE_URL: url,
-    },
-  });
-
-  server.stdout.on("data", (chunk) => process.stdout.write(chunk));
-  server.stderr.on("data", (chunk) => process.stderr.write(chunk));
-
-  await waitForServer();
-  const result = await runPlaywright();
-  process.exitCode = result;
+function log(message) {
+  process.stdout.write(`[e2e] ${message}\n`);
 }
 
 async function assertPortFree() {
-  try {
-    await fetch(url, { signal: AbortSignal.timeout(700) });
-  } catch {
-    return;
-  }
-  throw new Error(`Porta ${port} ja esta em uso. Encerre o processo antes do E2E.`);
-}
-
-async function waitForServer() {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if (server.exitCode !== null) {
-      throw new Error(`Vite encerrou antes de responder em ${url}.`);
-    }
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
-      if (response.ok) {
-        return;
-      }
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  }
-  throw new Error(`Vite nao respondeu em ${url}.`);
-}
-
-function runPlaywright() {
-  return new Promise((resolve) => {
-    const child = spawnCommand(playwrightBin, ["test"], {
-      cwd: process.cwd(),
-      stdio: "inherit",
-      windowsHide: true,
-      env: {
-        ...process.env,
-        PLAYWRIGHT_BASE_URL: url,
-        VITE_API_BASE_URL: url,
-      },
-    });
-    child.on("close", (code) => resolve(code ?? 1));
+  await new Promise((resolvePromise, reject) => {
+    const probe = createServer();
+    probe.once("error", () => reject(new Error(`Porta ${port} já está em uso.`)));
+    probe.listen(port, host, () => probe.close(resolvePromise));
   });
 }
 
-function spawnCommand(command, args, options) {
-  if (!isWindows) {
-    return spawn(command, args, options);
-  }
-  return spawn("cmd.exe", ["/d", "/s", "/c", command, ...args], options);
+function spawnNode(entry, args, stdio) {
+  return spawn(process.execPath, [entry, ...args], {
+    cwd: process.cwd(),
+    stdio,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      APP_ENV: "test",
+      DATABASE_URL: "sqlite:///./.pytest_cache/test_playwright.db",
+      VITE_API_BASE_URL: mockedApiUrl,
+      PLAYWRIGHT_BASE_URL: frontendUrl,
+    },
+  });
 }
 
-async function stopServer() {
-  if (!server || server.exitCode !== null) {
-    return;
+async function waitForVite() {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (vite.exitCode !== null) {
+      throw new Error(`Vite encerrou prematuramente com código ${vite.exitCode}.`);
+    }
+    try {
+      const response = await fetch(frontendUrl, { signal: AbortSignal.timeout(1_000) });
+      if (response.ok) return;
+    } catch {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+    }
   }
-  if (isWindows) {
-    await new Promise((resolve) => {
-      const killer = spawn("taskkill", ["/pid", String(server.pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-      });
-      killer.on("close", resolve);
-      killer.on("error", resolve);
+  throw new Error(`Vite não ficou pronto em ${frontendUrl}.`);
+}
+
+async function stopTree(child) {
+  if (!child || child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  const exited = await Promise.race([
+    new Promise((resolvePromise) => child.once("close", () => resolvePromise(true))),
+    new Promise((resolvePromise) => setTimeout(() => resolvePromise(false), 3_000)),
+  ]);
+  if (!exited && process.platform === "win32") {
+    const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
     });
-  } else {
-    server.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolvePromise) => {
+        killer.once("close", resolvePromise);
+        killer.once("error", resolvePromise);
+      }),
+      new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000)),
+    ]);
   }
 }
 
 try {
-  await main();
+  log("verificando porta 5173");
+  await assertPortFree();
+  log("iniciando Vite; backend real não será iniciado");
+  vite = spawnNode(viteEntry, ["--host", host, "--port", String(port), "--strictPort"], [
+    "ignore", "pipe", "pipe",
+  ]);
+  vite.stdout.pipe(process.stdout);
+  vite.stderr.pipe(process.stderr);
+  await waitForVite();
+  log("Vite pronto; iniciando Playwright com API interceptada por mocks");
+  const playwright = spawnNode(playwrightEntry, ["test", "--reporter=line"], "inherit");
+  const exitCode = await new Promise((resolvePromise, reject) => {
+    playwright.once("error", reject);
+    playwright.once("close", (code) => resolvePromise(code ?? 1));
+  });
+  process.exitCode = exitCode;
+} catch (error) {
+  process.stderr.write(`[e2e] ${error instanceof Error ? error.stack : error}\n`);
+  process.exitCode = 1;
 } finally {
-  await stopServer();
-  process.exit(process.exitCode ?? 0);
+  log("encerrando árvore de processos do Vite");
+  await stopTree(vite);
 }

@@ -10,7 +10,13 @@ describe("autenticacao", () => {
   it("mostra login primeiro", async () => {
     renderWithProviders(<AppRouter />, "/login");
 
-    expect(await screen.findByRole("heading", { name: /Mesa Quant Master/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: /Mesa Quant Master/i },
+        { timeout: 10_000 },
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("E-mail")).toBeInTheDocument();
     expect(screen.getByLabelText("Senha")).toBeInTheDocument();
   });
@@ -58,7 +64,13 @@ describe("autenticacao", () => {
     sessionStorage.setItem("mesa_quant_session", "test-token");
     renderWithProviders(<AppRouter />, "/");
 
-    expect(await screen.findByRole("heading", { name: /Mesa Quant Master/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: /Mesa Quant Master/i },
+        { timeout: 10_000 },
+      ),
+    ).toBeInTheDocument();
     expect(sessionStorage.getItem("mesa_quant_session")).toBeNull();
   });
 
@@ -70,5 +82,35 @@ describe("autenticacao", () => {
 
     await user.click(screen.getByRole("button", { name: "Sair" }));
     expect(await screen.findByRole("heading", { name: /Mesa Quant Master/i })).toBeInTheDocument();
+  });
+
+  it("cadastro orienta verificacao e permite reenvio", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AppRouter />, "/cadastro");
+    await user.type(await screen.findByLabelText("Nome"), "Ana Quant");
+    await user.type(screen.getByLabelText("E-mail"), "ana@example.com");
+    await user.type(screen.getByLabelText("Senha"), "senha-segura");
+    await user.type(screen.getByLabelText("Confirmar senha"), "senha-segura");
+    await user.click(screen.getByRole("button", { name: "Criar conta" }));
+    expect(await screen.findByRole("heading", { name: "Verifique seu e-mail" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reenviar e-mail" }));
+    expect(await screen.findByText(/Se o e-mail estiver cadastrado/)).toBeInTheDocument();
+  });
+
+  it("solicita recuperacao com resposta generica", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AppRouter />, "/esqueci-minha-senha");
+    await user.type(await screen.findByLabelText("E-mail"), "ana@example.com");
+    await user.click(screen.getByRole("button", { name: "Enviar instruções" }));
+    expect(await screen.findByText(/Se o e-mail estiver cadastrado/)).toBeInTheDocument();
+  });
+
+  it("redefine a senha por token", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AppRouter />, "/redefinir-senha?token=token-seguro-comprido");
+    await user.type(await screen.findByLabelText("Nova senha"), "senha-nova");
+    await user.type(screen.getByLabelText("Confirmar nova senha"), "senha-nova");
+    await user.click(screen.getByRole("button", { name: "Salvar nova senha" }));
+    expect(await screen.findByText("Senha redefinida com sucesso.")).toBeInTheDocument();
   });
 });

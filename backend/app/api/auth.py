@@ -3,63 +3,100 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.providers.email_provider import SMTPEmailProvider
+from app.repositories.auth_token_repository import AuthTokenRepository
 from app.repositories.user_repository import UserRepository
+from app.schemas.auth import (
+    EmailRequest,
+    MessageResponse,
+    OneTimeTokenRequest,
+    ResetPasswordRequest,
+    TokenResponse,
+)
 from app.schemas.user import UserCreate, UserResponse
-from app.schemas.auth import TokenResponse
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthError, AuthService
 
-router = APIRouter(
-    prefix="/auth",
-    tags=["Autenticação"],
+router = APIRouter(prefix="/auth", tags=["Autenticação"])
+GENERIC_EMAIL_MESSAGE = (
+    "Se o e-mail estiver cadastrado, você receberá as instruções em instantes."
 )
 
 
-@router.post(
-    "/register",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def register(
-    user: UserCreate,
-    db: Session = Depends(get_db),
-):
-    service = AuthService(UserRepository(db))
+def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
+    return AuthService(UserRepository(db), AuthTokenRepository(db), SMTPEmailProvider())
 
+
+def raise_auth_error(error: AuthError, default_status: int = 400) -> None:
+    http_status = (
+        status.HTTP_503_SERVICE_UNAVAILABLE
+        if error.code in {"EMAIL_DELIVERY_UNAVAILABLE", "EMAIL_DELIVERY_FAILED"}
+        else 429 if error.code == "REQUEST_COOLDOWN" else default_status
+    )
+    raise HTTPException(
+        status_code=http_status, detail={"message": str(error), "code": error.code}
+    )
+
+
+@router.post("/register", response_model=UserResponse, status_code=201)
+def register(user: UserCreate, service: AuthService = Depends(get_auth_service)):
     try:
-        return service.register(
-            name=user.name,
-            email=user.email,
-            password=user.password,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        return service.register(user.name, user.email, user.password)
+    except AuthError as error:
+        raise_auth_error(error)
 
 
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-)
+@router.post("/login", response_model=TokenResponse)
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db),
+    service: AuthService = Depends(get_auth_service),
 ):
-    service = AuthService(UserRepository(db))
-
     try:
-        token = service.authenticate(
-            form_data.username,
-            form_data.password,
-        )
-
         return TokenResponse(
-            access_token=token,
+            access_token=service.authenticate(form_data.username, form_data.password)
         )
+    except AuthError as error:
+        raise_auth_error(error, status.HTTP_401_UNAUTHORIZED)
 
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-        )
+
+@router.post("/verify-email", response_model=MessageResponse)
+def verify_email(
+    request: OneTimeTokenRequest, service: AuthService = Depends(get_auth_service)
+):
+    try:
+        service.verify_email(request.token)
+        return MessageResponse(message="E-mail confirmado com sucesso.")
+    except AuthError as error:
+        raise_auth_error(error)
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+def resend_verification(
+    request: EmailRequest, service: AuthService = Depends(get_auth_service)
+):
+    try:
+        service.resend_verification(request.email)
+    except AuthError:
+        pass
+    return MessageResponse(message=GENERIC_EMAIL_MESSAGE)
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+def forgot_password(
+    request: EmailRequest, service: AuthService = Depends(get_auth_service)
+):
+    try:
+        service.forgot_password(request.email)
+    except AuthError:
+        pass
+    return MessageResponse(message=GENERIC_EMAIL_MESSAGE)
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+def reset_password(
+    request: ResetPasswordRequest, service: AuthService = Depends(get_auth_service)
+):
+    try:
+        service.reset_password(request.token, request.password)
+        return MessageResponse(message="Senha redefinida com sucesso.")
+    except AuthError as error:
+        raise_auth_error(error)
