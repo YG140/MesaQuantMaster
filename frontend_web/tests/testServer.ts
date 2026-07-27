@@ -16,6 +16,18 @@ export const handlers = [
       created_at: "2026-07-15T00:00:00",
     }, { status: 201 }),
   ),
+  http.post(`${api}/auth/resend-verification`, async () =>
+    HttpResponse.json({ message: "Se o e-mail estiver cadastrado, você receberá as instruções em instantes." }),
+  ),
+  http.post(`${api}/auth/forgot-password`, async () =>
+    HttpResponse.json({ message: "Se o e-mail estiver cadastrado, você receberá as instruções em instantes." }),
+  ),
+  http.post(`${api}/auth/verify-email`, async () =>
+    HttpResponse.json({ message: "E-mail confirmado com sucesso." }),
+  ),
+  http.post(`${api}/auth/reset-password`, async () =>
+    HttpResponse.json({ message: "Senha redefinida com sucesso." }),
+  ),
   http.get(`${api}/users/me`, ({ request }) => {
     if (!request.headers.get("Authorization")) {
       return HttpResponse.json({ detail: "Not authenticated" }, { status: 401 });

@@ -11,13 +11,26 @@ ENV_FILE = BASE_DIR / ".env"
 class Settings(BaseSettings):
     APP_NAME: str = "Mesa Quant Master"
     APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+    APP_ENV: str = "development"
+    DEBUG: bool = False
 
     DATABASE_URL: str
 
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_FROM_NAME: str = "Mesa Quant Master"
+    SMTP_USE_TLS: bool = True
+    SMTP_TIMEOUT_SECONDS: float = 10
+    FRONTEND_PUBLIC_URL: str = "http://localhost:5173"
+    EMAIL_VERIFICATION_EXPIRE_HOURS: int = 24
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 30
+    AUTH_EMAIL_REQUEST_COOLDOWN_SECONDS: int = 60
     FRONTEND_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

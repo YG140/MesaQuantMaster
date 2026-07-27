@@ -26,6 +26,10 @@ export function LoginPage() {
     try {
       await auth.login(values.email, values.password);
     } catch (err) {
+      if (err instanceof Error && (err as Error & { code?: string }).code === "EMAIL_NOT_VERIFIED") {
+        window.location.assign(`/verifique-seu-email?email=${encodeURIComponent(values.email)}`);
+        return;
+      }
       setError(err instanceof Error ? err.message : "Não foi possível entrar.");
     }
   }
@@ -46,6 +50,9 @@ export function LoginPage() {
             {form.formState.isSubmitting ? "Entrando..." : "Entrar"}
           </Button>
         </form>
+        <p className="auth-link">
+          <Link to="/esqueci-minha-senha">Esqueci minha senha</Link>
+        </p>
         <p className="auth-link">
           Ainda não tem conta? <Link to="/cadastro">Criar conta</Link>
         </p>

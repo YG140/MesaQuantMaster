@@ -133,6 +133,12 @@ function extractMessage(payload: unknown): string | null {
   if (typeof detail === "string") {
     return detail;
   }
+  if (detail && typeof detail === "object") {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
+  }
   if (Array.isArray(detail)) {
     return detail.map(formatValidationItem).join("; ");
   }
