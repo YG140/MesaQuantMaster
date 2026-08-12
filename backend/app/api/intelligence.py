@@ -48,14 +48,29 @@ router = APIRouter(prefix="/intelligence", tags=["Inteligência"])
 
 
 def get_service(db: Session) -> PortfolioIntelligenceService:
+    market_service = MarketService()
+    asset_repository = AssetRepository(db)
     portfolio_service = PortfolioService(
         operation_repository=OperationRepository(db),
-        asset_repository=AssetRepository(db),
+        asset_repository=asset_repository,
         brokerage_repository=BrokerageRepository(db),
+        market_service=market_service,
+    )
+    policy_repository = PortfolioPolicyRepository(db)
+    market_intelligence = MarketIntelligenceService(
+        market_service=market_service,
+        asset_repository=asset_repository,
+        portfolio_service=portfolio_service,
+        policy_repository=policy_repository,
+        snapshot_repository=IndicatorSnapshotRepository(db),
+        manual_repository=ManualIndicatorRepository(db),
+        cvm_repository=CvmFinancialRepository(db),
     )
     return PortfolioIntelligenceService(
         portfolio_service=portfolio_service,
-        policy_repository=PortfolioPolicyRepository(db),
+        policy_repository=policy_repository,
+        asset_repository=asset_repository,
+        market_intelligence_service=market_intelligence,
     )
 
 

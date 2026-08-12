@@ -646,6 +646,20 @@ th {
   color: var(--muted);
 }
 
+.class-restrictions {
+  display: grid;
+  gap: 8px;
+}
+
+.class-restriction-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(2, minmax(110px, auto));
+  gap: 16px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
 @media (max-width: 900px) {
   .app-shell,
   .two-column,
@@ -698,5 +712,10 @@ th {
   .position-card dd {
     margin: 0;
     font-weight: 700;
+  }
+
+  .class-restriction-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 }
