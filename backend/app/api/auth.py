@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.providers.email_provider import SMTPEmailProvider
 from app.repositories.auth_token_repository import AuthTokenRepository
@@ -15,10 +16,16 @@ from app.schemas.auth import (
 )
 from app.schemas.user import UserCreate, UserResponse
 from app.services.auth_service import AuthError, AuthService
+from app.services.login_rate_limiter import LoginRateLimiter
 
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 GENERIC_EMAIL_MESSAGE = (
     "Se o e-mail estiver cadastrado, você receberá as instruções em instantes."
+)
+login_rate_limiter = LoginRateLimiter(
+    attempts=settings.LOGIN_RATE_LIMIT_ATTEMPTS,
+    window_seconds=settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+    max_entries=settings.LOGIN_RATE_LIMIT_MAX_ENTRIES,
 )
 
 
@@ -47,14 +54,30 @@ def register(user: UserCreate, service: AuthService = Depends(get_auth_service))
 
 @router.post("/login", response_model=TokenResponse)
 def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     service: AuthService = Depends(get_auth_service),
 ):
+    key = login_rate_limiter.key(
+        request.client.host if request.client else None,
+        form_data.username,
+    )
+    decision = login_rate_limiter.check(key)
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Muitas tentativas. Tente novamente mais tarde.",
+            headers={"Retry-After": str(decision.retry_after)},
+        )
     try:
-        return TokenResponse(
+        response = TokenResponse(
             access_token=service.authenticate(form_data.username, form_data.password)
         )
+        login_rate_limiter.clear_key(key)
+        return response
     except AuthError as error:
+        if error.code == "INVALID_CREDENTIALS":
+            login_rate_limiter.record_failure(key)
         raise_auth_error(error, status.HTTP_401_UNAUTHORIZED)
 
 
