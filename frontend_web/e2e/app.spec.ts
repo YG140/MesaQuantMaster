@@ -210,6 +210,29 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
         selections: [
           { asset_class: "A\u00e7\u00f5es", message: "A sele\u00e7\u00e3o dos investimentos de cada classe ser\u00e1 feita quando houver dados suficientes e crit\u00e9rios espec\u00edficos integrados.", data_status: "indispon\u00edvel" },
         ],
+        assets: [],
+        exclusions: [],
+        total_allocated_percentage: "0",
+        total_allocated_amount: "0",
+        unallocated_amount: "20000",
+        confidence: "insufficient",
+        status: "unavailable",
+        diagnosis: {
+          phase: "accumulation", estimated_monthly_capacity: "2500", reserve_months_covered: "6",
+          reserve_target: "21000", debt_alerts: [], liquidity_assessment: "alta", missing_data: [],
+          priority_actions: ["Manter aportes periódicos."], confidence: "high",
+        },
+        contribution_plan: [],
+        projections: [{ name: "central", annual_appreciation_rate: "5", annual_income_rate: "3", total_contributed: "20000", projected_wealth: "30000", estimated_appreciation: "7000", estimated_income: "3000", estimated_periodic_income: "75", real_projected_wealth: "25000", projected_without_reinvestment: "27000" }],
+        freedom_goal: {
+          desired_monthly_income: "5000", required_wealth: "1800000", current_wealth: "20000",
+          gap: "1780000", achieved_percentage: "1.11", estimated_years: null,
+          withdrawal_rate: "4", safety_margin: "20", risks: ["Retornos são hipóteses."],
+          improvement_actions: ["Manter aportes."], confidence: "medium",
+        },
+        missing_data: ["Cobertura insuficiente."],
+        strategy_summary: "Estratégia educacional simulada.",
+        disclaimer: "Simulação educacional, não constitui ordem de compra e não garante retorno.",
         generated_at: "2026-07-16T18:30:00Z",
       },
     });
@@ -239,9 +262,9 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await expect(page.getByText(/P\/L: O provedor atual/)).toBeVisible();
   await expect(page.locator("details.details-panel").first()).toBeVisible();
   await page.getByRole("button", { name: "Montar carteira" }).click();
-  await page.getByLabel(/Valor dispon.vel/).fill("20000");
-  await page.getByRole("button", { name: "Gerar resultado" }).click();
-  await expect(page.getByText(/Etapa 1 - Aloca..o entre classes/)).toBeVisible();
+  await page.getByLabel(/Patrim.*dispon/).fill("20000");
+  await page.getByRole("button", { name: /Gerar carteira sugerida/ }).click();
+  await expect(page.getByRole("heading", { name: /Distribui..o por classe/ })).toBeVisible();
   await expect(page.getByText("R$ 12.000,00")).toBeVisible();
   await expect(page.getByText("R$ 8.000,00")).toBeVisible();
   await page.getByRole("button", { name: "Oportunidades" }).click();

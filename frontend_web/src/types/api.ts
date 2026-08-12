@@ -371,6 +371,25 @@ export type BuildPortfolioRequest = {
   max_percentage_per_class: string;
   max_percentage_per_sector: string;
   allowed_classes: string[];
+  prohibited_classes: string[];
+  max_assets: number;
+  net_monthly_income?: string;
+  income_type?: string;
+  essential_monthly_expenses?: string;
+  total_monthly_expenses?: string;
+  emergency_reserve?: string;
+  high_cost_debt?: string;
+  dependents?: number;
+  current_financial_assets?: string;
+  annual_contribution_growth?: string;
+  desired_monthly_income?: string;
+  projection_years?: number;
+  inflation_rate?: string;
+  annual_cost_rate?: string;
+  tax_rate?: string;
+  withdrawal_rate?: string;
+  safety_margin?: string;
+  reinvest_income?: boolean;
 };
 
 export type BuildPortfolioResponse = {
@@ -385,6 +404,33 @@ export type BuildPortfolioResponse = {
     message: string;
     data_status: string;
   }>;
+  assets: Array<{
+    symbol: string; name: string | null; asset_class: string; sector: string | null;
+    issuer: string | null; recommended_percentage: string | number;
+    recommended_amount: string | number; score: string | number; reasons: string[];
+    risks: string[]; missing_data: string[]; confidence: string;
+    reference_price: string | number | null; executable_quantity: string | number | null;
+    executable_amount: string | number; effective_percentage: string | number;
+    target_gap: string | number; execution_impediments: string[];
+    indicators_used: Array<{
+      key: string; label: string; value: string | number | null; source: string;
+      source_type: string; reference_date: string | null; valid_until: string | null;
+      freshness_status: string;
+    }>;
+  }>;
+  exclusions: Array<{ symbol: string; asset_class: string; reasons: string[] }>;
+  total_allocated_percentage: string | number;
+  total_allocated_amount: string | number;
+  unallocated_amount: string | number;
+  confidence: string;
+  status: string;
+  missing_data: string[];
+  strategy_summary: string;
+  diagnosis: { phase: string; estimated_monthly_capacity: string | number | null; reserve_months_covered: string | number | null; reserve_target: string | number | null; debt_alerts: string[]; liquidity_assessment: string; missing_data: string[]; priority_actions: string[]; confidence: string };
+  contribution_plan: Array<{ priority: number; symbol: string; asset_class: string; suggested_amount: string | number; reason: string; uses_income: boolean }>;
+  projections: Array<{ name: string; annual_appreciation_rate: string | number; annual_income_rate: string | number; total_contributed: string | number; projected_wealth: string | number; estimated_appreciation: string | number; estimated_income: string | number; estimated_periodic_income: string | number; real_projected_wealth: string | number | null; projected_without_reinvestment: string | number }>;
+  freedom_goal: { desired_monthly_income: string | number | null; required_wealth: string | number | null; current_wealth: string | number | null; gap: string | number | null; achieved_percentage: string | number | null; estimated_years: number | null; withdrawal_rate: string | number; safety_margin: string | number; risks: string[]; improvement_actions: string[]; confidence: string };
+  disclaimer: string;
   generated_at: string;
 };
 

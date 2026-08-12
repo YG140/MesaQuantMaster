@@ -634,10 +634,25 @@ class PortfolioBuilderEngine:
         policy: PortfolioPolicyRead | None = None,
     ) -> BuildPortfolioResponse:
         now = datetime.now(timezone.utc)
+        from app.engines.financial_planning_engine import (
+            FinancialDiagnosisEngine,
+            FinancialProjectionEngine,
+        )
+
+        diagnosis = FinancialDiagnosisEngine.diagnose(request)
+        projections = FinancialProjectionEngine.project(request)
+        planning = {
+            "diagnosis": diagnosis,
+            "projections": projections,
+            "freedom_goal": FinancialProjectionEngine.freedom_goal(
+                request, projections
+            ),
+        }
         if policy is None:
             return BuildPortfolioResponse(
                 class_allocations=[],
                 selections=[],
+                **planning,
                 generated_at=now,
             )
 
@@ -667,6 +682,7 @@ class PortfolioBuilderEngine:
         return BuildPortfolioResponse(
             class_allocations=allocations,
             selections=selections,
+            **planning,
             generated_at=now,
         )
 

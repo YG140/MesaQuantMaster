@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from app.engines.intelligence_engine import (
     PortfolioBuilderEngine,
     PortfolioIntelligenceEngine,
 )
+from app.engines.smart_portfolio_engine import PortfolioCandidate, SmartPortfolioEngine
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
+from app.repositories.asset_repository import AssetRepository
 from app.schemas.intelligence import (
     BuildPortfolioRequest,
     BuildPortfolioResponse,
@@ -17,6 +20,8 @@ from app.schemas.intelligence import (
     PortfolioPolicyUpsert,
 )
 from app.services.portfolio_service import PortfolioService
+from app.services.market_intelligence_service import MarketIntelligenceService
+from app.schemas.market_intelligence import AnalyzeAssetsRequest
 
 
 class PortfolioIntelligenceService:
@@ -24,9 +29,13 @@ class PortfolioIntelligenceService:
         self,
         portfolio_service: PortfolioService,
         policy_repository: PortfolioPolicyRepository,
+        asset_repository: AssetRepository | None = None,
+        market_intelligence_service: MarketIntelligenceService | None = None,
     ):
         self.portfolio_service = portfolio_service
         self.policy_repository = policy_repository
+        self.asset_repository = asset_repository
+        self.market_intelligence_service = market_intelligence_service
 
     def get_policy(self, user_id) -> PortfolioPolicyRead | None:
         policy = self.policy_repository.get_by_user(user_id)
@@ -90,8 +99,49 @@ class PortfolioIntelligenceService:
     def build_portfolio(
         self, user_id, data: BuildPortfolioRequest
     ) -> BuildPortfolioResponse:
-        policy = self.get_policy(user_id)
-        return PortfolioBuilderEngine.build(data, policy)
+        if self.asset_repository is None or self.market_intelligence_service is None:
+            return SmartPortfolioEngine.build(data, [])
+
+        assets = [item for item in self.asset_repository.list() if item.is_active]
+        # O resolvedor aceita no máximo 50 símbolos por lote. A ordenação do
+        # repositório torna o universo e o resultado reproduzíveis.
+        assets = assets[:50]
+        if not assets:
+            legacy = PortfolioBuilderEngine.build(data, self.get_policy(user_id))
+            return legacy.model_copy(
+                update={
+                    "unallocated_amount": data.available_amount.quantize(
+                        Decimal("0.01")
+                    ),
+                    "missing_data": [
+                        "Nenhum ativo cadastrado está disponível para análise."
+                    ],
+                    "strategy_summary": (
+                        "Metas por classe exibidas; seleção indisponível por ausência de ativos."
+                    ),
+                }
+            )
+
+        result = self.market_intelligence_service.analyze_assets(
+            AnalyzeAssetsRequest(symbols=[item.ticker for item in assets]),
+            user_id=user_id,
+        )
+        assets_by_symbol = {item.ticker.upper(): item for item in assets}
+        candidates = []
+        for snapshot in result.snapshots:
+            asset = assets_by_symbol.get(snapshot.symbol.upper())
+            candidates.append(
+                PortfolioCandidate(
+                    snapshot=snapshot,
+                    sector=asset.sector if asset else None,
+                    issuer=asset.name if asset else snapshot.name,
+                )
+            )
+        return SmartPortfolioEngine.build(
+            data,
+            candidates,
+            provider_errors=[item.message for item in result.errors],
+        )
 
     @staticmethod
     def _policy_to_schema(policy: PortfolioPolicy) -> PortfolioPolicyRead:

@@ -110,7 +110,7 @@ class PortfolioOverview(BaseModel):
 
 
 class BuildPortfolioRequest(BaseModel):
-    available_amount: Decimal
+    available_amount: Decimal = Field(gt=0)
     objective: str
     horizon: str
     risk_profile: str
@@ -124,6 +124,44 @@ class BuildPortfolioRequest(BaseModel):
     max_percentage_per_class: Decimal = Decimal("40")
     max_percentage_per_sector: Decimal = Decimal("30")
     allowed_classes: list[str] = Field(default_factory=list)
+    prohibited_classes: list[str] = Field(default_factory=list)
+    max_assets: int = Field(default=10, ge=1, le=50)
+    net_monthly_income: Decimal | None = Field(default=None, ge=0)
+    income_type: str | None = None
+    essential_monthly_expenses: Decimal | None = Field(default=None, ge=0)
+    total_monthly_expenses: Decimal | None = Field(default=None, ge=0)
+    emergency_reserve: Decimal | None = Field(default=None, ge=0)
+    high_cost_debt: Decimal | None = Field(default=None, ge=0)
+    dependents: int | None = Field(default=None, ge=0)
+    current_financial_assets: Decimal | None = Field(default=None, ge=0)
+    annual_contribution_growth: Decimal | None = None
+    desired_monthly_income: Decimal | None = Field(default=None, ge=0)
+    preserve_principal: bool = True
+    projection_years: int = Field(default=20, ge=1, le=60)
+    inflation_rate: Decimal | None = Field(default=None, ge=-20, le=100)
+    annual_cost_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    withdrawal_rate: Decimal = Field(default=Decimal("4"), gt=0, le=100)
+    safety_margin: Decimal = Field(default=Decimal("20"), ge=0, le=100)
+    reinvest_income: bool = True
+
+    @model_validator(mode="after")
+    def validate_builder_limits(self):
+        percentage_limits = (
+            self.max_percentage_per_asset,
+            self.max_percentage_per_class,
+            self.max_percentage_per_sector,
+        )
+        if any(value <= 0 or value > 100 for value in percentage_limits):
+            raise ValueError("Limites percentuais devem estar entre 0 e 100.")
+        overlap = set(self.allowed_classes) & set(self.prohibited_classes)
+        if overlap:
+            raise ValueError(
+                "Uma classe não pode ser permitida e proibida ao mesmo tempo."
+            )
+        if self.monthly_contribution < 0:
+            raise ValueError("Aporte mensal não pode ser negativo.")
+        return self
 
 
 class BuildPortfolioClassAllocation(BaseModel):
@@ -139,9 +177,112 @@ class BuildPortfolioSelection(BaseModel):
     data_status: str
 
 
+class BuildPortfolioIndicator(BaseModel):
+    key: str
+    label: str
+    value: Decimal | str | None = None
+    source: str
+    source_type: str
+    reference_date: datetime | None = None
+    valid_until: datetime | None = None
+    freshness_status: str
+
+
+class BuildPortfolioAsset(BaseModel):
+    symbol: str
+    name: str | None = None
+    asset_class: str
+    sector: str | None = None
+    issuer: str | None = None
+    recommended_percentage: Decimal
+    recommended_amount: Decimal
+    score: Decimal
+    reasons: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    indicators_used: list[BuildPortfolioIndicator] = Field(default_factory=list)
+    missing_data: list[str] = Field(default_factory=list)
+    confidence: str
+    reference_price: Decimal | None = None
+    executable_quantity: Decimal | None = None
+    executable_amount: Decimal = Decimal("0")
+    effective_percentage: Decimal = Decimal("0")
+    target_gap: Decimal = Decimal("0")
+    execution_impediments: list[str] = Field(default_factory=list)
+
+
+class BuildPortfolioExclusion(BaseModel):
+    symbol: str
+    asset_class: str
+    reasons: list[str]
+
+
+class FinancialDiagnosis(BaseModel):
+    phase: str
+    estimated_monthly_capacity: Decimal | None = None
+    reserve_months_covered: Decimal | None = None
+    reserve_target: Decimal | None = None
+    debt_alerts: list[str] = Field(default_factory=list)
+    liquidity_assessment: str
+    missing_data: list[str] = Field(default_factory=list)
+    priority_actions: list[str] = Field(default_factory=list)
+    confidence: str
+
+
+class ContributionPriority(BaseModel):
+    priority: int
+    symbol: str
+    asset_class: str
+    suggested_amount: Decimal
+    reason: str
+    uses_income: bool = False
+
+
+class ProjectionScenario(BaseModel):
+    name: str
+    annual_appreciation_rate: Decimal
+    annual_income_rate: Decimal
+    total_contributed: Decimal
+    projected_wealth: Decimal
+    estimated_appreciation: Decimal
+    estimated_income: Decimal
+    estimated_periodic_income: Decimal
+    real_projected_wealth: Decimal | None = None
+    projected_without_reinvestment: Decimal
+
+
+class FinancialFreedomGoal(BaseModel):
+    desired_monthly_income: Decimal | None = None
+    required_wealth: Decimal | None = None
+    current_wealth: Decimal | None = None
+    gap: Decimal | None = None
+    achieved_percentage: Decimal | None = None
+    estimated_years: int | None = None
+    withdrawal_rate: Decimal
+    safety_margin: Decimal
+    risks: list[str] = Field(default_factory=list)
+    improvement_actions: list[str] = Field(default_factory=list)
+    confidence: str
+
+
 class BuildPortfolioResponse(BaseModel):
     class_allocations: list[BuildPortfolioClassAllocation]
     selections: list[BuildPortfolioSelection]
+    assets: list[BuildPortfolioAsset] = Field(default_factory=list)
+    exclusions: list[BuildPortfolioExclusion] = Field(default_factory=list)
+    total_allocated_percentage: Decimal = Decimal("0")
+    total_allocated_amount: Decimal = Decimal("0")
+    unallocated_amount: Decimal = Decimal("0")
+    confidence: str = "insufficient"
+    status: str = "unavailable"
+    missing_data: list[str] = Field(default_factory=list)
+    strategy_summary: str = ""
+    diagnosis: FinancialDiagnosis
+    contribution_plan: list[ContributionPriority] = Field(default_factory=list)
+    projections: list[ProjectionScenario] = Field(default_factory=list)
+    freedom_goal: FinancialFreedomGoal
+    disclaimer: str = (
+        "Simulação educacional, não constitui ordem de compra e não garante retorno."
+    )
     generated_at: datetime
 
 
