@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, get_current_superuser
 from app.core.config import settings
 from app.core.database import SessionLocal, get_db
 from app.models.user import User
@@ -52,13 +52,8 @@ def run_sync(document_type: str, year: int) -> None:
 def start_sync(
     request: CvmSyncRequest,
     tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_superuser),
 ):
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=403,
-            detail="Apenas administradores podem iniciar a sincronização CVM.",
-        )
     tasks.add_task(run_sync, request.document_type, request.year)
     return CvmSyncAccepted(
         status="accepted",
@@ -109,7 +104,7 @@ def link_asset_issuer(
     asset_id: UUID,
     payload: AssetCvmLinkUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_active_user),
+    _user: User = Depends(get_current_superuser),
 ):
     service = cvm_service(db)
     try:

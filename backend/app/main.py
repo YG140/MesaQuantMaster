@@ -25,6 +25,8 @@ from app.api.cvm import router as cvm_router
 from app.core.config import settings
 from app.core.database import Base, engine
 from app.core.sqlite_compat import ensure_sqlite_compat_schema
+from app.middleware.request_body_limit import RequestBodyLimitMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 
 importlib.import_module("app.models")
 
@@ -34,6 +36,9 @@ ensure_sqlite_compat_schema(engine)
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
+    docs_url="/docs" if settings.API_DOCS_ENABLED else None,
+    redoc_url="/redoc" if settings.API_DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if settings.API_DOCS_ENABLED else None,
     description="""
 Mesa Quant Master
 
@@ -57,6 +62,15 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
+)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    max_body_bytes=settings.MAX_REQUEST_BODY_BYTES,
+)
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    hsts_enabled=settings.SECURITY_HSTS_ENABLED,
+    hsts_max_age_seconds=settings.SECURITY_HSTS_MAX_AGE_SECONDS,
 )
 
 

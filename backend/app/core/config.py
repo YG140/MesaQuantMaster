@@ -13,12 +13,19 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     APP_ENV: str = "development"
     DEBUG: bool = False
+    API_DOCS_ENABLED: bool = True
 
     DATABASE_URL: str
 
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    LOGIN_RATE_LIMIT_ATTEMPTS: int = 5
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300
+    LOGIN_RATE_LIMIT_MAX_ENTRIES: int = 10000
+    MAX_REQUEST_BODY_BYTES: int = 2097152
+    SECURITY_HSTS_ENABLED: bool = False
+    SECURITY_HSTS_MAX_AGE_SECONDS: int = 31536000
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USERNAME: str = ""

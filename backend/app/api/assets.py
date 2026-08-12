@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, get_current_superuser
 from app.core.database import get_db
 from app.models.user import User
 from app.repositories.asset_repository import AssetRepository
@@ -28,7 +28,7 @@ router = APIRouter(
 def create_asset(
     asset: AssetCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_superuser),
 ):
     service = AssetService(AssetRepository(db))
 
@@ -89,7 +89,7 @@ def update_asset(
     asset_id: UUID,
     asset: AssetUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_superuser),
 ):
     service = AssetService(AssetRepository(db))
 
@@ -109,7 +109,7 @@ def update_asset(
 def delete_asset(
     asset_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_superuser),
 ):
     service = AssetService(AssetRepository(db))
 
