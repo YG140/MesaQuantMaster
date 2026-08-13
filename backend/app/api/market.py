@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, get_current_superuser
+from app.core.database import get_db
 from app.models.user import User
 from app.providers.exceptions import (
     MarketAssetNotFoundError,
@@ -19,11 +21,33 @@ from app.schemas.market import (
     ProviderCapabilitiesResponse,
 )
 from app.services.market_service import MarketService
+from app.repositories.asset_repository import AssetRepository
+from app.repositories.market_sync_repository import MarketSyncRepository
+from app.schemas.market_sync import MarketSyncReport, MarketSyncRequest
+from app.services.market_sync_service import MarketSyncService
 
 router = APIRouter(
     prefix="/market",
     tags=["Mercado"],
 )
+
+
+def get_market_sync_service(db: Session = Depends(get_db)) -> MarketSyncService:
+    return MarketSyncService(
+        asset_repository=AssetRepository(db),
+        sync_repository=MarketSyncRepository(db),
+        provider=MarketService(),
+    )
+
+
+@router.post("/sync", response_model=MarketSyncReport)
+def dry_run_market_sync(
+    request: MarketSyncRequest,
+    _user: User = Depends(get_current_superuser),
+    service: MarketSyncService = Depends(get_market_sync_service),
+):
+    """Preview administrativo; apply é permitido somente pelo comando local."""
+    return service.run(request, apply=False)
 
 
 @router.get("/provider-capabilities", response_model=ProviderCapabilitiesResponse)

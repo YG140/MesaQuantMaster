@@ -114,6 +114,7 @@ def test_get_quotes_maps_batch_and_symbol_change():
     assert quotes[0].change_percent == Decimal("-0.78")
     assert quotes[0].asset_type == "Ação"
     assert quotes[0].asset_subtype is None
+    assert quotes[0].currency is None
     assert quotes[1].change_value == Decimal("0")
     assert quotes[1].change_percent == Decimal("0")
     assert quotes[0].requested_symbol == "PETR4"
