@@ -97,9 +97,26 @@ def get_manual_indicator_service(db: Session) -> ManualIndicatorService:
 
 
 def manual_response(item) -> ManualIndicatorResponse:
-    return ManualIndicatorResponse.model_validate(item).model_copy(
-        update={"freshness_status": ManualIndicatorService.freshness(item)}
+    return ManualIndicatorResponse.model_validate(
+        {
+            "id": item.id,
+            "asset_id": item.asset_id,
+            "indicator_key": item.indicator_key,
+            "value": item.value,
+            "unit": item.unit,
+            "reference_date": item.reference_date,
+            "source_type": item.source_type,
+            "source_description": item.source_description,
+            "notes": item.notes,
+            "freshness_status": ManualIndicatorService.freshness(item),
+            "created_at": _aware_datetime(item.created_at),
+            "updated_at": _aware_datetime(item.updated_at),
+        }
     )
+
+
+def _aware_datetime(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 @router.get("/portfolio", response_model=PortfolioIntelligenceResponse)
@@ -198,12 +215,10 @@ def list_manual_indicators(
     current_user: User = Depends(get_current_active_user),
 ):
     try:
-        return [
-            manual_response(item)
-            for item in get_manual_indicator_service(db).list(current_user.id, symbol)
-        ]
+        items = get_manual_indicator_service(db).list(current_user.id, symbol)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return [manual_response(item) for item in items]
 
 
 @router.post(
@@ -218,11 +233,10 @@ def create_manual_indicator(
     current_user: User = Depends(get_current_active_user),
 ):
     try:
-        return manual_response(
-            get_manual_indicator_service(db).create(current_user.id, symbol, data)
-        )
+        item = get_manual_indicator_service(db).create(current_user.id, symbol, data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return manual_response(item)
 
 
 @router.patch(
@@ -239,9 +253,10 @@ def update_manual_indicator(
     service = get_manual_indicator_service(db)
     service.asset_for_symbol(symbol)
     try:
-        return manual_response(service.update(current_user.id, indicator_id, data))
+        item = service.update(current_user.id, indicator_id, data)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return manual_response(item)
 
 
 @router.delete(
