@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     CVM_MAX_DOWNLOAD_BYTES: int = 83886080
     CVM_MAX_UNCOMPRESSED_BYTES: int = 1073741824
     CVM_CACHE_TTL_HOURS: int = 24
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-5-mini"
+    AI_AGENT_ENABLED: bool = False
+    AI_AGENT_TIMEOUT_SECONDS: float = Field(default=30, gt=0, le=300)
+    AI_AGENT_MAX_ITERATIONS: int = Field(default=6, ge=1, le=20)
+    AI_AGENT_MAX_TOOL_CALLS: int = Field(default=8, ge=1, le=50)
+    AI_AGENT_MAX_MESSAGE_LENGTH: int = Field(default=4000, ge=1, le=20000)
+    AI_AGENT_MAX_COMPARE_ASSETS: int = Field(default=10, ge=2, le=50)
+    AI_AGENT_MAX_OUTPUT_TOKENS: int = Field(default=1200, ge=1, le=10000)
 
     @field_validator("FRONTEND_ORIGINS", mode="before")
     @classmethod
