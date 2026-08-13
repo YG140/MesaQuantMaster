@@ -21,6 +21,7 @@ from app.api.risk import router as risk_router
 from app.api.strategy import router as strategy_router
 from app.api.intelligence import router as intelligence_router
 from app.api.cvm import router as cvm_router
+from app.api.ai_agent import router as ai_agent_router
 
 from app.core.config import settings
 from app.core.database import Base, engine
@@ -134,3 +135,4 @@ app.include_router(backtesting_router)
 
 app.include_router(intelligence_router)
 app.include_router(cvm_router)
+app.include_router(ai_agent_router)
