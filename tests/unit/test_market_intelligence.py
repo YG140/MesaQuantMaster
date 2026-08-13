@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.engines.market_intelligence_engine import AssetAnalysisEngine
 from app.models.asset import Asset
+from app.models.indicator_snapshot import IndicatorSnapshot
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.brokerage_repository import BrokerageRepository
 from app.repositories.operation_repository import OperationRepository
+from app.repositories.indicator_snapshot_repository import (
+    IndicatorSnapshotRepository,
+)
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
 from app.schemas.market import QuoteResponse, QuotesResponse
 from app.schemas.market_intelligence import (
@@ -214,6 +218,135 @@ def test_batch_analysis_uses_single_market_call_and_keeps_partial_success(
     assert [item.symbol for item in result.snapshots] == ["PETR4", "MISSING"]
     assert result.errors[0].symbol == "MISSING"
     assert result.snapshots[1].current_price is None
+
+
+def test_analysis_with_provider_candidate_does_not_persist_or_flush(
+    db_session,
+    active_user,
+    monkeypatch,
+):
+    market = FakeMarketService([quote("PETR4")])
+    commit_calls = 0
+    flush_calls = 0
+    original_commit = db_session.commit
+    original_flush = db_session.flush
+
+    def count_commit(*args, **kwargs):
+        nonlocal commit_calls
+        commit_calls += 1
+        return original_commit(*args, **kwargs)
+
+    def count_flush(*args, **kwargs):
+        nonlocal flush_calls
+        flush_calls += 1
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(db_session, "commit", count_commit)
+    monkeypatch.setattr(db_session, "flush", count_flush)
+    service = MarketIntelligenceService(
+        market_service=market,
+        asset_repository=AssetRepository(db_session),
+        portfolio_service=PortfolioService(
+            operation_repository=OperationRepository(db_session),
+            asset_repository=AssetRepository(db_session),
+            brokerage_repository=BrokerageRepository(db_session),
+            market_service=market,
+        ),
+        policy_repository=PortfolioPolicyRepository(db_session),
+        snapshot_repository=IndicatorSnapshotRepository(db_session),
+    )
+
+    result = service.analyze_asset("PETR4", active_user.id)
+
+    assert result.current_price == Decimal("39.89")
+    assert db_session.query(IndicatorSnapshot).count() == 0
+    assert commit_calls == 0
+    assert flush_calls == 0
+
+
+def test_analysis_reads_valid_snapshot_without_writing(
+    db_session, active_user, monkeypatch
+):
+    collected_at = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    db_session.add(
+        IndicatorSnapshot(
+            symbol="PETR4",
+            asset_class="stock",
+            indicator_key="price_earnings",
+            value=Decimal("8.75"),
+            unit="ratio",
+            period="current",
+            source="TEST_PROVIDER",
+            source_type="provider",
+            reference_date=collected_at,
+            collected_at=collected_at,
+            valid_until=datetime.now(timezone.utc) + timedelta(minutes=5),
+            provenance_json='{"fixture": true}',
+        )
+    )
+    db_session.commit()
+    commit_calls = 0
+    flush_calls = 0
+
+    def count_commit(*args, **kwargs):
+        nonlocal commit_calls
+        commit_calls += 1
+
+    def count_flush(*args, **kwargs):
+        nonlocal flush_calls
+        flush_calls += 1
+
+    monkeypatch.setattr(db_session, "commit", count_commit)
+    monkeypatch.setattr(db_session, "flush", count_flush)
+    market = FakeMarketService([quote("PETR4")])
+    service = MarketIntelligenceService(
+        market_service=market,
+        asset_repository=AssetRepository(db_session),
+        portfolio_service=PortfolioService(
+            operation_repository=OperationRepository(db_session),
+            asset_repository=AssetRepository(db_session),
+            brokerage_repository=BrokerageRepository(db_session),
+            market_service=market,
+        ),
+        policy_repository=PortfolioPolicyRepository(db_session),
+        snapshot_repository=IndicatorSnapshotRepository(db_session),
+    )
+
+    result = service.analyze_asset("PETR4", active_user.id)
+    price_earnings = next(
+        item for item in result.indicators if item.key == "price_earnings"
+    )
+
+    assert price_earnings.value == Decimal("8.75")
+    assert price_earnings.source == "TEST_PROVIDER"
+    assert db_session.query(IndicatorSnapshot).count() == 1
+    assert commit_calls == 0
+    assert flush_calls == 0
+
+
+def test_provider_failure_during_read_leaves_no_snapshot(db_session, active_user):
+    class FailingMarketService(FakeMarketService):
+        def get_quotes(self, symbols):
+            raise RuntimeError("controlled provider failure")
+
+    market = FailingMarketService([])
+    service = MarketIntelligenceService(
+        market_service=market,
+        asset_repository=AssetRepository(db_session),
+        portfolio_service=PortfolioService(
+            operation_repository=OperationRepository(db_session),
+            asset_repository=AssetRepository(db_session),
+            brokerage_repository=BrokerageRepository(db_session),
+            market_service=market,
+        ),
+        policy_repository=PortfolioPolicyRepository(db_session),
+        snapshot_repository=IndicatorSnapshotRepository(db_session),
+    )
+
+    result = service.analyze_asset("PETR4", active_user.id)
+
+    assert result.current_price is None
+    assert db_session.query(IndicatorSnapshot).count() == 0
 
 
 def test_recommendation_respects_policy_when_class_is_above_limit(

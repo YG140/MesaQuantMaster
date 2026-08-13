@@ -113,6 +113,31 @@ def test_apply_is_idempotent_and_keeps_provenance(db_session):
     assert provenance["valid_until"]
 
 
+def test_repository_flushes_but_never_commits_batch(db_session, monkeypatch):
+    add_asset(db_session)
+    commit_calls = 0
+    flush_calls = 0
+    original_flush = db_session.flush
+
+    def count_commit(*args, **kwargs):
+        nonlocal commit_calls
+        commit_calls += 1
+
+    def count_flush(*args, **kwargs):
+        nonlocal flush_calls
+        flush_calls += 1
+        return original_flush(*args, **kwargs)
+
+    monkeypatch.setattr(db_session, "commit", count_commit)
+    monkeypatch.setattr(db_session, "flush", count_flush)
+
+    report = service(db_session, FakeProvider([quote()])).run(request(), apply=True)
+
+    assert report.snapshots_written == 1
+    assert flush_calls >= 1
+    assert commit_calls == 0
+
+
 def test_provider_currency_is_preserved_without_assuming_brl(db_session):
     add_asset(db_session)
     report = service(db_session, FakeProvider([quote(currency="USD")])).run(request())

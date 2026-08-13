@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from app.models.indicator_snapshot import IndicatorSnapshot
+
 
 def policy_payload(target_a="60", target_b="40"):
     return {
@@ -63,7 +65,8 @@ def test_policy_rejects_invalid_total(client):
     assert "100" in response.text
 
 
-def test_build_portfolio_uses_policy_percentages(client):
+def test_build_portfolio_uses_policy_percentages(client, db_session):
+    snapshots_before = db_session.query(IndicatorSnapshot).count()
     client.put("/intelligence/policy", json=policy_payload())
 
     response = client.post(
@@ -86,3 +89,5 @@ def test_build_portfolio_uses_policy_percentages(client):
         "Ações": Decimal("6000.00"),
         "Tesouro Direto": Decimal("4000.00"),
     }
+    db_session.expire_all()
+    assert db_session.query(IndicatorSnapshot).count() == snapshots_before
