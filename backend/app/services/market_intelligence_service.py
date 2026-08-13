@@ -58,7 +58,6 @@ class MarketIntelligenceService:
         self.policy_repository = policy_repository
         self.normalizer = normalizer or IndicatorNormalizationService()
         self.validator = validator or IndicatorValidationService()
-        self.snapshot_repository = snapshot_repository
         self.resolver = resolver or IndicatorResolverService(
             market_service=market_service,
             normalizer=self.normalizer,
@@ -251,10 +250,6 @@ class MarketIntelligenceService:
             calculated_at=collected_at,
         )
         snapshot = engine_for_class(asset_class).build_snapshot(base)
-        if self.snapshot_repository is not None:
-            self.snapshot_repository.save(
-                snapshot.symbol, snapshot.asset_class.value, snapshot.indicators
-            )
         return snapshot
 
     def _missing_snapshot(
