@@ -477,7 +477,11 @@ class BrapiProvider(BaseMarketProvider):
             ),
             volume=self._int(nested_get(item, "regularMarketVolume", "volume")),
             market_cap=self._decimal(nested_get(item, "marketCap", "market_cap")),
-            currency=str(nested_get(item, "currency") or "BRL"),
+            currency=(
+                str(currency).upper()
+                if (currency := nested_get(item, "currency")) is not None
+                else None
+            ),
             market_time=market_time,
             source=self.provider_name,
             name=nested_get(item, "shortName", "longName", "name"),

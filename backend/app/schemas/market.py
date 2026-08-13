@@ -46,7 +46,7 @@ class QuoteResponse(BaseModel):
     open_price: Decimal | None = None
     volume: int | None = None
     market_cap: Decimal | None = None
-    currency: str = "BRL"
+    currency: str | None = None
     market_time: datetime | None = None
     source: str
     logo_url: str | None = None
