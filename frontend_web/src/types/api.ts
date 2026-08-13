@@ -544,3 +544,14 @@ export type ProviderCapabilities = {
   restricted_domains: string[];
   last_checked_at: string;
 };
+
+export type AIAgentChatRequest = {
+  message: string;
+};
+
+export type AIAgentChatResponse = {
+  answer: string;
+  tools_used: string[];
+  warnings: string[];
+  data_quality_notes: string[];
+};

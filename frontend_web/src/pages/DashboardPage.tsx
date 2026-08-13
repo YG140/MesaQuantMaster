@@ -6,7 +6,10 @@ import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { DataStatusBadge } from "../components/ui/DataBadges";
 import { MetricCard } from "../components/ui/MetricCard";
+import { QuantumCard } from "../components/ui/QuantumCard";
+import { SectionHeader } from "../components/ui/SectionHeader";
 import { useAuth } from "../features/auth/useAuth";
 import { endpoints } from "../services/endpoints/data";
 import type { PortfolioPosition, PortfolioSummary } from "../types/api";
@@ -76,33 +79,36 @@ export function DashboardPage() {
 
   return (
     <div className="page-stack">
-      <section className="page-heading actions">
-        <div>
-          <h2>Início</h2>
-          <p>Visão consolidada da sua carteira.</p>
-        </div>
+      <SectionHeader eyebrow="Acompanhar" title="Seu universo financeiro" description="Acompanhe patrimônio, desempenho e qualidade dos dados em tempo real." actions={
         <Button type="button" variant="secondary" disabled={refreshing} onClick={() => void refreshQuotes()}>
           {refreshing ? "Atualizando..." : "Atualizar cotações"}
         </Button>
-      </section>
+      } />
       <MarketDataNotice
         status={dashboardData?.market_data_status ?? portfolioData?.market_data_status}
         quoteUpdatedAt={dashboardData?.quote_updated_at ?? portfolioData?.quote_updated_at}
         unpricedSymbols={dashboardData?.unpriced_symbols ?? portfolioData?.unpriced_symbols ?? []}
       />
       <div className="metric-grid">
-        <MetricCard label="Patrimônio" value={formatMoney(dashboardData?.patrimonio_total ?? portfolioData?.total_market_value)} />
+        <MetricCard label="Patrimônio" value={formatMoney(dashboardData?.patrimonio_total ?? portfolioData?.total_market_value)} helper="Valor de mercado disponível" />
         <MetricCard label="Valor investido" value={formatMoney(portfolioData?.total_invested)} />
         <MetricCard label="Lucro ou prejuízo" value={formatMoney(portfolioData?.total_profit)} />
         <MetricCard label="Rentabilidade" value={formatPercent(portfolioData?.profitability)} />
         <MetricCard label="Ativos" value={dashboardData?.ativos ?? positions.length} />
         <MetricCard label="Movimentações" value={operationsCount} />
       </div>
+      <div className="quick-action-grid">
+        <Link className="quick-action" to="/investimentos/novo"><span>01</span><strong>Novo aporte</strong><small>Registre um investimento</small></Link>
+        <Link className="quick-action" to="/carteira"><span>02</span><strong>Ver carteira</strong><small>Posições e movimentações</small></Link>
+        <Link className="quick-action" to="/analisar"><span>03</span><strong>Analisar</strong><small>Risco e diagnóstico</small></Link>
+        <Link className="quick-action" to="/planejar"><span>04</span><strong>Planejar</strong><small>Estratégia e objetivos</small></Link>
+      </div>
       <div className="two-column">
         <Card title="Alocação">
           {allocation.length ? <AllocationChart data={allocation} /> : <p>Ainda não há informação de alocação para exibir.</p>}
         </Card>
         <Card title="Resumo de risco">
+          <DataStatusBadge status={dashboardData?.market_data_status ?? portfolioData?.market_data_status} />
           <div className="metric-grid compact">
             <MetricCard label="Posições" value={positions.length} />
             <MetricCard label="Maior concentração" value={formatPercent(concentration)} />
@@ -114,6 +120,10 @@ export function DashboardPage() {
           </div>
         </Card>
       </div>
+      <QuantumCard className="data-provenance">
+        <div><span className="eyebrow">Integridade</span><h3>Leitura responsável dos dados</h3></div>
+        <p>Ativos sem preço permanecem identificados como indisponíveis e não são convertidos em zero.</p>
+      </QuantumCard>
     </div>
   );
 }

@@ -29,7 +29,10 @@ export function AppRouter() {
           <Route path="/investimentos/novo" element={<NewInvestmentPage />} />
           <Route path="/carteira/importar" element={<ImportPortfolioPage />} />
           <Route path="/inteligencia-carteira" element={<PortfolioIntelligencePage />} />
-          <Route path="/analises" element={<Navigate to="/inteligencia-carteira" replace />} />
+          <Route path="/investir" element={<PortfolioIntelligencePage />} />
+          <Route path="/analisar" element={<PortfolioIntelligencePage />} />
+          <Route path="/planejar" element={<PortfolioIntelligencePage />} />
+          <Route path="/analises" element={<Navigate to="/analisar" replace />} />
           <Route path="/simulador-historico" element={<Navigate to="/inteligencia-carteira" replace />} />
           <Route path="/ativos" element={<AssetsPage />} />
         </Route>

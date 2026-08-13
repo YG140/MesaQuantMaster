@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export function Card({ children, title }: { children: ReactNode; title?: string }) {
   return (
-    <section className="card">
+    <section className="card quantum-card">
       {title ? <h2>{title}</h2> : null}
       {children}
     </section>

@@ -262,9 +262,10 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await expect(page.getByText(/P\/L: O provedor atual/)).toBeVisible();
   await expect(page.locator("details.details-panel").first()).toBeVisible();
   await page.getByRole("button", { name: "Montar carteira" }).click();
-  await page.getByLabel(/Patrim.*dispon/).fill("20000");
-  await page.getByRole("button", { name: /Gerar carteira sugerida/ }).click();
-  await expect(page.getByRole("heading", { name: /Distribui..o por classe/ })).toBeVisible();
+  await page.getByLabel(/Valor dispon.*investir/).fill("20000");
+  await page.getByRole("button", { name: /Montar minha carteira/ }).click();
+  await expect(page.getByRole("heading", { name: /Sua carteira recomendada/ })).toBeVisible();
+  await page.getByText(/Distribui..o por classe/).click();
   await expect(page.getByText("R$ 12.000,00")).toBeVisible();
   await expect(page.getByText("R$ 8.000,00")).toBeVisible();
   await page.getByRole("button", { name: "Oportunidades" }).click();

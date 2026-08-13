@@ -1,41 +1,35 @@
-import { BarChart3, Briefcase, Home, Plus, Search, Upload } from "lucide-react";
+import { Bot, Sparkles } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { objectiveNavigation, secondaryNavigation } from "../../app/navigation";
 
-const primary = [
-  { to: "/", label: "Início", icon: Home },
-  { to: "/carteira", label: "Minha carteira", icon: Briefcase },
-  { to: "/investimentos/novo", label: "Adicionar investimento", icon: Plus },
-  { to: "/carteira/importar", label: "Importar carteira", icon: Upload },
-];
-
-const tools = [
-  { to: "/inteligencia-carteira", label: "Inteligência de Carteira", icon: BarChart3 },
-  { to: "/ativos", label: "Ativos", icon: Search },
-];
-
-export function Sidebar() {
+export function Sidebar({ onOpenAI }: { onOpenAI: () => void }) {
   return (
     <aside className="sidebar" aria-label="Navegação principal">
       <div className="brand">
-        <strong>MQ</strong>
-        <span>Mesa Quant</span>
+        <strong><Sparkles size={20} /></strong>
+        <span><b>Mesa Quant</b><small>Quantum Prism</small></span>
       </div>
       <nav>
-        <p>Principal</p>
-        {primary.map((item) => (
+        <p>Objetivos</p>
+        {objectiveNavigation.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.to === "/"}>
             <item.icon size={18} />
-            {item.label}
+            <span>{item.label}<small>{item.description}</small></span>
           </NavLink>
         ))}
-        <p>Inteligência</p>
-        {tools.map((item) => (
+        <p>Acessos rápidos</p>
+        {secondaryNavigation.map((item) => (
           <NavLink key={item.to} to={item.to}>
             <item.icon size={18} />
             {item.label}
           </NavLink>
         ))}
       </nav>
+      <button className="sidebar-ai" type="button" onClick={onOpenAI}><Bot size={19} /><span><b>Mesa IA</b><small>Interprete seus dados</small></span></button>
+      <div className="mobile-nav" aria-label="Navegação mobile">
+        {objectiveNavigation.map((item) => <NavLink key={item.to} to={item.to} end={item.to === "/"}><item.icon size={20} /><span>{item.label}</span></NavLink>)}
+        <button type="button" onClick={onOpenAI}><Bot size={20} /><span>Mesa IA</span></button>
+      </div>
     </aside>
   );
 }

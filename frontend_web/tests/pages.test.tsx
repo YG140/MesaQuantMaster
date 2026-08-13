@@ -484,9 +484,10 @@ describe("paginas autenticadas", () => {
   it("monta carteira com dados determinísticos", async () => {
     const user = await login("/inteligencia-carteira");
     await user.click(await screen.findByRole("button", { name: "Montar carteira" }));
-    await user.click(screen.getByRole("button", { name: "Gerar carteira sugerida" }));
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
 
-    expect(await screen.findByRole("heading", { name: "Distribuição por classe" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sua carteira recomendada" })).toBeInTheDocument();
+    await user.click(screen.getByText("Distribuição por classe"));
     expect(screen.getAllByText("Ações").length).toBeGreaterThan(0);
     expect(screen.getByText("R$ 6.000,00")).toBeInTheDocument();
     expect(screen.getByText("R$ 4.000,00")).toBeInTheDocument();

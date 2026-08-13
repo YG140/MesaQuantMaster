@@ -569,6 +569,15 @@ export const handlers = [
     }),
   ),
   http.get(`${api}/assets`, () => HttpResponse.json([])),
+  http.post(`${api}/ai-agent/chat`, async ({ request }) => {
+    const body = await request.json() as { message: string };
+    return HttpResponse.json({
+      answer: `Leitura educacional: ${body.message}`,
+      tools_used: ["analyze_portfolio"],
+      warnings: ["Não constitui recomendação de investimento."],
+      data_quality_notes: ["Análise baseada nos dados disponíveis da carteira."],
+    });
+  }),
   http.post(`${api}/backtesting/run`, () =>
     HttpResponse.json({
       final_equity: "10300",
