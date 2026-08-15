@@ -109,9 +109,12 @@ describe("paginas autenticadas", () => {
 
   it("mostra menu correto e nao mostra nomes incorretos", async () => {
     await login();
-    expect(screen.getByText("Minha carteira")).toBeInTheDocument();
-    expect(screen.getByText("Adicionar investimento")).toBeInTheDocument();
-    expect(screen.getByText("Inteligência de Carteira")).toBeInTheDocument();
+    expect(screen.getByTestId("desktop-primary-navigation").children).toHaveLength(5);
+    expect(screen.getByTestId("desktop-primary-navigation")).toHaveTextContent("Início");
+    expect(screen.getByTestId("desktop-primary-navigation")).toHaveTextContent("Carteira");
+    expect(screen.getByTestId("desktop-primary-navigation")).toHaveTextContent("Mesa IA");
+    expect(screen.getByTestId("desktop-primary-navigation")).toHaveTextContent("Mercado");
+    expect(screen.getByTestId("desktop-primary-navigation")).toHaveTextContent("Planejar");
     expect(screen.queryByText("Analises")).not.toBeInTheDocument();
     expect(screen.queryByText("Simulador historico")).not.toBeInTheDocument();
     expect(screen.queryByText("Operas")).not.toBeInTheDocument();
@@ -120,7 +123,7 @@ describe("paginas autenticadas", () => {
 
   it("mantem a rota / protegida e renderiza dashboard com dados", async () => {
     await login("/");
-    expect(await screen.findByText("Patrimônio")).toBeInTheDocument();
+    expect((await screen.findAllByText("Patrimônio")).length).toBeGreaterThan(0);
     expect(screen.getByText("Resumo de risco")).toBeInTheDocument();
     expect(screen.getByText(/Cotações atualizadas em/)).toBeInTheDocument();
     expect(screen.getAllByText("R$ 521,00").length).toBeGreaterThan(0);
@@ -289,11 +292,10 @@ describe("paginas autenticadas", () => {
 
   it("botao Tentar novamente recarrega o dashboard", async () => {
     const user = userEvent.setup();
-    let attempts = 0;
+    let shouldFail = true;
     server.use(
       http.get(`${api}/dashboard`, () => {
-        attempts += 1;
-        if (attempts === 1) {
+        if (shouldFail) {
           return HttpResponse.json({ detail: "Erro temporario" }, { status: 500 });
         }
         return HttpResponse.json({
@@ -314,20 +316,20 @@ describe("paginas autenticadas", () => {
     sessionStorage.setItem("mesa_quant_session", "test-token");
     renderWithProviders(<AppRouter />, "/");
 
-    await user.click(await screen.findByRole("button", { name: "Tentar novamente" }));
-    expect(await screen.findByText("Patrimônio")).toBeInTheDocument();
+    const retryButton = await screen.findByRole("button", { name: "Tentar novamente" });
+    shouldFail = false;
+    await user.click(retryButton);
+    expect((await screen.findAllByText("Patrimônio")).length).toBeGreaterThan(0);
   });
 
   it("renderiza carteira e historico", async () => {
-    const user = await login();
-    await user.click(screen.getByText("Minha carteira"));
+    await login("/carteira");
     expect((await screen.findAllByText("Petrobras PN")).length).toBeGreaterThan(0);
     expect(screen.getByText("Histórico de movimentações")).toBeInTheDocument();
   });
 
   it("pesquisa PETR4 e Petrobras, separa preco atual de preco de compra e salva", async () => {
-    const user = await login();
-    await user.click(screen.getByText("Adicionar investimento"));
+    const user = await login("/investimentos/novo");
     await user.type(await screen.findByLabelText("Ativo ou empresa"), "PETR4");
     await user.click(await screen.findByText("PETR4"));
     expect(screen.getByText("Última cotação disponível")).toBeInTheDocument();
@@ -343,8 +345,7 @@ describe("paginas autenticadas", () => {
 
   it("permite cadastrar corretora dentro do formulario e seleciona automaticamente", async () => {
     server.use(http.get(`${api}/brokerages`, () => HttpResponse.json([])));
-    const user = await login();
-    await user.click(screen.getByText("Adicionar investimento"));
+    const user = await login("/investimentos/novo");
 
     expect(await screen.findByText("Você ainda não cadastrou uma corretora.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "+ Cadastrar corretora" }));
@@ -360,8 +361,7 @@ describe("paginas autenticadas", () => {
   });
 
   it("mostra erro de corretora duplicada sem perder o formulario", async () => {
-    const user = await login();
-    await user.click(screen.getByText("Adicionar investimento"));
+    const user = await login("/investimentos/novo");
     await user.click(screen.getByRole("button", { name: "+ Cadastrar corretora" }));
     await user.type(screen.getByLabelText("Nome da corretora"), "XP");
     await user.click(screen.getByRole("button", { name: "Salvar corretora" }));
@@ -437,16 +437,14 @@ describe("paginas autenticadas", () => {
         ),
       ),
     );
-    const user = await login();
-    await user.click(screen.getByText("Adicionar investimento"));
+    const user = await login("/investimentos/novo");
     await user.type(await screen.findByLabelText("Ativo ou empresa"), "PETR4");
 
     expect(await screen.findByText(/Limite de consultas ao mercado atingido/)).toBeInTheDocument();
   });
 
   it("importa carteira com revisao de linhas", async () => {
-    const user = await login();
-    await user.click(screen.getByText("Importar carteira"));
+    const user = await login("/carteira/importar");
     await user.selectOptions(await screen.findByLabelText("Corretora"), "brokerage-1");
     await user.type(screen.getByLabelText("Ativo"), "PETR4");
     await user.type(screen.getByLabelText("Quantidade atual"), "10");
@@ -457,36 +455,37 @@ describe("paginas autenticadas", () => {
   });
 
   it("renderiza inteligencia de carteira com diagnostico e recomendacoes", async () => {
-    const user = await login();
-    await user.click(screen.getByText("Inteligência de Carteira"));
+    const user = await login("/planejar");
 
     expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Minha estratégia" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Futuro financeiro" }));
+    expect(screen.getAllByText("Minha estratégia").length).toBeGreaterThan(0);
     expect(await screen.findByText("Total da alocação: 100,00%")).toBeInTheDocument();
     expect(screen.getAllByText("Minha estratégia").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Salvar estratégia" }));
     expect(await screen.findByText("Estratégia salva com sucesso.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Visão geral" }));
+    await user.click(screen.getByRole("tab", { name: "Diagnóstico" }));
     expect(screen.getByText("Patrimônio atual")).toBeInTheDocument();
     expect(screen.getByText("Carteira em formação")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Diagnóstico" }));
+    await user.click(screen.getAllByText("Diagnóstico")[0]);
     expect(screen.getByText("Pontuação da carteira")).toBeInTheDocument();
     expect(screen.getAllByText("Há concentração relevante em uma única posição.").length).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole("button", { name: "Recomendações" }));
+    await user.click(screen.getAllByText("Recomendações")[0]);
     expect(await screen.findByText("PETR4 - Dados insuficientes")).toBeInTheDocument();
     expect(screen.getByText(/P\/L: O provedor atual/)).toBeInTheDocument();
-    expect(screen.getByText("Dados insuficientes")).toBeInTheDocument();
+    expect(screen.getAllByText("Dados insuficientes").length).toBeGreaterThan(0);
     expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
   });
 
   it("monta carteira com dados determinísticos", async () => {
-    const user = await login("/inteligencia-carteira");
-    await user.click(await screen.findByRole("button", { name: "Montar carteira" }));
-    await user.click(screen.getByRole("button", { name: "Gerar carteira sugerida" }));
+    const user = await login("/planejar?secao=montar-carteira");
+    await user.click(await screen.findByRole("tab", { name: "Montar carteira" }));
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
 
-    expect(await screen.findByRole("heading", { name: "Distribuição por classe" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sua carteira recomendada" })).toBeInTheDocument();
+    await user.click(screen.getByText("Distribuição por classe"));
     expect(screen.getAllByText("Ações").length).toBeGreaterThan(0);
     expect(screen.getByText("R$ 6.000,00")).toBeInTheDocument();
     expect(screen.getByText("R$ 4.000,00")).toBeInTheDocument();
@@ -510,7 +509,7 @@ describe("paginas autenticadas", () => {
     sessionStorage.setItem("mesa_quant_session", "test-token");
     renderWithProviders(<AppRouter />, "/");
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument(), { timeout: 10_000 });
-    expect(await screen.findByText("Patrimônio")).toBeInTheDocument();
+    expect((await screen.findAllByText("Patrimônio")).length).toBeGreaterThan(0);
     expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
   });
 });

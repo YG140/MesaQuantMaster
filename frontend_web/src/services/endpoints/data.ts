@@ -14,6 +14,8 @@ import type {
   MarketAsset,
   MacroIndicatorSnapshot,
   ProviderCapabilities,
+  AIAgentChatRequest,
+  AIAgentChatResponse,
   MarketQuote,
   Operation,
   OperationUpdate,
@@ -121,4 +123,11 @@ export const endpoints = {
     apiRequest<MacroIndicatorSnapshot[]>("/intelligence/macro", { token }),
   providerCapabilities: (token: string) =>
     apiRequest<ProviderCapabilities>("/market/provider-capabilities", { token, timeoutMs: 60_000 }),
+  aiAgentChat: (token: string, payload: AIAgentChatRequest) =>
+    apiRequest<AIAgentChatResponse>("/ai-agent/chat", {
+      method: "POST",
+      token,
+      body: payload,
+      timeoutMs: 45_000,
+    }),
 };

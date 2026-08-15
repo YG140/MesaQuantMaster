@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { Input } from "../components/ui/Input";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { ErrorState } from "../components/feedback/ErrorState";
 import { resetPassword } from "../services/endpoints/auth";
 
@@ -33,8 +33,8 @@ export function ResetPasswordPage() {
     {message ? <div className="success-box">{message}</div> : null}
     {error ? <ErrorState message={error} /> : null}
     {!message ? <form onSubmit={submit} className="form-grid">
-      <Input label="Nova senha" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-      <Input label="Confirmar nova senha" type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
+      <PasswordInput label="Nova senha" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+      <PasswordInput label="Confirmar nova senha" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
       <Button type="submit" disabled={sending || !token}>{sending ? "Salvando..." : "Salvar nova senha"}</Button>
     </form> : null}
     <p className="auth-link"><Link to="/login">Voltar para o login</Link></p>

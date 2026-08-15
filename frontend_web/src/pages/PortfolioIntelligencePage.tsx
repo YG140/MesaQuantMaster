@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type SetStateAction } from "react";
+import { useEffect, useState, type ReactNode, type SetStateAction } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { EmptyState } from "../components/feedback/EmptyState";
 import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
@@ -9,6 +10,9 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { MetricCard } from "../components/ui/MetricCard";
+import { DataStatusBadge } from "../components/ui/DataBadges";
+import { ScoreGauge } from "../components/ui/ScoreGauge";
+import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { useAuth } from "../features/auth/useAuth";
 import { endpoints } from "../services/endpoints/data";
@@ -28,7 +32,8 @@ import {
   parseBrazilianNumber,
 } from "../utils/formatters";
 
-const tabs = ["Minha estratégia", "Visão geral", "Diagnóstico", "Recomendações", "Rebalanceamento", "Montar carteira", "Oportunidades"];
+const areas = ["Diagnóstico", "Montar carteira", "Futuro financeiro"] as const;
+type IntelligenceArea = (typeof areas)[number];
 const classes = [
   "Caixa",
   "Reserva de emergência",
@@ -63,7 +68,13 @@ type PolicyDraft = {
 
 export function PortfolioIntelligencePage() {
   const { token } = useAuth();
-  const [tab, setTab] = useState(tabs[0]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSection = searchParams.get("secao");
+  const area: IntelligenceArea = requestedSection === "montar-carteira"
+    ? "Montar carteira"
+    : requestedSection === "futuro-financeiro"
+      ? "Futuro financeiro"
+      : "Diagnóstico";
   const intelligence = useQuery({
     queryKey: ["portfolio-intelligence", token],
     queryFn: () => endpoints.portfolioIntelligence(token!),
@@ -75,29 +86,53 @@ export function PortfolioIntelligencePage() {
   if (!intelligence.data) return <EmptyState title="Dados insuficientes para calcular." />;
 
   return (
-    <div className="page-stack">
-      <section className="page-heading">
-        <div>
-          <h2>Inteligência de Carteira</h2>
-          <p>Analise sua carteira, encontre possíveis desequilíbrios e descubra como direcionar seus próximos investimentos.</p>
-        </div>
-      </section>
-      <div className="tabs" role="tablist" aria-label="Áreas de inteligência">
-        {tabs.map((item) => (
-          <button key={item} type="button" className={item === tab ? "active" : ""} onClick={() => setTab(item)}>
+    <div className={`page-stack planning-prism-page planning-${requestedSection ?? "diagnostico"}`}>
+      <SectionHeader eyebrow="Planejar" title="Inteligência de Carteira" description="Diagnóstico, construção de carteira e futuro financeiro em uma única experiência." />
+      <div className="tabs intelligence-areas" role="tablist" aria-label="Áreas de inteligência">
+        {areas.map((item) => (
+          <button key={item} type="button" role="tab" aria-selected={item === area} className={item === area ? "active" : ""} onClick={() => setSearchParams(item === "Montar carteira" ? { secao: "montar-carteira" } : item === "Futuro financeiro" ? { secao: "futuro-financeiro" } : { secao: "diagnostico" })}>
             {item}
           </button>
         ))}
       </div>
-      {tab === "Minha estratégia" ? <Strategy /> : null}
-      {tab === "Visão geral" ? <Overview data={intelligence.data} /> : null}
-      {tab === "Diagnóstico" ? <Diagnosis data={intelligence.data} /> : null}
-      {tab === "Recomendações" ? <Recommendations data={intelligence.data} /> : null}
-      {tab === "Rebalanceamento" ? <Rebalancing data={intelligence.data} /> : null}
-      {tab === "Montar carteira" ? <BuildPortfolio policy={intelligence.data.policy} /> : null}
-      {tab === "Oportunidades" ? <Opportunities data={intelligence.data} /> : null}
+      {area === "Diagnóstico" ? <div className="intelligence-sections">
+        <details open><summary>Visão geral</summary><Overview data={intelligence.data} /></details>
+        <details><summary>Diagnóstico</summary><Diagnosis data={intelligence.data} /></details>
+        <details><summary>Recomendações</summary><Recommendations data={intelligence.data} /></details>
+        <details><summary>Rebalanceamento</summary><Rebalancing data={intelligence.data} /></details>
+        <details><summary>Oportunidades relacionadas à carteira</summary><MarketOpportunities /></details>
+      </div> : null}
+      {area === "Montar carteira" ? <BuildPortfolio policy={intelligence.data.policy} /> : null}
+      {area === "Futuro financeiro" ? <div className="intelligence-sections">
+        <details open><summary>Minha estratégia</summary><Strategy /></details>
+        <details open><summary>Projeções, cenários e liberdade financeira</summary><FutureFinancial /></details>
+      </div> : null}
     </div>
   );
+}
+
+function FutureFinancial() {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  const data = queryClient.getQueryData<BuildPortfolioResponse>(["portfolio-projection", token]);
+
+  if (!data) {
+    return <div className="card"><p>Gere uma carteira com suas premissas para visualizar projeções, cenários, capacidade mensal, reserva e liberdade financeira.</p><Link className="button button-secondary" to="/planejar?secao=montar-carteira">Informar premissas e gerar projeção</Link></div>;
+  }
+
+  return <div className="page-stack">
+    <div className="metric-grid compact">
+      <MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} />
+      <MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} />
+      <MetricCard label="Patrimônio necessário" value={formatMoney(data.freedom_goal.required_wealth)} />
+      <MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} />
+    </div>
+    <Card title="Cenários projetados">
+      <div className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></div>
+      <TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} />
+      <p className="helper smart-disclaimer">{data.disclaimer}</p>
+    </Card>
+  </div>;
 }
 
 function Strategy() {
@@ -227,14 +262,22 @@ function Diagnosis({ data }: { data: PortfolioIntelligence }) {
   const diagnosis = data.diagnosis;
   return (
     <div className="page-stack">
+      <div className="score-grid">
+        <ScoreGauge label="Score da carteira" value={diagnosis.portfolio_score} />
+        <ScoreGauge label="Diversificação" value={diagnosis.diversification_score} />
+        <ScoreGauge label="Concentração" value={diagnosis.concentration_score} />
+        <ScoreGauge label="Liquidez" value={diagnosis.liquidity_score} />
+        <ScoreGauge label="Renda" value={diagnosis.income_score} />
+      </div>
       <div className="two-column">
         <Card title="Diagnóstico">
+          <div className="button-row"><DataStatusBadge status={data.overview.market_data_status} /><span className="badge">Risco: {diagnosis.risk_level}</span><span className="badge">Qualidade: {diagnosis.data_quality}</span></div>
           <div className="metric-grid compact">
             <MetricCard label="Pontuação da carteira" value={formatPercent(diagnosis.portfolio_score)} />
             <MetricCard label="Diversificação" value={formatPercent(diagnosis.diversification_score)} />
             <MetricCard label="Concentração" value={formatPercent(diagnosis.concentration_score)} />
-            <MetricCard label="Liquidez" value="Dados insuficientes para calcular." />
-            <MetricCard label="Renda" value="Dados insuficientes para calcular." />
+            <MetricCard label="Liquidez" value={diagnosis.liquidity_score === null ? "Indisponível" : formatPercent(diagnosis.liquidity_score)} />
+            <MetricCard label="Renda" value={diagnosis.income_score === null ? "Indisponível" : formatPercent(diagnosis.income_score)} />
           </div>
         </Card>
         <Card title="Pontos de atenção">
@@ -387,6 +430,7 @@ function Rebalancing({ data }: { data: PortfolioIntelligence }) {
 
 function BuildPortfolio({ policy }: { policy: PortfolioPolicy | null }) {
   const { token } = useAuth();
+  const queryClient = useQueryClient();
   const [availableAmount, setAvailableAmount] = useState("10000");
   const [monthlyContribution, setMonthlyContribution] = useState(String(policy?.monthly_contribution ?? "0"));
   const [objective, setObjective] = useState(policy?.objective ?? "crescimento patrimonial");
@@ -440,114 +484,106 @@ function BuildPortfolio({ policy }: { policy: PortfolioPolicy | null }) {
       projection_years: Number.parseInt(projectionYears, 10) || 20,
       reinvest_income: true,
     }),
+    onSuccess: (data) => queryClient.setQueryData(["portfolio-projection", token], data),
   });
   return (
-    <div className="page-stack">
-      <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
-      <Card title="Objetivo e restrições">
+    <div className="page-stack smart-portfolio-flow">
+      <Card title="Monte uma carteira para o seu momento">
+        <p className="helper">Informe o essencial. Os demais parâmetros continuam disponíveis nas configurações avançadas.</p>
+        <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-          <CurrencyInput label="Patrimônio disponível" value={availableAmount} onChange={(event) => setAvailableAmount(event.target.value)} />
+          <CurrencyInput label="Valor disponível para investir" value={availableAmount} onChange={(event) => setAvailableAmount(event.target.value)} />
           <CurrencyInput label="Aporte mensal" value={monthlyContribution} onChange={(event) => setMonthlyContribution(event.target.value)} />
           <Select label="Objetivo" value={objective} onChange={(event) => setObjective(event.target.value)}><option value="reserva">Reserva</option><option value="renda">Renda</option><option value="crescimento patrimonial">Crescimento patrimonial</option><option value="preservação de capital">Preservação de capital</option></Select>
           <Select label="Horizonte" value={horizon} onChange={(event) => setHorizon(event.target.value)}><option value="curto prazo">Curto prazo</option><option value="médio prazo">Médio prazo</option><option value="longo prazo">Longo prazo</option></Select>
           <Select label="Perfil de risco" value={riskProfile} onChange={(event) => setRiskProfile(event.target.value)}><option value="conservador">Conservador</option><option value="moderado">Moderado</option><option value="arrojado">Arrojado</option></Select>
-          <Select label="Necessidade de liquidez" value={liquidity} onChange={(event) => setLiquidity(event.target.value)}><option value="baixa">Baixa</option><option value="média">Média</option><option value="alta">Alta</option></Select>
           <Input label="Quantidade máxima de ativos" inputMode="numeric" value={maxAssets} onChange={(event) => setMaxAssets(event.target.value.replace(/\D/g, ""))} />
-          <DecimalInput label="Limite por ativo (%)" value={maxAsset} onChange={(event) => setMaxAsset(event.target.value)} />
-          <DecimalInput label="Limite por classe (%)" value={maxClass} onChange={(event) => setMaxClass(event.target.value)} />
-          <CurrencyInput label="Renda mensal líquida" value={income} onChange={(event) => setIncome(event.target.value)} />
-          <CurrencyInput label="Despesas essenciais" value={essentialExpenses} onChange={(event) => setEssentialExpenses(event.target.value)} />
-          <CurrencyInput label="Despesas mensais totais" value={totalExpenses} onChange={(event) => setTotalExpenses(event.target.value)} />
-          <CurrencyInput label="Reserva de emergência atual" value={reserve} onChange={(event) => setReserve(event.target.value)} />
-          <CurrencyInput label="Dívidas de alto custo" value={debt} onChange={(event) => setDebt(event.target.value)} />
-          <CurrencyInput label="Patrimônio financeiro atual" value={currentAssets} onChange={(event) => setCurrentAssets(event.target.value)} />
-          <CurrencyInput label="Renda mensal desejada" value={desiredIncome} onChange={(event) => setDesiredIncome(event.target.value)} />
-          <Input label="Anos da projeção" inputMode="numeric" value={projectionYears} onChange={(event) => setProjectionYears(event.target.value.replace(/\D/g, ""))} />
-          <div className="span-2 class-restrictions">
-            <strong>Classes permitidas e proibidas</strong>
-            <p className="helper">Sem seleção em “permitida”, todas as classes não proibidas podem ser avaliadas.</p>
-            {classes.map((assetClass) => <div key={assetClass} className="class-restriction-row"><span>{assetClass}</span><label><input type="checkbox" checked={allowed.includes(assetClass)} onChange={() => toggleClass(assetClass, "allowed")} /> Permitida</label><label><input type="checkbox" checked={prohibited.includes(assetClass)} onChange={() => toggleClass(assetClass, "prohibited")} /> Proibida</label></div>)}
-          </div>
-          {mutation.error ? <div className="span-2"><ErrorState message={mutation.error instanceof Error ? mutation.error.message : "Não foi possível gerar a carteira."} /></div> : null}
-          <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Analisando dados..." : "Gerar carteira sugerida"}</Button>
+          <details className="span-2 details-panel smart-advanced-settings">
+            <summary>Configurações avançadas</summary>
+            <div className="form-grid two">
+              <Select label="Necessidade de liquidez" value={liquidity} onChange={(event) => setLiquidity(event.target.value)}><option value="baixa">Baixa</option><option value="média">Média</option><option value="alta">Alta</option></Select>
+              <DecimalInput label="Limite por ativo (%)" value={maxAsset} onChange={(event) => setMaxAsset(event.target.value)} />
+              <DecimalInput label="Limite por classe (%)" value={maxClass} onChange={(event) => setMaxClass(event.target.value)} />
+              <CurrencyInput label="Renda mensal líquida" value={income} onChange={(event) => setIncome(event.target.value)} />
+              <CurrencyInput label="Despesas essenciais" value={essentialExpenses} onChange={(event) => setEssentialExpenses(event.target.value)} />
+              <CurrencyInput label="Despesas mensais totais" value={totalExpenses} onChange={(event) => setTotalExpenses(event.target.value)} />
+              <CurrencyInput label="Reserva de emergência atual" value={reserve} onChange={(event) => setReserve(event.target.value)} />
+              <CurrencyInput label="Dívidas de alto custo" value={debt} onChange={(event) => setDebt(event.target.value)} />
+              <CurrencyInput label="Patrimônio financeiro atual" value={currentAssets} onChange={(event) => setCurrentAssets(event.target.value)} />
+              <CurrencyInput label="Renda mensal desejada" value={desiredIncome} onChange={(event) => setDesiredIncome(event.target.value)} />
+              <Input label="Anos da projeção" inputMode="numeric" value={projectionYears} onChange={(event) => setProjectionYears(event.target.value.replace(/\D/g, ""))} />
+              <div className="span-2 class-restrictions">
+                <strong>Classes permitidas e proibidas</strong>
+                <p className="helper">Sem seleção em “permitida”, todas as classes não proibidas podem ser avaliadas.</p>
+                {classes.map((assetClass) => <div key={assetClass} className="class-restriction-row"><span>{assetClass}</span><label><input type="checkbox" checked={allowed.includes(assetClass)} onChange={() => toggleClass(assetClass, "allowed")} /> Permitida</label><label><input type="checkbox" checked={prohibited.includes(assetClass)} onChange={() => toggleClass(assetClass, "prohibited")} /> Proibida</label></div>)}
+              </div>
+            </div>
+          </details>
+          {mutation.error ? <div className="span-2"><ErrorState message="Não foi possível montar sua carteira agora. Seus dados foram preservados."><Button type="button" variant="secondary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>Tentar novamente</Button></ErrorState></div> : null}
+          <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button>
         </form>
       </Card>
-      {mutation.data ? <BuildResult data={mutation.data} /> : null}
+      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={normalizeDecimalForApi(availableAmount)} /> : null}
     </div>
   );
 }
 
-function BuildResult({ data }: { data: BuildPortfolioResponse }) {
+function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; totalConsidered: string }) {
+  const sortedAssets = [...data.assets].sort((left, right) => (parseBrazilianNumber(right.recommended_percentage) ?? 0) - (parseBrazilianNumber(left.recommended_percentage) ?? 0));
   return (
-    <div className="page-stack">
-      <Card title="Diagnóstico financeiro">
-        <div className="metric-grid compact">
-          <MetricCard label="Fase" value={data.diagnosis.phase} />
-          <MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} />
-          <MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} />
-          <MetricCard label="Meses cobertos" value={data.diagnosis.reserve_months_covered ?? "Dados insuficientes"} />
-        </div>
-        <TextList items={[...data.diagnosis.debt_alerts, ...data.diagnosis.priority_actions]} />
-      </Card>
-      <Card title="Resumo da estratégia">
-        <p>{data.strategy_summary}</p>
-        <div className="metric-grid compact">
-          <MetricCard label="Alocado" value={formatMoney(data.total_allocated_amount)} />
-          <MetricCard label="Não alocado" value={formatMoney(data.unallocated_amount)} />
-          <MetricCard label="Percentual alocado" value={formatPercent(data.total_allocated_percentage)} />
+    <div className="page-stack smart-result">
+      <Card title="Sua carteira recomendada">
+        <div className="metric-grid compact smart-summary">
           <MetricCard label="Confiança" value={confidenceLabel(data.confidence)} />
+          <MetricCard label="Valor total considerado" value={formatMoney(totalConsidered)} />
+          <MetricCard label="Valor alocado" value={formatMoney(data.total_allocated_amount)} />
+          <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
+          <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />
         </div>
-        <p className="helper">{data.disclaimer}</p>
-      </Card>
-      <Card title="Distribuição por classe">
-        {!data.class_allocations.length ? <EmptyState title="Cobertura insuficiente para alocar com segurança." /> : <div className="table-wrap">
-        <table>
-          <thead><tr><th>Classe</th><th>Percentual</th><th>Valor sugerido</th><th>Explicação</th></tr></thead>
-          <tbody>{data.class_allocations.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatPercent(item.percentage)}</td><td>{formatMoney(item.amount)}</td><td>{item.explanation}</td></tr>)}</tbody>
-        </table>
-        </div>}
-      </Card>
-      <Card title="Ativos sugeridos">
-        {!data.assets.length ? <EmptyState title="Nenhum ativo atingiu a cobertura mínima." /> : (
-          <div className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Setor</th><th>Percentual</th><th>Valor</th><th>Nota</th><th>Confiança</th></tr></thead><tbody>
-            {data.assets.map((asset) => <tr key={asset.symbol}><td><strong>{asset.symbol}</strong><br />{asset.name}</td><td>{asset.asset_class}</td><td>{asset.sector || "Não informado"}</td><td>{formatPercent(asset.recommended_percentage)}</td><td>{formatMoney(asset.recommended_amount)}</td><td>{formatPercent(asset.score)}</td><td>{confidenceLabel(asset.confidence)}</td></tr>)}
-          </tbody></table></div>
+        {!sortedAssets.length ? <div className="smart-insufficient"><h3>Ainda não há dados suficientes para recomendar ativos.</h3><p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></div> : (
+          <div className="recommended-assets" aria-label="Ativos recomendados">
+            {sortedAssets.map((asset) => <article className="recommended-asset" key={asset.symbol}>
+              <div><strong>{asset.symbol}</strong><span>{asset.asset_class}</span></div>
+              <div><small>Percentual</small><b>{formatPercent(asset.recommended_percentage)}</b></div>
+              <div><small>Valor</small><b>{formatMoney(asset.recommended_amount)}</b></div>
+              <div><small>Confiança</small><b>{confidenceLabel(asset.confidence)}</b></div>
+              <details className="asset-details"><summary>Ver detalhes</summary><div className="asset-detail-content"><h4>Justificativas</h4><TextList items={asset.reasons} /><h4>Riscos</h4><TextList items={asset.risks} fallback="Nenhum risco adicional identificado com os dados disponíveis." /><h4>Indicadores e procedência</h4><div className="table-wrap"><table><thead><tr><th>Indicador</th><th>Fonte</th><th>Referência</th><th>Validade</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={item.key}><td>{item.label}</td><td>{item.source}</td><td>{formatDateTimeBR(item.reference_date)}</td><td>{formatDateTimeBR(item.valid_until)}</td></tr>)}</tbody></table></div><h4>Dados ausentes</h4><TextList items={asset.missing_data} fallback="Nenhum dado ausente entre os indicadores aplicáveis." /></div></details>
+            </article>)}
+          </div>
         )}
+        <p className="helper smart-disclaimer">{data.disclaimer}</p>
       </Card>
-      {data.assets.map((asset) => (
-        <Card key={`${asset.symbol}-details`} title={`${asset.symbol} — justificativas e cobertura`}>
-          <div className="two-column"><div><h4>Motivos</h4><TextList items={asset.reasons} /><h4>Riscos</h4><TextList items={asset.risks} fallback="Nenhum risco adicional identificado com os dados disponíveis." /><h4>Dados ausentes</h4><TextList items={asset.missing_data} fallback="Nenhum dado ausente entre os indicadores aplicáveis." /></div>
-          <div><h4>Indicadores utilizados</h4><div className="table-wrap"><table><thead><tr><th>Indicador</th><th>Fonte</th><th>Tipo</th><th>Referência</th><th>Validade</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={item.key}><td>{item.label}</td><td>{item.source}</td><td>{item.source_type}</td><td>{formatDateTimeBR(item.reference_date)}</td><td>{formatDateTimeBR(item.valid_until)}</td></tr>)}</tbody></table></div></div></div>
-        </Card>
-      ))}
-      <Card title="Cobertura e exclusões">
-        <TextList items={data.missing_data} fallback="Sem avisos adicionais de cobertura." />
-        {data.exclusions.length ? <div className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo da exclusão</th></tr></thead><tbody>{data.exclusions.map((item) => <tr key={item.symbol}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></div> : <p>Nenhum ativo adicional foi excluído.</p>}
-      </Card>
-      <Card title="Carteira executável">
-        {!data.assets.length ? <p>Sem ativos executáveis.</p> : <div className="table-wrap"><table><thead><tr><th>Ativo</th><th>Preço</th><th>Quantidade</th><th>Valor executável</th><th>Diferença do alvo</th></tr></thead><tbody>{data.assets.map((asset) => <tr key={`execution-${asset.symbol}`}><td>{asset.symbol}</td><td>{formatMoney(asset.reference_price)}</td><td>{asset.executable_quantity ?? "—"}</td><td>{formatMoney(asset.executable_amount)}</td><td>{formatMoney(asset.target_gap)}</td></tr>)}</tbody></table></div>}
-      </Card>
-      <Card title="Plano de aportes">
-        {!data.contribution_plan.length ? <p>Sem aporte mensal informado.</p> : <div className="table-wrap"><table><thead><tr><th>Prioridade</th><th>Destino</th><th>Valor</th><th>Motivo</th></tr></thead><tbody>{data.contribution_plan.map((item) => <tr key={`${item.priority}-${item.symbol}`}><td>{item.priority}</td><td>{item.symbol}</td><td>{formatMoney(item.suggested_amount)}</td><td>{item.reason}</td></tr>)}</tbody></table></div>}
-      </Card>
-      <Card title="Projeções de patrimônio">
-        <div className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda mensal estimada</th><th>Sem reinvestimento</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td><td>{formatMoney(item.projected_without_reinvestment)}</td></tr>)}</tbody></table></div>
-      </Card>
-      <Card title="Meta de liberdade financeira">
-        <div className="metric-grid compact"><MetricCard label="Patrimônio necessário" value={formatMoney(data.freedom_goal.required_wealth)} /><MetricCard label="Distância da meta" value={formatMoney(data.freedom_goal.gap)} /><MetricCard label="Progresso" value={formatPercent(data.freedom_goal.achieved_percentage)} /><MetricCard label="Prazo estimado" value={data.freedom_goal.estimated_years ? `${data.freedom_goal.estimated_years} anos` : "Não atingida na projeção"} /></div>
-        <TextList items={[...data.freedom_goal.risks, ...data.freedom_goal.improvement_actions]} />
-      </Card>
+      <ResultDetails title="Por que esta carteira?"><p>{data.strategy_summary}</p><TextList items={data.selections.map((item) => `${item.asset_class}: ${item.message}`)} /></ResultDetails>
+      <ResultDetails title="Riscos e cuidados"><TextList items={[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks]} fallback="Nenhum cuidado adicional foi identificado com os dados disponíveis." /></ResultDetails>
+      <ResultDetails title="Distribuição por classe">{!data.class_allocations.length ? <EmptyState title="Cobertura insuficiente para alocar com segurança." /> : <div className="table-wrap"><table><thead><tr><th>Classe</th><th>Percentual</th><th>Valor sugerido</th><th>Explicação</th></tr></thead><tbody>{data.class_allocations.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatPercent(item.percentage)}</td><td>{formatMoney(item.amount)}</td><td>{item.explanation}</td></tr>)}</tbody></table></div>}</ResultDetails>
+      <ResultDetails title="Planejamento financeiro"><div className="metric-grid compact"><MetricCard label="Fase" value={data.diagnosis.phase} /><MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} /><MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} /><MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} /></div><TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} /><div className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></div></ResultDetails>
+      <ResultDetails title="Carteira executável">{!sortedAssets.length ? <p>Sem ativos executáveis.</p> : <div className="table-wrap"><table><thead><tr><th>Ativo</th><th>Preço</th><th>Quantidade</th><th>Valor executável</th><th>Diferença do alvo</th></tr></thead><tbody>{sortedAssets.map((asset) => <tr key={`execution-${asset.symbol}`}><td>{asset.symbol}</td><td>{formatMoney(asset.reference_price)}</td><td>{asset.executable_quantity ?? "—"}</td><td>{formatMoney(asset.executable_amount)}</td><td>{formatMoney(asset.target_gap)}</td></tr>)}</tbody></table></div>}</ResultDetails>
+      <ResultDetails title="Plano de aportes">{!data.contribution_plan.length ? <p>Sem aporte mensal informado.</p> : <div className="table-wrap"><table><thead><tr><th>Prioridade</th><th>Destino</th><th>Valor</th><th>Motivo</th></tr></thead><tbody>{data.contribution_plan.map((item) => <tr key={`${item.priority}-${item.symbol}`}><td>{item.priority}</td><td>{item.symbol}</td><td>{formatMoney(item.suggested_amount)}</td><td>{item.reason}</td></tr>)}</tbody></table></div>}</ResultDetails>
+      <ResultDetails title="Dados e fontes"><TextList items={[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments)]} fallback="Sem avisos adicionais sobre dados e fontes." /></ResultDetails>
+      <ResultDetails title="Ativos não incluídos">{data.exclusions.length ? <div className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo</th></tr></thead><tbody>{data.exclusions.map((item) => <tr key={item.symbol}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></div> : <p>Nenhum ativo adicional foi excluído.</p>}</ResultDetails>
     </div>
   );
 }
 
-function Opportunities({ data }: { data: PortfolioIntelligence }) {
+function ResultDetails({ title, children }: { title: string; children: ReactNode }) {
+  return <details className="details-panel smart-result-details"><summary>{title}</summary><div className="smart-detail-body">{children}</div></details>;
+}
+
+export function MarketOpportunities() {
   const { token } = useAuth();
+  const intelligence = useQuery({
+    queryKey: ["portfolio-intelligence", token],
+    queryFn: () => endpoints.portfolioIntelligence(token!),
+    enabled: Boolean(token),
+  });
   const macro = useQuery({
     queryKey: ["macro-context", token],
     queryFn: () => endpoints.macroContext(token!),
     enabled: Boolean(token),
   });
+  if (intelligence.isLoading) return <LoadingState label="Carregando oportunidades de mercado..." />;
+  if (intelligence.error || !intelligence.data) return <ErrorState message="Não foi possível carregar as oportunidades de mercado." />;
+  const data = intelligence.data;
   return (
     <div className="page-stack">
       <Card title="Grupos de análise">

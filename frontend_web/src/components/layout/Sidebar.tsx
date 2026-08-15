@@ -1,41 +1,23 @@
-import { BarChart3, Briefcase, Home, Plus, Search, Upload } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { NavLink } from "react-router-dom";
+import { primaryNavigation } from "../../app/navigation";
 
-const primary = [
-  { to: "/", label: "Início", icon: Home },
-  { to: "/carteira", label: "Minha carteira", icon: Briefcase },
-  { to: "/investimentos/novo", label: "Adicionar investimento", icon: Plus },
-  { to: "/carteira/importar", label: "Importar carteira", icon: Upload },
-];
-
-const tools = [
-  { to: "/inteligencia-carteira", label: "Inteligência de Carteira", icon: BarChart3 },
-  { to: "/ativos", label: "Ativos", icon: Search },
-];
-
-export function Sidebar() {
+export function Sidebar({ onOpenAI }: { onOpenAI: () => void }) {
+  const destinations = (mobile: boolean) => primaryNavigation.map((item) => item.kind === "action"
+    ? <button key={item.label} className={mobile ? "mobile-ai-destination" : "primary-ai-link"} type="button" onClick={onOpenAI}><item.icon size={mobile ? 20 : 18} /><span>{item.label}</span></button>
+    : <NavLink key={item.to} to={item.to} end={item.to === "/"}><item.icon size={mobile ? 20 : 18} /><span>{item.label}</span></NavLink>);
   return (
     <aside className="sidebar" aria-label="Navegação principal">
       <div className="brand">
-        <strong>MQ</strong>
-        <span>Mesa Quant</span>
+        <strong><Sparkles size={20} /></strong>
+        <span><b>MESA</b><small>QUANT MASTER</small></span>
       </div>
-      <nav>
-        <p>Principal</p>
-        {primary.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.to === "/"}>
-            <item.icon size={18} />
-            {item.label}
-          </NavLink>
-        ))}
-        <p>Inteligência</p>
-        {tools.map((item) => (
-          <NavLink key={item.to} to={item.to}>
-            <item.icon size={18} />
-            {item.label}
-          </NavLink>
-        ))}
+      <nav aria-label="Destinos principais" data-testid="desktop-primary-navigation">
+        {destinations(false)}
       </nav>
+      <div className="mobile-nav" aria-label="Destinos principais" data-testid="mobile-primary-navigation">
+        {destinations(true)}
+      </div>
     </aside>
   );
 }
