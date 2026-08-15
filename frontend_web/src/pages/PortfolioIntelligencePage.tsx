@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode, type SetStateAction } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { EmptyState } from "../components/feedback/EmptyState";
 import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
@@ -32,7 +32,8 @@ import {
   parseBrazilianNumber,
 } from "../utils/formatters";
 
-const tabs = ["Minha estratégia", "Visão geral", "Diagnóstico", "Recomendações", "Rebalanceamento", "Montar carteira", "Oportunidades"];
+const areas = ["Diagnóstico", "Montar carteira", "Futuro financeiro"] as const;
+type IntelligenceArea = (typeof areas)[number];
 const classes = [
   "Caixa",
   "Reserva de emergência",
@@ -67,16 +68,13 @@ type PolicyDraft = {
 
 export function PortfolioIntelligencePage() {
   const { token } = useAuth();
-  const location = useLocation();
-  const [searchParams] = useSearchParams();
-  const initialTab = location.pathname === "/analisar"
-    ? "Diagnóstico"
-    : location.pathname === "/planejar"
-      ? "Minha estratégia"
-      : location.pathname === "/investir" || searchParams.get("area") === "investir"
-        ? "Montar carteira"
-        : tabs[0];
-  const [tab, setTab] = useState(initialTab);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSection = searchParams.get("secao");
+  const area: IntelligenceArea = requestedSection === "montar-carteira"
+    ? "Montar carteira"
+    : requestedSection === "futuro-financeiro"
+      ? "Futuro financeiro"
+      : "Diagnóstico";
   const intelligence = useQuery({
     queryKey: ["portfolio-intelligence", token],
     queryFn: () => endpoints.portfolioIntelligence(token!),
@@ -88,24 +86,53 @@ export function PortfolioIntelligencePage() {
   if (!intelligence.data) return <EmptyState title="Dados insuficientes para calcular." />;
 
   return (
-    <div className="page-stack">
-      <SectionHeader eyebrow={location.pathname === "/planejar" ? "Planejar" : location.pathname.includes("invest") ? "Investir" : "Analisar"} title="Inteligência de Carteira" description="Diagnóstico quantitativo, estratégia e próximos movimentos calculados pelo MesaQuantMaster." />
-      <div className="tabs" role="tablist" aria-label="Áreas de inteligência">
-        {tabs.map((item) => (
-          <button key={item} type="button" className={item === tab ? "active" : ""} onClick={() => setTab(item)}>
+    <div className={`page-stack planning-prism-page planning-${requestedSection ?? "diagnostico"}`}>
+      <SectionHeader eyebrow="Planejar" title="Inteligência de Carteira" description="Diagnóstico, construção de carteira e futuro financeiro em uma única experiência." />
+      <div className="tabs intelligence-areas" role="tablist" aria-label="Áreas de inteligência">
+        {areas.map((item) => (
+          <button key={item} type="button" role="tab" aria-selected={item === area} className={item === area ? "active" : ""} onClick={() => setSearchParams(item === "Montar carteira" ? { secao: "montar-carteira" } : item === "Futuro financeiro" ? { secao: "futuro-financeiro" } : { secao: "diagnostico" })}>
             {item}
           </button>
         ))}
       </div>
-      {tab === "Minha estratégia" ? <Strategy /> : null}
-      {tab === "Visão geral" ? <Overview data={intelligence.data} /> : null}
-      {tab === "Diagnóstico" ? <Diagnosis data={intelligence.data} /> : null}
-      {tab === "Recomendações" ? <Recommendations data={intelligence.data} /> : null}
-      {tab === "Rebalanceamento" ? <Rebalancing data={intelligence.data} /> : null}
-      {tab === "Montar carteira" ? <BuildPortfolio policy={intelligence.data.policy} /> : null}
-      {tab === "Oportunidades" ? <Opportunities data={intelligence.data} /> : null}
+      {area === "Diagnóstico" ? <div className="intelligence-sections">
+        <details open><summary>Visão geral</summary><Overview data={intelligence.data} /></details>
+        <details><summary>Diagnóstico</summary><Diagnosis data={intelligence.data} /></details>
+        <details><summary>Recomendações</summary><Recommendations data={intelligence.data} /></details>
+        <details><summary>Rebalanceamento</summary><Rebalancing data={intelligence.data} /></details>
+        <details><summary>Oportunidades relacionadas à carteira</summary><MarketOpportunities /></details>
+      </div> : null}
+      {area === "Montar carteira" ? <BuildPortfolio policy={intelligence.data.policy} /> : null}
+      {area === "Futuro financeiro" ? <div className="intelligence-sections">
+        <details open><summary>Minha estratégia</summary><Strategy /></details>
+        <details open><summary>Projeções, cenários e liberdade financeira</summary><FutureFinancial /></details>
+      </div> : null}
     </div>
   );
+}
+
+function FutureFinancial() {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  const data = queryClient.getQueryData<BuildPortfolioResponse>(["portfolio-projection", token]);
+
+  if (!data) {
+    return <div className="card"><p>Gere uma carteira com suas premissas para visualizar projeções, cenários, capacidade mensal, reserva e liberdade financeira.</p><Link className="button button-secondary" to="/planejar?secao=montar-carteira">Informar premissas e gerar projeção</Link></div>;
+  }
+
+  return <div className="page-stack">
+    <div className="metric-grid compact">
+      <MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} />
+      <MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} />
+      <MetricCard label="Patrimônio necessário" value={formatMoney(data.freedom_goal.required_wealth)} />
+      <MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} />
+    </div>
+    <Card title="Cenários projetados">
+      <div className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></div>
+      <TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} />
+      <p className="helper smart-disclaimer">{data.disclaimer}</p>
+    </Card>
+  </div>;
 }
 
 function Strategy() {
@@ -403,6 +430,7 @@ function Rebalancing({ data }: { data: PortfolioIntelligence }) {
 
 function BuildPortfolio({ policy }: { policy: PortfolioPolicy | null }) {
   const { token } = useAuth();
+  const queryClient = useQueryClient();
   const [availableAmount, setAvailableAmount] = useState("10000");
   const [monthlyContribution, setMonthlyContribution] = useState(String(policy?.monthly_contribution ?? "0"));
   const [objective, setObjective] = useState(policy?.objective ?? "crescimento patrimonial");
@@ -456,6 +484,7 @@ function BuildPortfolio({ policy }: { policy: PortfolioPolicy | null }) {
       projection_years: Number.parseInt(projectionYears, 10) || 20,
       reinvest_income: true,
     }),
+    onSuccess: (data) => queryClient.setQueryData(["portfolio-projection", token], data),
   });
   return (
     <div className="page-stack smart-portfolio-flow">
@@ -540,13 +569,21 @@ function ResultDetails({ title, children }: { title: string; children: ReactNode
   return <details className="details-panel smart-result-details"><summary>{title}</summary><div className="smart-detail-body">{children}</div></details>;
 }
 
-function Opportunities({ data }: { data: PortfolioIntelligence }) {
+export function MarketOpportunities() {
   const { token } = useAuth();
+  const intelligence = useQuery({
+    queryKey: ["portfolio-intelligence", token],
+    queryFn: () => endpoints.portfolioIntelligence(token!),
+    enabled: Boolean(token),
+  });
   const macro = useQuery({
     queryKey: ["macro-context", token],
     queryFn: () => endpoints.macroContext(token!),
     enabled: Boolean(token),
   });
+  if (intelligence.isLoading) return <LoadingState label="Carregando oportunidades de mercado..." />;
+  if (intelligence.error || !intelligence.data) return <ErrorState message="Não foi possível carregar as oportunidades de mercado." />;
+  const data = intelligence.data;
   return (
     <div className="page-stack">
       <Card title="Grupos de análise">

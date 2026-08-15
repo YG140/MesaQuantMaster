@@ -50,6 +50,9 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await page.route("**/operations", async (route) => {
     await route.fulfill({ json: [] });
   });
+  await page.route("**/assets", async (route) => {
+    await route.fulfill({ json: [] });
+  });
   await page.route("**/intelligence/portfolio", async (route) => {
     await route.fulfill({
       json: {
@@ -241,39 +244,41 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await page.goto("/carteira");
   await expect(page.getByRole("heading", { name: "Mesa Quant Master" })).toBeVisible();
   await page.getByLabel("E-mail").fill("ana@example.com");
-  await page.getByLabel("Senha").fill("password123");
+  await page.getByLabel("Senha", { exact: true }).fill("password123");
   await page.getByRole("button", { name: "Entrar" }).click();
   await expect(page.getByRole("heading", { name: /In.cio/ })).toBeVisible();
-  await page.getByRole("link", { name: "Minha carteira" }).click();
+  await page.getByTestId("desktop-primary-navigation").getByRole("link", { name: "Carteira" }).click();
   await expect(page.getByRole("heading", { name: "Minha carteira" })).toBeVisible();
   await expect(page.getByText(/Sua carteira ainda.*vazia/)).toBeVisible();
-  await page.getByRole("link", { name: /Intelig.ncia de Carteira/ }).click();
+  await page.goto("/planejar");
   await expect(page.getByRole("heading", { name: /Intelig.ncia de Carteira/ })).toBeVisible();
+  await page.getByRole("tab", { name: "Futuro financeiro" }).click();
   await expect(page.getByText(/Total da aloca..o: 100,00%/)).toBeVisible();
   await page.getByRole("button", { name: /Salvar estrat.gia/ }).click();
   await expect(page.getByText(/Estrat.gia salva com sucesso/)).toBeVisible();
-  await page.getByRole("button", { name: /Diagn.stico/ }).click();
+  await page.getByRole("tab", { name: "Diagnóstico" }).click();
+  await page.locator(".intelligence-sections summary").filter({ hasText: /Diagn.stico/ }).click();
   await expect(page.getByText(/Pontua..o da carteira/)).toBeVisible();
-  await page.getByRole("button", { name: "Rebalanceamento" }).click();
+  await page.locator(".intelligence-sections summary").filter({ hasText: "Rebalanceamento" }).click();
   await expect(page.getByText("R$ 900,00")).toBeVisible();
-  await page.getByRole("button", { name: /Recomenda..es/ }).click();
+  await page.locator(".intelligence-sections summary").filter({ hasText: /Recomenda..es/ }).click();
   await expect(page.getByText(/PETR4 - Dados insuficientes/)).toBeVisible();
   await expect(page.getByText(/Indicadores por categoria/)).toBeVisible();
   await expect(page.getByText(/P\/L: O provedor atual/)).toBeVisible();
   await expect(page.locator("details.details-panel").first()).toBeVisible();
-  await page.getByRole("button", { name: "Montar carteira" }).click();
+  await page.getByRole("tab", { name: "Montar carteira" }).click();
   await page.getByLabel(/Valor dispon.*investir/).fill("20000");
   await page.getByRole("button", { name: /Montar minha carteira/ }).click();
   await expect(page.getByRole("heading", { name: /Sua carteira recomendada/ })).toBeVisible();
   await page.getByText(/Distribui..o por classe/).click();
   await expect(page.getByText("R$ 12.000,00")).toBeVisible();
   await expect(page.getByText("R$ 8.000,00")).toBeVisible();
-  await page.getByRole("button", { name: "Oportunidades" }).click();
+  await page.getByTestId("desktop-primary-navigation").getByRole("link", { name: "Mercado" }).click();
   await expect(page.getByText(/Grupos de an.lise/)).toBeVisible();
   await expect(page.getByText(/Tracking error: diferen.a/)).toBeVisible();
   await expect(page.getByRole("heading", { name: /Cen.rio econ.mico/ })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole("heading", { name: /Intelig.ncia de Carteira/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mercado e ativos", exact: true })).toBeVisible();
   await expect(page.getByText(/JSON|undefined|null|NaN/)).not.toBeVisible();
   await page.getByRole("button", { name: "Sair" }).click();
   await expect(page.getByRole("heading", { name: "Mesa Quant Master" })).toBeVisible();

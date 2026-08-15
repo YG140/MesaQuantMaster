@@ -87,7 +87,7 @@ export function PortfolioPage() {
   const chartData = positions.map((item) => ({ name: item.ticker, value: toNumber(item.allocation ?? item.weight) ?? 0 })).filter((item) => item.value > 0);
 
   return (
-    <div className="page-stack">
+    <div className="page-stack portfolio-prism-page">
       <section className="page-heading actions">
         <div><h2>Minha carteira</h2><p>Posições, alocação e histórico de movimentações.</p></div>
         <div className="button-row">
@@ -100,12 +100,15 @@ export function PortfolioPage() {
       </section>
       {message && <div className="success-box" role="status">{message}</div>}
       <MarketDataNotice status={portfolio.data?.market_data_status} quoteUpdatedAt={portfolio.data?.quote_updated_at} unpricedSymbols={portfolio.data?.unpriced_symbols ?? []} />
-      <div className="metric-grid">
+      <section className="portfolio-prism-hero">
+        <div className="portfolio-orbit" aria-hidden="true"><span /></div>
+        <div className="metric-grid portfolio-prism-metrics">
         <MetricCard label="Total investido" value={formatMoney(portfolio.data?.total_invested)} />
         <MetricCard label="Valor de mercado" value={formatMoney(portfolio.data?.total_market_value)} />
         <MetricCard label="Lucro ou prejuízo" value={formatMoney(portfolio.data?.total_profit)} />
         <MetricCard label="Rentabilidade" value={formatPercent(portfolio.data?.profitability)} />
-      </div>
+        </div>
+      </section>
       {!positions.length ? <EmptyState title="Sua carteira ainda está vazia." /> : (
         <>
           <Card title="Posições">

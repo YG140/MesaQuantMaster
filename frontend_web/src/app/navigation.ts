@@ -1,48 +1,17 @@
 import {
   Activity,
-  BrainCircuit,
+  Bot,
   BriefcaseBusiness,
-  ChartNoAxesCombined,
   Compass,
-  Plus,
   Search,
-  Upload,
-  WalletCards,
 } from "lucide-react";
 
-export const objectiveNavigation = [
-  {
-    label: "Acompanhar",
-    to: "/",
-    icon: Activity,
-    description: "Patrimônio, carteira e dados de mercado",
-  },
-  {
-    label: "Investir",
-    to: "/investir",
-    icon: WalletCards,
-    description: "Aportes, importação e carteira inteligente",
-  },
-  {
-    label: "Analisar",
-    to: "/analisar",
-    icon: ChartNoAxesCombined,
-    description: "Diagnóstico, risco e oportunidades",
-  },
-  {
-    label: "Planejar",
-    to: "/planejar",
-    icon: Compass,
-    description: "Política, projeções e objetivos",
-  },
-] as const;
-
-export const secondaryNavigation = [
-  { label: "Minha carteira", to: "/carteira", icon: BriefcaseBusiness },
-  { label: "Adicionar investimento", to: "/investimentos/novo", icon: Plus },
-  { label: "Importar carteira", to: "/carteira/importar", icon: Upload },
-  { label: "Inteligência de Carteira", to: "/inteligencia-carteira", icon: BrainCircuit },
-  { label: "Ativos", to: "/ativos", icon: Search },
+export const primaryNavigation = [
+  { kind: "link", label: "Início", to: "/", icon: Activity },
+  { kind: "link", label: "Carteira", to: "/carteira", icon: BriefcaseBusiness },
+  { kind: "action", label: "Mesa IA", icon: Bot },
+  { kind: "link", label: "Mercado", to: "/ativos", icon: Search },
+  { kind: "link", label: "Planejar", to: "/planejar", icon: Compass },
 ] as const;
 
 export const routeContext: Record<string, { eyebrow: string; title: string; description: string }> = {
@@ -56,11 +25,6 @@ export const routeContext: Record<string, { eyebrow: string; title: string; desc
     title: "Minha carteira",
     description: "Posições, movimentações e distribuição do patrimônio.",
   },
-  "/investir": {
-    eyebrow: "Investir",
-    title: "Central de investimentos",
-    description: "Aportes, importação e construção inteligente de carteira.",
-  },
   "/investimentos/novo": {
     eyebrow: "Investir",
     title: "Novo investimento",
@@ -70,16 +34,6 @@ export const routeContext: Record<string, { eyebrow: string; title: string; desc
     eyebrow: "Investir",
     title: "Importar carteira",
     description: "Traga suas posições atuais para a inteligência quantitativa.",
-  },
-  "/analisar": {
-    eyebrow: "Analisar",
-    title: "Inteligência prismática",
-    description: "Diagnóstico, risco, qualidade dos dados e oportunidades.",
-  },
-  "/inteligencia-carteira": {
-    eyebrow: "Analisar",
-    title: "Inteligência prismática",
-    description: "Diagnóstico, risco, qualidade dos dados e oportunidades.",
   },
   "/planejar": {
     eyebrow: "Planejar",
@@ -91,9 +45,16 @@ export const routeContext: Record<string, { eyebrow: string; title: string; desc
     title: "Radar de ativos",
     description: "Pesquise e interprete ativos com dados do backend.",
   },
+  "/configuracoes": { eyebrow: "Workstation", title: "Configurações", description: "Conta, aparência, fontes e capacidades da plataforma." },
 };
 
 export const aiSuggestions: Record<string, string[]> = {
+  carteira: ["Explique a alocação atual da minha carteira.", "Quais riscos devo acompanhar na carteira?"],
+  mercado: ["Quais dados estão disponíveis para analisar um ativo?", "Explique como comparar ativos sem inventar dados."],
+  diagnostico: ["Explique o diagnóstico da minha carteira.", "Quais pontos de atenção aparecem nos dados?"],
+  montar: ["Explique como minha política influencia a carteira sugerida.", "Quais dados faltam para uma sugestão mais confiável?"],
+  futuro: ["Explique meus cenários financeiros em linguagem simples.", "Quais premissas afetam minhas projeções?"],
+  configuracoes: ["Explique a qualidade e as fontes dos meus dados.", "Quais recursos da Mesa IA estão disponíveis?"],
   acompanhar: [
     "Analise minha carteira e explique os principais riscos.",
     "Minha carteira está muito concentrada?",

@@ -7,6 +7,7 @@ import { ErrorState } from "../components/feedback/ErrorState";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { useAuth } from "../features/auth/useAuth";
 
 const schema = z
@@ -55,8 +56,8 @@ export function RegisterPage() {
         <form onSubmit={form.handleSubmit(submit)} className="form-grid">
           <Input label="Nome" {...form.register("name")} error={form.formState.errors.name?.message} />
           <Input label="E-mail" type="email" {...form.register("email")} error={form.formState.errors.email?.message} />
-          <Input label="Senha" type="password" {...form.register("password")} error={form.formState.errors.password?.message} />
-          <Input label="Confirmar senha" type="password" {...form.register("confirmPassword")} error={form.formState.errors.confirmPassword?.message} />
+          <PasswordInput label="Senha" autoComplete="new-password" {...form.register("password")} error={form.formState.errors.password?.message} />
+          <PasswordInput label="Confirmar senha" autoComplete="new-password" {...form.register("confirmPassword")} error={form.formState.errors.confirmPassword?.message} />
           <Button type="submit" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? "Criando..." : "Criar conta"}
           </Button>

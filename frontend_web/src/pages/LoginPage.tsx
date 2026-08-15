@@ -7,6 +7,7 @@ import { ErrorState } from "../components/feedback/ErrorState";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
+import { PasswordInput } from "../components/ui/PasswordInput";
 import { useAuth } from "../features/auth/useAuth";
 
 const schema = z.object({
@@ -36,7 +37,11 @@ export function LoginPage() {
 
   return (
     <main className="auth-page">
-      <Card>
+      <section className="auth-prism" aria-hidden="true">
+        <div className="auth-prism-core"><span /></div>
+        <p>Dados claros. Decisões melhores.</p>
+      </section>
+      <Card className="auth-card">
         <div className="auth-brand">
           <span>MQ</span>
           <h1>Mesa Quant Master</h1>
@@ -45,7 +50,7 @@ export function LoginPage() {
         {error ? <ErrorState message={error} /> : null}
         <form onSubmit={form.handleSubmit(submit)} className="form-grid">
           <Input label="E-mail" type="email" {...form.register("email")} error={form.formState.errors.email?.message} />
-          <Input label="Senha" type="password" {...form.register("password")} error={form.formState.errors.password?.message} />
+          <PasswordInput label="Senha" autoComplete="current-password" {...form.register("password")} error={form.formState.errors.password?.message} />
           <Button type="submit" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? "Entrando..." : "Entrar"}
           </Button>

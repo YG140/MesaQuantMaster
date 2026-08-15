@@ -19,6 +19,25 @@ describe("autenticacao", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText("E-mail")).toBeInTheDocument();
     expect(screen.getByLabelText("Senha")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Visualizar senha" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("alterna a visibilidade da senha por clique e teclado sem perder o valor", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AppRouter />, "/login");
+    const password = await screen.findByLabelText("Senha");
+    const toggle = screen.getByRole("button", { name: "Visualizar senha" });
+    await user.type(password, "senha-preservada");
+    expect(password).toHaveAttribute("type", "password");
+    await user.click(toggle);
+    expect(password).toHaveAttribute("type", "text");
+    expect(password).toHaveValue("senha-preservada");
+    expect(screen.getByRole("button", { name: "Ocultar senha" })).toHaveAttribute("aria-pressed", "true");
+    await user.tab();
+    await user.keyboard("{Shift>}{Tab}{/Shift}{Enter}");
+    expect(password).toHaveAttribute("type", "password");
+    expect(password).toHaveValue("senha-preservada");
+    expect(screen.getByRole("button", { name: "Visualizar senha" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("login redireciona para / e exibe Inicio", async () => {
@@ -29,7 +48,7 @@ describe("autenticacao", () => {
     await user.type(screen.getByLabelText("Senha"), "senha-correta");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
 
-    expect(await screen.findByText("Patrimônio", {}, { timeout: 10_000 })).toBeInTheDocument();
+    expect((await screen.findAllByText("Patrimônio", {}, { timeout: 10_000 })).length).toBeGreaterThan(0);
   });
 
   it("mostra erro no login invalido", async () => {
@@ -78,7 +97,7 @@ describe("autenticacao", () => {
     const user = userEvent.setup();
     sessionStorage.setItem("mesa_quant_session", "test-token");
     renderWithProviders(<AppRouter />, "/");
-    await screen.findByText("Patrimônio", {}, { timeout: 10_000 });
+    await screen.findAllByText("Patrimônio", {}, { timeout: 10_000 });
 
     await user.click(screen.getByRole("button", { name: "Sair" }));
     expect(await screen.findByRole("heading", { name: /Mesa Quant Master/i })).toBeInTheDocument();

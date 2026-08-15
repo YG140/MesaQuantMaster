@@ -11,8 +11,8 @@ const api = "http://127.0.0.1:8000";
 async function openBuilder() {
   sessionStorage.setItem("mesa_quant_session", "test-token");
   const user = userEvent.setup();
-  renderWithProviders(<AppRouter />, "/investir");
-  await user.click(await screen.findByRole("button", { name: "Montar carteira" }, { timeout: 10_000 }));
+  renderWithProviders(<AppRouter />, "/planejar?secao=montar-carteira");
+  await user.click(await screen.findByRole("tab", { name: "Montar carteira" }, { timeout: 10_000 }));
   await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" });
   return user;
 }

@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
+import { Activity, ArrowRight, Plus, Search, Sparkles, WalletCards } from "lucide-react";
 import { AllocationChart } from "../components/charts/AllocationChart";
 import { EmptyState } from "../components/feedback/EmptyState";
 import { ErrorState } from "../components/feedback/ErrorState";
@@ -21,6 +22,7 @@ type ChartPoint = {
 };
 
 export function DashboardPage() {
+  const { openAI } = useOutletContext<{ openAI: () => void }>();
   const { token } = useAuth();
   const queryClient = useQueryClient();
   const dashboard = useQuery({
@@ -78,8 +80,8 @@ export function DashboardPage() {
   };
 
   return (
-    <div className="page-stack">
-      <SectionHeader eyebrow="Acompanhar" title="Seu universo financeiro" description="Acompanhe patrimônio, desempenho e qualidade dos dados em tempo real." actions={
+    <div className="page-stack prism-home">
+      <SectionHeader eyebrow="Mesa adaptativa" title="Seu universo financeiro" description="O que você quer fazer hoje? O Prisma mostra apenas o necessário." actions={
         <Button type="button" variant="secondary" disabled={refreshing} onClick={() => void refreshQuotes()}>
           {refreshing ? "Atualizando..." : "Atualizar cotações"}
         </Button>
@@ -89,19 +91,38 @@ export function DashboardPage() {
         quoteUpdatedAt={dashboardData?.quote_updated_at ?? portfolioData?.quote_updated_at}
         unpricedSymbols={dashboardData?.unpriced_symbols ?? portfolioData?.unpriced_symbols ?? []}
       />
-      <div className="metric-grid">
+      <div className="quick-action-grid">
+        <Link className="quick-action is-primary" to="/investimentos/novo"><Plus size={21} /><span><strong>Investir</strong><small>Registre uma nova operação</small></span><ArrowRight size={20} /></Link>
+        <Link className="quick-action" to="/ativos"><Search size={21} /><span><strong>Analisar</strong><small>Pesquise dados do mercado</small></span><ArrowRight size={20} /></Link>
+        <Link className="quick-action" to="/planejar?secao=montar-carteira"><WalletCards size={21} /><span><strong>Planejar</strong><small>Construa uma alocação orientada</small></span><ArrowRight size={20} /></Link>
+        <Link className="quick-action" to="/carteira"><Activity size={21} /><span><strong>Acompanhar</strong><small>Veja posições e evolução</small></span><ArrowRight size={20} /></Link>
+      </div>
+      <QuantumCard className="prism-feature">
+        <div className="prism-feature-copy">
+          <div className="feature-meta"><span className="eyebrow">Prisma · investir</span><span>Dados atualizados agora</span></div>
+          <p className="feature-kicker"><Sparkles size={16} /> Sua carteira em movimento</p>
+          <h2>Transforme informação em decisões melhores.</h2>
+          <p>A Mesa organiza seu patrimônio, evidencia concentrações e mantém os dados que sustentam cada leitura ao seu alcance.</p>
+        </div>
+        <div className="prism-core" aria-label="Representação prismática da evolução da carteira"><i /><i /><i /><i /></div>
+        <div className="prism-comparison">
+          <div><span>Valor investido</span><strong>{formatMoney(portfolioData?.total_invested)}</strong></div>
+          <ArrowRight aria-hidden="true" />
+          <div><span>Patrimônio</span><strong>{formatMoney(dashboardData?.patrimonio_total ?? portfolioData?.total_market_value)}</strong></div>
+        </div>
+        <div className="button-row">
+          <Link className="button button-primary" to="/planejar?secao=montar-carteira">Explorar possibilidades <ArrowRight size={16} /></Link>
+          <Button type="button" variant="secondary" onClick={openAI}>Conversar com Mesa IA</Button>
+          <Link className="button button-ghost" to="/carteira">Ver detalhes</Link>
+        </div>
+      </QuantumCard>
+      <div className="metric-grid prism-metrics">
         <MetricCard label="Patrimônio" value={formatMoney(dashboardData?.patrimonio_total ?? portfolioData?.total_market_value)} helper="Valor de mercado disponível" />
         <MetricCard label="Valor investido" value={formatMoney(portfolioData?.total_invested)} />
         <MetricCard label="Lucro ou prejuízo" value={formatMoney(portfolioData?.total_profit)} />
         <MetricCard label="Rentabilidade" value={formatPercent(portfolioData?.profitability)} />
         <MetricCard label="Ativos" value={dashboardData?.ativos ?? positions.length} />
         <MetricCard label="Movimentações" value={operationsCount} />
-      </div>
-      <div className="quick-action-grid">
-        <Link className="quick-action" to="/investimentos/novo"><span>01</span><strong>Novo aporte</strong><small>Registre um investimento</small></Link>
-        <Link className="quick-action" to="/carteira"><span>02</span><strong>Ver carteira</strong><small>Posições e movimentações</small></Link>
-        <Link className="quick-action" to="/analisar"><span>03</span><strong>Analisar</strong><small>Risco e diagnóstico</small></Link>
-        <Link className="quick-action" to="/planejar"><span>04</span><strong>Planejar</strong><small>Estratégia e objetivos</small></Link>
       </div>
       <div className="two-column">
         <Card title="Alocação">

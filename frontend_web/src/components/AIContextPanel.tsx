@@ -17,6 +17,7 @@ const toolLabels: Record<string, string> = {
   get_portfolio_policy: "Política de investimento",
   build_portfolio_suggestion: "Sugestão de carteira",
 };
+const contextLabels: Record<string, string> = { acompanhar: "Início", carteira: "Carteira", mercado: "Mercado", investir: "Investimento", analisar: "Análise", planejar: "Planejar", diagnostico: "Diagnóstico", montar: "Montar carteira", futuro: "Futuro financeiro", configuracoes: "Configurações" };
 
 type ChatMessage =
   | { id: string; role: "user"; content: string }
@@ -30,10 +31,14 @@ export function AIContextPanel({ open, onClose }: { open: boolean; onClose: () =
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  const context = location.pathname.startsWith("/invest") || location.pathname.includes("importar")
+  const section = new URLSearchParams(location.search).get("secao");
+  const context = location.pathname === "/configuracoes" ? "configuracoes"
+    : location.pathname.startsWith("/ativos") ? "mercado"
+    : location.pathname.startsWith("/carteira") ? "carteira"
+    : location.pathname.startsWith("/invest") || location.pathname.includes("importar")
     ? "investir"
     : location.pathname.startsWith("/planejar")
-      ? "planejar"
+      ? section === "montar-carteira" ? "montar" : section === "futuro-financeiro" ? "futuro" : "diagnostico"
       : location.pathname.startsWith("/analisar") || location.pathname.includes("inteligencia") || location.pathname.startsWith("/ativos")
         ? "analisar"
         : "acompanhar";
@@ -93,7 +98,7 @@ export function AIContextPanel({ open, onClose }: { open: boolean; onClose: () =
       {open ? <aside ref={panelRef} className="ai-panel is-open" role="dialog" aria-modal="true" aria-labelledby="mesa-ai-title">
         <header className="ai-panel-header">
           <div className="ai-avatar"><Bot size={21} /></div>
-          <div><span className="eyebrow">Agente quantitativa</span><h2 id="mesa-ai-title">Mesa IA</h2></div>
+          <div><span className="eyebrow">Contexto · {contextLabels[context]}</span><h2 id="mesa-ai-title">Mesa IA</h2></div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="Fechar Mesa IA"><X size={20} /></button>
         </header>
         <div className="ai-trust-strip"><LockKeyhole size={15} /> Somente leitura · conteúdo educacional</div>

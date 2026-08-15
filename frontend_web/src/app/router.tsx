@@ -1,17 +1,21 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "../components/layout/AppShell";
 import { ProtectedRoute } from "../features/auth/ProtectedRoute";
-import { AssetsPage } from "../pages/AssetsPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { ImportPortfolioPage } from "../pages/ImportPortfolioPage";
 import { LoginPage } from "../pages/LoginPage";
 import { NewInvestmentPage } from "../pages/NewInvestmentPage";
-import { PortfolioIntelligencePage } from "../pages/PortfolioIntelligencePage";
 import { PortfolioPage } from "../pages/PortfolioPage";
 import { RegisterPage } from "../pages/RegisterPage";
 import { VerifyEmailPage } from "../pages/VerifyEmailPage";
 import { ForgotPasswordPage } from "../pages/ForgotPasswordPage";
 import { ResetPasswordPage } from "../pages/ResetPasswordPage";
+import { LoadingState } from "../components/feedback/LoadingState";
+
+const AssetsPage = lazy(() => import("../pages/AssetsPage").then(module => ({ default: module.AssetsPage })));
+const PortfolioIntelligencePage = lazy(() => import("../pages/PortfolioIntelligencePage").then(module => ({ default: module.PortfolioIntelligencePage })));
+const SettingsPage = lazy(() => import("../pages/SettingsPage").then(module => ({ default: module.SettingsPage })));
 
 export function AppRouter() {
   return (
@@ -28,13 +32,14 @@ export function AppRouter() {
           <Route path="/carteira" element={<PortfolioPage />} />
           <Route path="/investimentos/novo" element={<NewInvestmentPage />} />
           <Route path="/carteira/importar" element={<ImportPortfolioPage />} />
-          <Route path="/inteligencia-carteira" element={<PortfolioIntelligencePage />} />
-          <Route path="/investir" element={<PortfolioIntelligencePage />} />
-          <Route path="/analisar" element={<PortfolioIntelligencePage />} />
-          <Route path="/planejar" element={<PortfolioIntelligencePage />} />
-          <Route path="/analises" element={<Navigate to="/analisar" replace />} />
-          <Route path="/simulador-historico" element={<Navigate to="/inteligencia-carteira" replace />} />
-          <Route path="/ativos" element={<AssetsPage />} />
+          <Route path="/planejar" element={<Suspense fallback={<LoadingState label="Carregando Planejar…"/>}><PortfolioIntelligencePage /></Suspense>} />
+          <Route path="/inteligencia-carteira" element={<Navigate to="/planejar" replace />} />
+          <Route path="/investir" element={<Navigate to="/planejar?secao=montar-carteira" replace />} />
+          <Route path="/analisar" element={<Navigate to="/planejar?secao=diagnostico" replace />} />
+          <Route path="/analises" element={<Navigate to="/planejar?secao=diagnostico" replace />} />
+          <Route path="/simulador-historico" element={<Navigate to="/planejar?secao=futuro-financeiro" replace />} />
+          <Route path="/ativos" element={<Suspense fallback={<LoadingState label="Carregando Mercado…"/>}><AssetsPage /></Suspense>} />
+          <Route path="/configuracoes" element={<Suspense fallback={<LoadingState label="Carregando Configurações…"/>}><SettingsPage /></Suspense>} />
         </Route>
       </Route>
     </Routes>
