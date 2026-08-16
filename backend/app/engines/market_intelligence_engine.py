@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.engines.indicator_catalog import SCORING_CATEGORIES
+from app.engines.indicator_catalog import SCORING_CATEGORIES, coverage_breakdown_for_asset
 from app.schemas.market_intelligence import (
     AssetIntelligenceSnapshot,
     ConfidenceLevel,
+    CoverageBreakdown,
+    DataQualityReport,
     IndicatorStatus,
     InvestmentClass,
     NormalizedIndicator,
@@ -17,6 +19,18 @@ from app.schemas.market_intelligence import (
 
 
 MINIMUM_SCORE_COVERAGE = Decimal("40")
+
+# Thresholds canônicos de confidence (P1) — centralizados aqui, não espalhar
+# números mágicos por outros arquivos.
+MINIMUM_SCORING_CATEGORIES = 2
+CONFIDENCE_HIGH_SCORING_COVERAGE = Decimal("80")
+CONFIDENCE_MEDIUM_SCORING_COVERAGE = Decimal("60")
+
+# Anomalias que, se presentes, tornam a análise INSUFFICIENT independente de
+# cobertura (identidade do ativo/emissor não confiável, conflito crítico entre
+# fontes). Nunca inferido automaticamente por este engine — precisa vir
+# marcado explicitamente em anomaly_flags por quem detectou a condição.
+CRITICAL_ANOMALY_FLAGS = {"identifier_unresolved", "issuer_identity_unresolved", "conflicting_sources"}
 
 
 class ScoringEngine:
@@ -104,6 +118,7 @@ class AssetAnalysisEngine:
             score.value for score in scores.values() if score.value is not None
         ]
         coverage = cls.coverage(base.indicators)
+        coverage_breakdown = coverage_breakdown_for_asset(base.asset_class, base.indicators)
         overall = (
             (
                 sum(category_values, Decimal("0")) / Decimal(len(category_values))
@@ -136,8 +151,15 @@ class AssetAnalysisEngine:
                 "valuation_status": valuation.status,
                 "valuation": valuation,
                 "recommendation": recommendation,
-                "confidence": confidence_for_coverage(coverage),
+                "confidence": confidence_for_asset(
+                    coverage_breakdown=coverage_breakdown,
+                    scores=scores,
+                    overall_score=overall,
+                    data_quality=base.data_quality,
+                    anomaly_flags=base.anomaly_flags,
+                ),
                 "coverage_percentage": coverage,
+                "coverage_breakdown": coverage_breakdown,
                 "available_indicators_count": sum(
                     1
                     for item in base.indicators
@@ -278,6 +300,55 @@ def confidence_for_coverage(coverage: Decimal) -> ConfidenceLevel:
     if coverage >= Decimal("40"):
         return ConfidenceLevel.LOW
     return ConfidenceLevel.INSUFFICIENT
+
+
+def confidence_for_asset(
+    *,
+    coverage_breakdown: CoverageBreakdown,
+    scores: dict[str, ScoreBreakdown],
+    overall_score: Decimal | None,
+    data_quality: DataQualityReport | None,
+    anomaly_flags: list[str] | None = None,
+) -> ConfidenceLevel:
+    """Confidence estruturado do ativo (P1): HIGH/MEDIUM/LOW/INSUFFICIENT.
+
+    Avalia a SUFICIÊNCIA DOS DADOS de forma independente do gate legado
+    coverage_percentage < MINIMUM_SCORE_COVERAGE usado por overall_score e
+    por RecommendationEngine/SmartPortfolio (que permanecem como estão nesta
+    fase — a desvinculação é só no cálculo do confidence). `overall_score` e
+    `data_quality` continuam recebidos para compatibilidade de assinatura e
+    futura evolução, mas não são mais usados como gate sozinhos aqui:
+    overall_score pode ser None só porque coverage_percentage legado (que
+    mistura indicadores não essenciais) ficou abaixo de 40, e
+    data_quality.recommendation_blocked pode disparar por completeness/
+    freshness não crítica — nenhum dos dois, isoladamente, deve forçar
+    INSUFFICIENT no novo confidence.
+
+    LOW nunca bloqueia sozinho — é apenas um sinal de menor cobertura/certeza.
+    INSUFFICIENT é reservado para condições estruturalmente críticas: pilar
+    REQUIRED essencial não satisfeito (o que já cobre preço indispensável,
+    pois "price" é sempre um pilar REQUIRED ALL_OF), poucas categorias reais
+    de score, ou anomalia crítica de identidade/conflito de fontes.
+    """
+    if anomaly_flags and any(flag in CRITICAL_ANOMALY_FLAGS for flag in anomaly_flags):
+        return ConfidenceLevel.INSUFFICIENT
+
+    required_total = coverage_breakdown.required_total
+    required_satisfied = coverage_breakdown.required_satisfied
+    required_complete = required_total == 0 or required_satisfied == required_total
+    if not required_complete:
+        return ConfidenceLevel.INSUFFICIENT
+
+    scored_categories = sum(1 for score in scores.values() if score.value is not None)
+    if scored_categories < MINIMUM_SCORING_CATEGORIES:
+        return ConfidenceLevel.INSUFFICIENT
+
+    scoring_coverage = coverage_breakdown.scoring_coverage or Decimal("0")
+    if scoring_coverage >= CONFIDENCE_HIGH_SCORING_COVERAGE:
+        return ConfidenceLevel.HIGH
+    if scoring_coverage >= CONFIDENCE_MEDIUM_SCORING_COVERAGE:
+        return ConfidenceLevel.MEDIUM
+    return ConfidenceLevel.LOW
 
 
 def positive_reasons(snapshot: AssetIntelligenceSnapshot) -> list[str]:

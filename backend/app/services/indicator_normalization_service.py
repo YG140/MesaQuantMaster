@@ -6,6 +6,14 @@ from typing import Any
 from unicodedata import normalize
 
 from app.engines.indicator_catalog import indicators_for_class
+from app.providers.exceptions import (
+    MarketAssetNotFoundError,
+    MarketAuthenticationError,
+    MarketInvalidResponseError,
+    MarketPermissionError,
+    MarketProviderUnavailableError,
+    MarketRateLimitError,
+)
 from app.schemas.market import QuoteResponse
 from app.schemas.market_intelligence import (
     AnalysisImpact,
@@ -14,6 +22,7 @@ from app.schemas.market_intelligence import (
     IndicatorStatus,
     InvestmentClass,
     NormalizedIndicator,
+    ProviderFailureReason,
 )
 
 
@@ -135,6 +144,7 @@ class IndicatorNormalizationService:
                         "confidence": ConfidenceLevel.HIGH,
                         "period": "período informado pelo provedor",
                         "unavailable_reason": None,
+                        "provider_failure_reason": None,
                         "impact": AnalysisImpact.INFORMATIONAL,
                     }
                 )
@@ -183,6 +193,7 @@ class IndicatorNormalizationService:
                 source=source,
                 collected_at=collected_at,
                 reason=f"{requested_symbol} nao retornou cotacao no provedor atual.",
+                provider_failure_reason=ProviderFailureReason.NOT_REPORTED,
             )
 
         value = self._value_for_key(entry.key, quote)
@@ -193,6 +204,7 @@ class IndicatorNormalizationService:
                 collected_at=collected_at,
                 reference_date=reference_date,
                 reason="O provedor atual nao entrega este indicador para o ativo.",
+                provider_failure_reason=ProviderFailureReason.NOT_SUPPORTED,
             )
 
         if isinstance(value, Decimal) and not self._is_plausible(entry, value):
@@ -214,6 +226,7 @@ class IndicatorNormalizationService:
                 confidence=ConfidenceLevel.LOW,
                 period="ultima cotacao",
                 unavailable_reason="Valor fora dos limites plausiveis do catalogo.",
+                provider_failure_reason=ProviderFailureReason.INVALID_RESPONSE,
                 explanation=entry.description,
                 impact=AnalysisImpact.BLOCKING,
             )
@@ -293,6 +306,7 @@ def unavailable_indicator(
     collected_at: datetime,
     reason: str,
     reference_date: datetime | None = None,
+    provider_failure_reason: ProviderFailureReason = ProviderFailureReason.NOT_REPORTED,
 ) -> NormalizedIndicator:
     return NormalizedIndicator(
         key=entry.key,
@@ -308,9 +322,32 @@ def unavailable_indicator(
         confidence=ConfidenceLevel.INSUFFICIENT,
         period=None,
         unavailable_reason=reason,
+        provider_failure_reason=provider_failure_reason,
         explanation=entry.description,
         impact=AnalysisImpact.UNKNOWN,
     )
+
+
+def classify_provider_failure_reason(
+    exception: Exception | None = None,
+) -> ProviderFailureReason:
+    """Classifica uma falha de provedor sem jamais inventar uma causa.
+
+    Sem evidência (exception=None ou tipo desconhecido), retorna NOT_REPORTED
+    — nunca infere rate_limited/unauthorized/provider_unavailable sem uma
+    exceção tipada que comprove a causa real.
+    """
+    if isinstance(exception, MarketRateLimitError):
+        return ProviderFailureReason.RATE_LIMITED
+    if isinstance(exception, (MarketAuthenticationError, MarketPermissionError)):
+        return ProviderFailureReason.UNAUTHORIZED
+    if isinstance(exception, MarketProviderUnavailableError):
+        return ProviderFailureReason.PROVIDER_UNAVAILABLE
+    if isinstance(exception, MarketInvalidResponseError):
+        return ProviderFailureReason.INVALID_RESPONSE
+    if isinstance(exception, MarketAssetNotFoundError):
+        return ProviderFailureReason.NOT_SUPPORTED
+    return ProviderFailureReason.NOT_REPORTED
 
 
 def classify_market_asset(value: Any) -> InvestmentClass:

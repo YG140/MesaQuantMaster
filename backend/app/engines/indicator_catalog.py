@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.schemas.market_intelligence import (
+    CoverageBreakdown,
     IndicatorCatalogEntry,
     IndicatorDirection,
     IndicatorImportance,
@@ -11,6 +12,7 @@ from app.schemas.market_intelligence import (
     IndicatorStatus,
     InvestmentClass,
     MacroIndicatorDefinition,
+    NormalizedIndicator,
 )
 
 
@@ -2297,6 +2299,121 @@ def evaluate_indicator_pillar(pillar: IndicatorPillar, indicators: list) -> dict
         "satisfied": satisfied,
         "coverage": Decimal("100") if satisfied else Decimal("0"),
     }
+
+
+def _pillar_applicable_count(pillar: IndicatorPillar, evaluation: dict) -> int:
+    return len(pillar.indicator_keys) - len(evaluation["not_applicable_indicators"])
+
+
+def pillar_group_coverage(
+    pillars: list[IndicatorPillar], indicators: list[NormalizedIndicator]
+) -> tuple[Decimal | None, int, int]:
+    """Cobertura de um grupo de pilares: satisfeitos / aplicáveis.
+
+    Um pilar cujos membros declarados são todos NOT_APPLICABLE para o ativo
+    não entra no denominador (não é "aplicável"). Retorna (None, 0, 0)
+    quando nenhum pilar do grupo é aplicável, nunca 0/0.
+    """
+    total = 0
+    satisfied = 0
+    for pillar in pillars:
+        evaluation = evaluate_indicator_pillar(pillar, indicators)
+        if _pillar_applicable_count(pillar, evaluation) <= 0:
+            continue
+        total += 1
+        if evaluation["satisfied"]:
+            satisfied += 1
+    if total == 0:
+        return None, satisfied, total
+    coverage = (Decimal(satisfied) / Decimal(total) * Decimal("100")).quantize(Decimal("0.01"))
+    return coverage, satisfied, total
+
+
+def scoring_coverage_for_indicators(
+    indicators: list[NormalizedIndicator],
+) -> tuple[Decimal | None, int, int]:
+    """Cobertura restrita aos indicadores/categorias que alimentam o score financeiro.
+
+    Não considera nome, ticker, descrição ou metadados de apresentação: apenas
+    chaves declaradas em SCORING_CATEGORIES. NOT_APPLICABLE é excluído do denominador.
+    """
+    scoring_keys = {key for keys in SCORING_CATEGORIES.values() for key in keys}
+    relevant = [
+        item
+        for item in indicators
+        if item.key in scoring_keys and item.status != IndicatorStatus.NOT_APPLICABLE
+    ]
+    if not relevant:
+        return None, 0, 0
+    available = sum(1 for item in relevant if item.status == IndicatorStatus.AVAILABLE)
+    coverage = (Decimal(available) / Decimal(len(relevant)) * Decimal("100")).quantize(Decimal("0.01"))
+    return coverage, available, len(relevant)
+
+
+def provider_coverage_for_indicators(
+    indicators: list[NormalizedIndicator],
+) -> tuple[Decimal | None, int, int]:
+    """Diagnóstico de resolução: quantos indicadores solicitados o provedor devolveu.
+
+    Diferente de required/recommended/total_coverage: conta STALE como resolvido
+    (o provedor entregou algo, mesmo que hoje esteja desatualizado). NUNCA deve
+    ser usado sozinho para bloquear uma análise — é apenas diagnóstico.
+    """
+    requested = [item for item in indicators if item.status != IndicatorStatus.NOT_APPLICABLE]
+    if not requested:
+        return None, 0, 0
+    resolved = sum(
+        1
+        for item in requested
+        if item.status in {IndicatorStatus.AVAILABLE, IndicatorStatus.STALE}
+    )
+    coverage = (Decimal(resolved) / Decimal(len(requested)) * Decimal("100")).quantize(Decimal("0.01"))
+    return coverage, resolved, len(requested)
+
+
+def coverage_breakdown_for_asset(
+    asset_class: InvestmentClass, indicators: list[NormalizedIndicator]
+) -> CoverageBreakdown:
+    """Constrói a cobertura desmembrada (P1) para um ativo, sem alterar coverage_percentage legado."""
+    pillars = canonical_pillars_for_class(asset_class)
+    required_pillars = [p for p in pillars if p.importance == IndicatorImportance.REQUIRED]
+    recommended_pillars = [p for p in pillars if p.importance == IndicatorImportance.RECOMMENDED]
+    optional_pillars = [p for p in pillars if p.importance == IndicatorImportance.OPTIONAL]
+    # EXPERIMENTAL é deliberadamente excluído de total_coverage: não deve
+    # reduzir a cobertura normal exibida ao usuário.
+    total_pillars = required_pillars + recommended_pillars + optional_pillars
+
+    required_coverage, required_satisfied, required_total = pillar_group_coverage(
+        required_pillars, indicators
+    )
+    recommended_coverage, recommended_satisfied, recommended_total = pillar_group_coverage(
+        recommended_pillars, indicators
+    )
+    total_coverage, total_available, total_applicable = pillar_group_coverage(
+        total_pillars, indicators
+    )
+    scoring_coverage, scoring_available, scoring_total = scoring_coverage_for_indicators(indicators)
+    provider_coverage, provider_resolved, provider_requested = provider_coverage_for_indicators(
+        indicators
+    )
+
+    return CoverageBreakdown(
+        required_coverage=required_coverage,
+        required_satisfied=required_satisfied,
+        required_total=required_total,
+        recommended_coverage=recommended_coverage,
+        recommended_satisfied=recommended_satisfied,
+        recommended_total=recommended_total,
+        scoring_coverage=scoring_coverage,
+        scoring_available=scoring_available,
+        scoring_total=scoring_total,
+        total_coverage=total_coverage,
+        total_available=total_available,
+        total_applicable=total_applicable,
+        provider_coverage=provider_coverage,
+        provider_resolved=provider_resolved,
+        provider_requested=provider_requested,
+    )
 
 
 def is_indicator_not_applicable(key: str, *, sector: str | None = None, asset_class: InvestmentClass | None = None) -> bool:

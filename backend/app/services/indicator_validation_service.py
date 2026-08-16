@@ -12,6 +12,7 @@ from app.schemas.market_intelligence import (
     DataQualityReport,
     IndicatorStatus,
     NormalizedIndicator,
+    ProviderFailureReason,
 )
 
 
@@ -40,6 +41,7 @@ class IndicatorValidationService:
                         "display_value": None,
                         "unavailable_reason": sector_profile["message"],
                         "explanation": sector_profile["message"],
+                        "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
             elif indicator.key == "price_earnings" and _negative_earnings_context(indicator_map):
@@ -50,6 +52,7 @@ class IndicatorValidationService:
                         "display_value": None,
                         "unavailable_reason": "Lucro não positivo; o múltiplo P/L não é financeiramente significativo.",
                         "explanation": "Lucro não positivo; o múltiplo P/L não é financeiramente significativo.",
+                        "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
             elif indicator.key == "physical_vacancy" and is_fii_paper(segment or sector):
@@ -60,6 +63,7 @@ class IndicatorValidationService:
                         "display_value": None,
                         "unavailable_reason": "Vacância física não se aplica a FII de papel.",
                         "explanation": "Vacância física não se aplica a FII de papel.",
+                        "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
             elif indicator.key in {"receivable_quality", "debtor_concentration", "tenant_concentration", "contract_average_term"} and is_fii_brick(segment or sector):
@@ -70,6 +74,7 @@ class IndicatorValidationService:
                         "display_value": None,
                         "unavailable_reason": "Indicadores de recebíveis e crédito não se aplicam a FII de tijolo.",
                         "explanation": "Indicadores de recebíveis e crédito não se aplicam a FII de tijolo.",
+                        "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
             else:
@@ -79,6 +84,7 @@ class IndicatorValidationService:
                             update={
                                 "status": IndicatorStatus.STALE,
                                 "unavailable_reason": "Indicador expirou pela validade declarada do dado.",
+                                "provider_failure_reason": ProviderFailureReason.STALE,
                             }
                         )
                 elif item.reference_date is not None and item.key in _time_sensitive_indicators():
@@ -93,6 +99,7 @@ class IndicatorValidationService:
                             update={
                                 "status": IndicatorStatus.STALE,
                                 "unavailable_reason": "Indicador desatualizado para uso em recomendação.",
+                                "provider_failure_reason": ProviderFailureReason.STALE,
                             }
                         )
 
