@@ -4,7 +4,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unicodedata import normalize
 
-from app.engines.indicator_catalog import SECTOR_RULES
+from app.engines.indicator_catalog import (
+    SECTOR_RULES,
+    indicator_temporal_validity_days,
+)
 from app.schemas.market_intelligence import (
     DataQualityReport,
     IndicatorStatus,
@@ -18,12 +21,14 @@ class IndicatorValidationService:
         indicators: list[NormalizedIndicator],
         *,
         sector: str | None = None,
+        segment: str | None = None,
         collected_at: datetime | None = None,
     ) -> tuple[list[NormalizedIndicator], DataQualityReport]:
         now = collected_at or datetime.now(timezone.utc)
         sector_profile = profile_for_sector(sector)
         validated = []
         anomaly_flags = []
+        indicator_map = {item.key: item for item in indicators}
 
         for indicator in indicators:
             item = indicator
@@ -37,15 +42,59 @@ class IndicatorValidationService:
                         "explanation": sector_profile["message"],
                     }
                 )
-            elif indicator.reference_date is not None:
-                age_days = (now - indicator.reference_date).days
-                if age_days > 2 and indicator.status == IndicatorStatus.AVAILABLE:
-                    item = indicator.model_copy(
-                        update={
-                            "status": IndicatorStatus.STALE,
-                            "unavailable_reason": "Indicador desatualizado para uso em recomendação.",
-                        }
-                    )
+            elif indicator.key == "price_earnings" and _negative_earnings_context(indicator_map):
+                item = indicator.model_copy(
+                    update={
+                        "status": IndicatorStatus.NOT_APPLICABLE,
+                        "value": None,
+                        "display_value": None,
+                        "unavailable_reason": "Lucro não positivo; o múltiplo P/L não é financeiramente significativo.",
+                        "explanation": "Lucro não positivo; o múltiplo P/L não é financeiramente significativo.",
+                    }
+                )
+            elif indicator.key == "physical_vacancy" and is_fii_paper(segment or sector):
+                item = indicator.model_copy(
+                    update={
+                        "status": IndicatorStatus.NOT_APPLICABLE,
+                        "value": None,
+                        "display_value": None,
+                        "unavailable_reason": "Vacância física não se aplica a FII de papel.",
+                        "explanation": "Vacância física não se aplica a FII de papel.",
+                    }
+                )
+            elif indicator.key in {"receivable_quality", "debtor_concentration", "tenant_concentration", "contract_average_term"} and is_fii_brick(segment or sector):
+                item = indicator.model_copy(
+                    update={
+                        "status": IndicatorStatus.NOT_APPLICABLE,
+                        "value": None,
+                        "display_value": None,
+                        "unavailable_reason": "Indicadores de recebíveis e crédito não se aplicam a FII de tijolo.",
+                        "explanation": "Indicadores de recebíveis e crédito não se aplicam a FII de tijolo.",
+                    }
+                )
+            else:
+                if item.valid_until is not None and now > item.valid_until:
+                    if item.status == IndicatorStatus.AVAILABLE:
+                        item = item.model_copy(
+                            update={
+                                "status": IndicatorStatus.STALE,
+                                "unavailable_reason": "Indicador expirou pela validade declarada do dado.",
+                            }
+                        )
+                elif item.reference_date is not None and item.key in _time_sensitive_indicators():
+                    age_days = (now - item.reference_date).days
+                    validity_days = indicator_temporal_validity_days(item.key)
+                    if (
+                        validity_days is not None
+                        and item.status == IndicatorStatus.AVAILABLE
+                        and age_days > validity_days
+                    ):
+                        item = item.model_copy(
+                            update={
+                                "status": IndicatorStatus.STALE,
+                                "unavailable_reason": "Indicador desatualizado para uso em recomendação.",
+                            }
+                        )
 
             flag = anomaly_for(item)
             if flag:
@@ -149,6 +198,39 @@ def anomaly_for(indicator: NormalizedIndicator) -> str | None:
             "Liquidez ausente ou nula; ativo não deve ser selecionado automaticamente."
         )
     return None
+
+
+def _time_sensitive_indicators() -> set[str]:
+    return {
+        "current_price",
+        "daily_change",
+        "volume",
+        "liquidity",
+        "treasury_rate",
+        "real_rate",
+        "current_rate",
+    }
+
+
+def _negative_earnings_context(indicators: dict[str, NormalizedIndicator]) -> bool:
+    for key in ("earnings_per_share", "net_margin", "roe", "roa"):
+        indicator = indicators.get(key)
+        if indicator is None or indicator.status != IndicatorStatus.AVAILABLE:
+            continue
+        value = indicator.value
+        if isinstance(value, Decimal) and value <= 0:
+            return True
+    return False
+
+
+def is_fii_paper(segment: str | None) -> bool:
+    text = ascii_key(segment)
+    return "papel" in text or "paper" in text
+
+
+def is_fii_brick(segment: str | None) -> bool:
+    text = ascii_key(segment)
+    return "tijolo" in text or "brick" in text or "imobili" in text or "real_estate" in text
 
 
 def profile_for_sector(sector: str | None) -> dict | None:

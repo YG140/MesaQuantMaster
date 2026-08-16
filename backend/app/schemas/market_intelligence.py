@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class InvestmentClass(StrEnum):
@@ -48,6 +49,13 @@ class IndicatorDirection(StrEnum):
     IDEAL_RANGE = "ideal_range"
     INFORMATIONAL = "informational"
     CONTEXT_DEPENDENT = "context_dependent"
+
+
+class IndicatorImportance(StrEnum):
+    REQUIRED = "required"
+    RECOMMENDED = "recommended"
+    OPTIONAL = "optional"
+    EXPERIMENTAL = "experimental"
 
 
 class IndicatorLayer(StrEnum):
@@ -106,9 +114,36 @@ class IndicatorCatalogEntry(BaseModel):
     updated_at: datetime | None = None
     availability: IndicatorStatus = IndicatorStatus.UNAVAILABLE
     required: bool = False
+    importance: IndicatorImportance = IndicatorImportance.OPTIONAL
     default_weight: Decimal = Decimal("1")
     sector_comparable: bool = False
     history_comparable: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_required_and_importance(cls, values):
+        if not isinstance(values, dict):
+            return values
+
+        importance = values.get("importance")
+        required = values.get("required", False)
+
+        if importance is None:
+            values["importance"] = (
+                IndicatorImportance.REQUIRED if required else IndicatorImportance.OPTIONAL
+            )
+        elif isinstance(importance, str):
+            values["importance"] = IndicatorImportance(importance)
+        return values
+
+
+class IndicatorPillar(BaseModel):
+    key: str
+    importance: IndicatorImportance = IndicatorImportance.REQUIRED
+    requirement_mode: Literal["ALL_OF", "ANY_OF"] = "ALL_OF"
+    indicator_keys: list[str] = Field(default_factory=list)
+    applicability: str | None = None
+    description: str | None = None
 
 
 class NormalizedIndicator(BaseModel):
