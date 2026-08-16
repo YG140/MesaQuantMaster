@@ -5,7 +5,9 @@ from decimal import Decimal
 from app.schemas.market_intelligence import (
     IndicatorCatalogEntry,
     IndicatorDirection,
+    IndicatorImportance,
     IndicatorLayer,
+    IndicatorPillar,
     IndicatorStatus,
     InvestmentClass,
     MacroIndicatorDefinition,
@@ -61,7 +63,13 @@ def catalog_entry(
     excluded_sectors: list[str] | None = None,
     source: str = "BRAPI",
     availability: IndicatorStatus = IndicatorStatus.UNAVAILABLE,
+    importance: IndicatorImportance | str | None = None,
 ) -> IndicatorCatalogEntry:
+    resolved_importance = (
+        IndicatorImportance(str(importance))
+        if importance is not None
+        else (IndicatorImportance.REQUIRED if required else IndicatorImportance.OPTIONAL)
+    )
     return IndicatorCatalogEntry(
         key=key,
         label=label,
@@ -78,6 +86,7 @@ def catalog_entry(
         requires_history=requires_history,
         temporal_validity_days=temporal_validity_days,
         required=required,
+        importance=resolved_importance,
         default_weight=Decimal(default_weight),
         sector_comparable=sector_comparable,
         history_comparable=history_comparable,
@@ -2054,3 +2063,253 @@ def indicators_for_class(asset_class: InvestmentClass) -> list[IndicatorCatalogE
 
 def keys_for_class(asset_class: InvestmentClass) -> set[str]:
     return {item.key for item in indicators_for_class(asset_class)}
+
+
+def _pillar(
+    key: str,
+    *,
+    indicator_keys: list[str],
+    requirement_mode: str = "ALL_OF",
+    importance: IndicatorImportance = IndicatorImportance.REQUIRED,
+    applicability: str | None = None,
+    description: str | None = None,
+) -> IndicatorPillar:
+    return IndicatorPillar(
+        key=key,
+        importance=importance,
+        requirement_mode=requirement_mode,
+        indicator_keys=indicator_keys,
+        applicability=applicability,
+        description=description,
+    )
+
+
+def canonical_pillars_for_class(asset_class: InvestmentClass) -> list[IndicatorPillar]:
+    if asset_class == InvestmentClass.STOCK:
+        return [
+            _pillar("price", indicator_keys=["current_price"], requirement_mode="ALL_OF"),
+            _pillar(
+                "liquidity",
+                indicator_keys=["volume", "liquidity"],
+                requirement_mode="ANY_OF",
+                description="Volume ou liquidez disponível.",
+            ),
+            _pillar(
+                "valuation",
+                indicator_keys=["price_earnings", "price_book", "ev_ebitda"],
+                requirement_mode="ANY_OF",
+                description="Pelo menos um múltiplo de valuation aplicável e disponível.",
+            ),
+            _pillar(
+                "profitability_result",
+                indicator_keys=["roe", "roa", "net_margin"],
+                requirement_mode="ANY_OF",
+                description="Rentabilidade ou margem operacional disponível.",
+            ),
+            _pillar(
+                "capital_structure",
+                indicator_keys=["net_debt_equity", "liabilities_assets"],
+                requirement_mode="ANY_OF",
+                description="Estrutura de capital ou alavancagem disponível.",
+            ),
+        ]
+    if asset_class == InvestmentClass.FII:
+        return [
+            _pillar("price", indicator_keys=["current_price"], requirement_mode="ALL_OF"),
+            _pillar(
+                "liquidity",
+                indicator_keys=["volume", "liquidity"],
+                requirement_mode="ANY_OF",
+                description="Liquidez do FII disponível.",
+            ),
+            _pillar(
+                "income",
+                indicator_keys=["dividend_yield", "income_12m", "last_income"],
+                requirement_mode="ANY_OF",
+                description="Rendimento do FII disponível.",
+            ),
+            _pillar(
+                "patrimonial",
+                indicator_keys=["price_book", "book_value_per_share"],
+                requirement_mode="ANY_OF",
+                description="Indicador patrimonial disponível.",
+            ),
+            _pillar(
+                "segment_risk",
+                indicator_keys=["physical_vacancy", "financial_vacancy", "credit_risk"],
+                requirement_mode="ANY_OF",
+                description="Indicador de risco do segmento disponível.",
+            ),
+        ]
+    if asset_class == InvestmentClass.ETF:
+        return [
+            _pillar("price", indicator_keys=["current_price"], requirement_mode="ALL_OF"),
+            _pillar(
+                "liquidity",
+                indicator_keys=["volume", "liquidity"],
+                requirement_mode="ANY_OF",
+                description="Volume ou liquidez do ETF.",
+            ),
+            _pillar(
+                "strategy",
+                indicator_keys=["tracked_index", "fund_strategy"],
+                requirement_mode="ANY_OF",
+                description="Índice ou estratégia do ETF informados.",
+            ),
+            _pillar(
+                "management_fee",
+                indicator_keys=["management_fee"],
+                requirement_mode="ALL_OF",
+                importance=IndicatorImportance.RECOMMENDED,
+                description="Taxa de administração quando publicada.",
+            ),
+        ]
+    if asset_class == InvestmentClass.TREASURY:
+        return [
+            _pillar("title", indicator_keys=["treasury_title"], requirement_mode="ALL_OF"),
+            _pillar("indexer", indicator_keys=["indexer"], requirement_mode="ALL_OF"),
+            _pillar("rate", indicator_keys=["treasury_rate"], requirement_mode="ALL_OF"),
+            _pillar("maturity", indicator_keys=["maturity_date"], requirement_mode="ALL_OF"),
+            _pillar("execution_price", indicator_keys=["current_price"], requirement_mode="ALL_OF"),
+        ]
+    if asset_class in {InvestmentClass.CDB, InvestmentClass.LCI, InvestmentClass.LCA, InvestmentClass.DEBENTURE}:
+        return [
+            _pillar("issuer", indicator_keys=["issuer"], requirement_mode="ALL_OF"),
+            _pillar(
+                "income_model",
+                indicator_keys=["indexer", "cdi_percentage", "fixed_rate", "real_rate"],
+                requirement_mode="ANY_OF",
+            ),
+            _pillar("maturity", indicator_keys=["maturity_date"], requirement_mode="ALL_OF"),
+            _pillar(
+                "liquidity",
+                indicator_keys=["liquidity", "lockup"],
+                requirement_mode="ANY_OF",
+            ),
+        ]
+    if asset_class == InvestmentClass.BDR:
+        return [
+            _pillar("price", indicator_keys=["current_price"], requirement_mode="ALL_OF"),
+            _pillar(
+                "liquidity",
+                indicator_keys=["volume", "bdr_liquidity"],
+                requirement_mode="ANY_OF",
+            ),
+            _pillar("underlying", indicator_keys=["underlying_symbol"], requirement_mode="ALL_OF"),
+        ]
+    if asset_class == InvestmentClass.CRYPTO:
+        return [
+            _pillar("price", indicator_keys=["price"], requirement_mode="ALL_OF"),
+            _pillar(
+                "liquidity",
+                indicator_keys=["volume", "active_addresses", "network_activity"],
+                requirement_mode="ANY_OF",
+            ),
+            _pillar(
+                "risk_history",
+                indicator_keys=["volatility", "historical_return", "maximum_drawdown"],
+                requirement_mode="ANY_OF",
+                description="Histórico suficiente para risco/volatilidade.",
+            ),
+        ]
+    return []
+
+
+def indicator_temporal_validity_days(key: str) -> int | None:
+    market_price = {"current_price", "daily_change", "volume", "liquidity"}
+    treasury_market_rate = {"treasury_rate", "real_rate", "current_rate"}
+    fundamental_quarterly = {
+        "price_earnings",
+        "price_book",
+        "dividend_yield",
+        "roe",
+        "roa",
+        "roic",
+        "ebitda_margin",
+        "net_margin",
+    }
+    fundamental_annual = {
+        "revenue_cagr_3y",
+        "earnings_cagr_3y",
+        "income_cagr_3y",
+        "quote_cagr_3y",
+        "revenue_cagr_5y",
+        "earnings_cagr_5y",
+        "income_cagr_5y",
+        "quote_cagr_5y",
+    }
+    structural = {"sector", "subsector", "segment", "governance_level", "country", "currency", "indexers"}
+    registration = {"treasury_title", "indexer", "maturity_date"}
+    if key in market_price:
+        return 2
+    if key in treasury_market_rate:
+        return 2
+    if key in fundamental_quarterly:
+        return 90
+    if key in fundamental_annual:
+        return 365
+    if key in registration:
+        return 3650
+    if key in structural:
+        return 3650
+    return None
+
+
+def evaluate_indicator_pillar(pillar: IndicatorPillar, indicators: list) -> dict:
+    lookup = {item.key: item for item in indicators if getattr(item, "key", None)}
+    declared = list(pillar.indicator_keys)
+    available = []
+    effective = []
+    missing = []
+    not_applicable = []
+    applicable = []
+
+    for indicator_key in declared:
+        item = lookup.get(indicator_key)
+        if item is not None and item.status == IndicatorStatus.NOT_APPLICABLE:
+            not_applicable.append(indicator_key)
+            continue
+
+        applicable.append(indicator_key)
+
+        if item is None:
+            missing.append(indicator_key)
+            continue
+
+        effective.append(indicator_key)
+        if item.status == IndicatorStatus.AVAILABLE:
+            available.append(indicator_key)
+        else:
+            missing.append(indicator_key)
+
+    if pillar.requirement_mode == "ALL_OF":
+        satisfied = bool(applicable) and all(key in available for key in applicable)
+    else:
+        satisfied = bool(applicable) and bool(available)
+
+    return {
+        "key": pillar.key,
+        "requirement_mode": pillar.requirement_mode,
+        "available": available,
+        "effective_indicators": effective,
+        "missing_indicators": missing,
+        "not_applicable_indicators": not_applicable,
+        "satisfied": satisfied,
+        "coverage": Decimal("100") if satisfied else Decimal("0"),
+    }
+
+
+def is_indicator_not_applicable(key: str, *, sector: str | None = None, asset_class: InvestmentClass | None = None) -> bool:
+    if sector is not None:
+        key_profile = ascii_key(sector)
+        if key_profile and key in {"ev_ebitda", "net_debt_ebitda", "roic", "ebitda_margin"}:
+            if "banco" in key_profile or "segur" in key_profile:
+                return True
+    if key in {"physical_vacancy"} and asset_class == InvestmentClass.FII:
+        return True
+    return False
+
+
+def ascii_key(value: str | None) -> str:
+    text = str(value or "").strip().lower()
+    return text
