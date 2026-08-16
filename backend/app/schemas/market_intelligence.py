@@ -73,6 +73,11 @@ class ProviderFailureReason(StrEnum):
     CONFLICTING_SOURCES = "conflicting_sources"
 
 
+class ResolutionOutcome(StrEnum):
+    SUCCESS = "success"
+    FAILURE = "failure"
+
+
 class IndicatorLayer(StrEnum):
     FUNDAMENTAL = "fundamental"
     CLASS_SPECIFIC = "class_specific"
@@ -161,6 +166,24 @@ class IndicatorPillar(BaseModel):
     description: str | None = None
 
 
+class ProviderResolutionAttempt(BaseModel):
+    """Registro de uma tentativa de resolução de indicador por uma fonte.
+
+    Aditivo (P3): preserva a cascata real de fontes tentadas — sucesso,
+    falha e o motivo classificado — sem jamais expor tokens, headers de
+    autorização, URLs assinadas ou outro segredo no campo `detail`.
+    """
+
+    provider: str
+    source_type: str
+    dataset: str | None = None
+    outcome: ResolutionOutcome
+    provider_failure_reason: ProviderFailureReason | None = None
+    attempted_at: datetime
+    reference_date: datetime | None = None
+    detail: str | None = None
+
+
 class NormalizedIndicator(BaseModel):
     key: str
     label: str
@@ -182,6 +205,7 @@ class NormalizedIndicator(BaseModel):
     period: str | None = None
     unavailable_reason: str | None = None
     provider_failure_reason: ProviderFailureReason | None = None
+    resolution_attempts: list[ProviderResolutionAttempt] = Field(default_factory=list)
     sector_comparison: str | None = None
     historical_comparison: str | None = None
     explanation: str | None = None
@@ -258,6 +282,8 @@ class MacroIndicatorSnapshot(BaseModel):
     frequency: str
     history_available: bool = False
     state: IndicatorStatus
+    provider_failure_reason: ProviderFailureReason | None = None
+    resolution_attempts: list[ProviderResolutionAttempt] = Field(default_factory=list)
 
 
 class ValuationAssessment(BaseModel):

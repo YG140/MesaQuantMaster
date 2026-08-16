@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -334,13 +335,19 @@ def classify_provider_failure_reason(
     """Classifica uma falha de provedor sem jamais inventar uma causa.
 
     Sem evidência (exception=None ou tipo desconhecido), retorna NOT_REPORTED
-    — nunca infere rate_limited/unauthorized/provider_unavailable sem uma
-    exceção tipada que comprove a causa real.
+    — nunca infere rate_limited/unauthorized/plan_restricted/provider_unavailable
+    sem uma exceção tipada que comprove a causa real.
+
+    UNAUTHORIZED (credencial ausente/invalida, HTTP 401) e PLAN_RESTRICTED
+    (recurso nao permitido pelo plano, HTTP 403) sao mantidos distintos porque
+    tem causas e remediacoes diferentes.
     """
     if isinstance(exception, MarketRateLimitError):
         return ProviderFailureReason.RATE_LIMITED
-    if isinstance(exception, (MarketAuthenticationError, MarketPermissionError)):
+    if isinstance(exception, MarketAuthenticationError):
         return ProviderFailureReason.UNAUTHORIZED
+    if isinstance(exception, MarketPermissionError):
+        return ProviderFailureReason.PLAN_RESTRICTED
     if isinstance(exception, MarketProviderUnavailableError):
         return ProviderFailureReason.PROVIDER_UNAVAILABLE
     if isinstance(exception, MarketInvalidResponseError):
@@ -348,6 +355,29 @@ def classify_provider_failure_reason(
     if isinstance(exception, MarketAssetNotFoundError):
         return ProviderFailureReason.NOT_SUPPORTED
     return ProviderFailureReason.NOT_REPORTED
+
+
+_SECRET_PATTERNS = [
+    re.compile(r"(?i)authorization\s*:\s*(?:bearer\s+)?\S+"),
+    re.compile(r"(?i)\bbearer\s+\S+"),
+    re.compile(r"(?i)\b(api[_-]?key|token|secret|password|senha)\b\s*[=:]\s*\S+"),
+    re.compile(r"(?i)(https?://[^\s\"']*[?&](?:token|key|signature|sig)=)[^\s\"'&]+"),
+]
+
+
+def sanitize_failure_detail(text: str | None, *, max_length: int = 300) -> str | None:
+    """Remove segredos de uma mensagem de diagnostico bruta antes de preserva-la.
+
+    Nunca deve deixar vazar tokens, API keys, cabecalhos Authorization ou URLs
+    assinadas — o diagnostico bruto sanitizado ainda e util para depuracao,
+    mas o segredo em si nunca pode ser propagado ao usuario final.
+    """
+    if not text:
+        return None
+    sanitized = text
+    for pattern in _SECRET_PATTERNS:
+        sanitized = pattern.sub("[REDACTED]", sanitized)
+    return sanitized[:max_length]
 
 
 def classify_market_asset(value: Any) -> InvestmentClass:
