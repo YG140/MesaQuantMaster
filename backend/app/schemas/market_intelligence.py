@@ -58,6 +58,21 @@ class IndicatorImportance(StrEnum):
     EXPERIMENTAL = "experimental"
 
 
+class ProviderFailureReason(StrEnum):
+    NOT_REPORTED = "not_reported"
+    NOT_APPLICABLE = "not_applicable"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    PLAN_RESTRICTED = "plan_restricted"
+    UNAUTHORIZED = "unauthorized"
+    RATE_LIMITED = "rate_limited"
+    STALE = "stale"
+    INVALID_RESPONSE = "invalid_response"
+    NOT_SYNCED = "not_synced"
+    NOT_SUPPORTED = "not_supported"
+    IDENTIFIER_UNRESOLVED = "identifier_unresolved"
+    CONFLICTING_SOURCES = "conflicting_sources"
+
+
 class IndicatorLayer(StrEnum):
     FUNDAMENTAL = "fundamental"
     CLASS_SPECIFIC = "class_specific"
@@ -166,6 +181,7 @@ class NormalizedIndicator(BaseModel):
     confidence: ConfidenceLevel
     period: str | None = None
     unavailable_reason: str | None = None
+    provider_failure_reason: ProviderFailureReason | None = None
     sector_comparison: str | None = None
     historical_comparison: str | None = None
     explanation: str | None = None
@@ -191,6 +207,34 @@ class DataQualityReport(BaseModel):
     non_applicable_indicators: list[str] = Field(default_factory=list)
     recommendation_blocked: bool = False
     blocking_reason: str | None = None
+
+
+class CoverageBreakdown(BaseModel):
+    """Cobertura desmembrada por finalidade, independente do coverage_percentage legado.
+
+    Cada métrica é None quando o denominador correspondente não é aplicável
+    (nenhum pilar/indicador aplicável para medir), nunca 0/0 silencioso.
+    """
+
+    required_coverage: Decimal | None = None
+    required_satisfied: int = 0
+    required_total: int = 0
+
+    recommended_coverage: Decimal | None = None
+    recommended_satisfied: int = 0
+    recommended_total: int = 0
+
+    scoring_coverage: Decimal | None = None
+    scoring_available: int = 0
+    scoring_total: int = 0
+
+    total_coverage: Decimal | None = None
+    total_available: int = 0
+    total_applicable: int = 0
+
+    provider_coverage: Decimal | None = None
+    provider_resolved: int = 0
+    provider_requested: int = 0
 
 
 class MacroIndicatorDefinition(BaseModel):
@@ -253,6 +297,7 @@ class AssetIntelligenceSnapshot(BaseModel):
     valuation: ValuationAssessment
     confidence: ConfidenceLevel
     coverage_percentage: Decimal
+    coverage_breakdown: CoverageBreakdown = Field(default_factory=CoverageBreakdown)
     available_indicators_count: int
     missing_indicators_count: int
     stale_indicators_count: int

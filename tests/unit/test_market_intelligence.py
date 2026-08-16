@@ -5,11 +5,15 @@ from decimal import Decimal
 
 from app.engines.indicator_catalog import (
     canonical_pillars_for_class,
+    coverage_breakdown_for_asset,
     evaluate_indicator_pillar,
     indicator_temporal_validity_days,
     indicators_for_class,
+    pillar_group_coverage,
+    provider_coverage_for_indicators,
+    scoring_coverage_for_indicators,
 )
-from app.engines.market_intelligence_engine import AssetAnalysisEngine
+from app.engines.market_intelligence_engine import AssetAnalysisEngine, confidence_for_asset
 from app.models.asset import Asset
 from app.models.indicator_snapshot import IndicatorSnapshot
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
@@ -21,19 +25,28 @@ from app.repositories.indicator_snapshot_repository import (
 )
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
 from app.schemas.market import QuoteResponse, QuotesResponse
+from app.providers.exceptions import MarketAssetNotFoundError, MarketRateLimitError
 from app.schemas.market_intelligence import (
     AnalyzeAssetsRequest,
     AssetIntelligenceSnapshot,
     ConfidenceLevel,
+    CoverageBreakdown,
+    DataQualityReport,
     IndicatorImportance,
+    IndicatorPillar,
     IndicatorStatus,
     InvestmentClass,
     NormalizedIndicator,
+    ProviderFailureReason,
     RecommendationAction,
+    ScoreBreakdown,
     ValuationAssessment,
     ValuationStatus,
 )
-from app.services.indicator_normalization_service import IndicatorNormalizationService
+from app.services.indicator_normalization_service import (
+    IndicatorNormalizationService,
+    classify_provider_failure_reason,
+)
 from app.services.indicator_validation_service import IndicatorValidationService
 from app.services.market_intelligence_service import (
     MarketIntelligenceService,
@@ -1502,3 +1515,528 @@ def test_extreme_rsi_blocks_automatic_recommendation_quality():
     assert validated[0].status == IndicatorStatus.POTENTIALLY_INCONSISTENT
     assert report.anomaly_flags
     assert report.recommendation_blocked is True
+
+
+# =====================================================================
+# P1 — cobertura desmembrada, confidence estruturado e diagnóstico de
+# falhas de provider. Mapeamento dos 28 cenários canônicos do prompt
+# operacional (seção 27): cada teste abaixo está rotulado com o número
+# do cenário que cobre.
+# =====================================================================
+
+
+def _etf_indicator(
+    key: str,
+    label: str,
+    unit: str,
+    *,
+    status: IndicatorStatus = IndicatorStatus.AVAILABLE,
+    value=None,
+    provider_failure_reason: ProviderFailureReason | None = None,
+) -> NormalizedIndicator:
+    return NormalizedIndicator(
+        key=key,
+        label=label,
+        unit=unit,
+        status=status,
+        source="snapshot",
+        collected_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
+        confidence=ConfidenceLevel.HIGH if status == IndicatorStatus.AVAILABLE else ConfidenceLevel.LOW,
+        value=value,
+        provider_failure_reason=provider_failure_reason,
+    )
+
+
+def _perfect_breakdown(scoring_coverage: Decimal) -> CoverageBreakdown:
+    return CoverageBreakdown(
+        required_coverage=Decimal("100.00"),
+        required_satisfied=3,
+        required_total=3,
+        scoring_coverage=scoring_coverage,
+    )
+
+
+def _two_category_scores(value: Decimal) -> dict[str, ScoreBreakdown]:
+    breakdown = ScoreBreakdown(
+        value=value,
+        available_indicators=2,
+        missing_indicators=0,
+        stale_indicators=0,
+        coverage_percentage=Decimal("100"),
+        confidence=ConfidenceLevel.HIGH,
+    )
+    return {"quality": breakdown, "valuation": breakdown}
+
+
+# Cenário 1: todos REQUIRED satisfeitos -> required_coverage = 100%.
+def test_required_coverage_is_100_when_all_required_pillars_satisfied():
+    indicators = [
+        _etf_indicator("current_price", "Preço atual", "currency", value=Decimal("100.00")),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("500000")),
+        _etf_indicator("tracked_index", "Índice", "text", value="IBOV"),
+    ]
+    breakdown = coverage_breakdown_for_asset(InvestmentClass.ETF, indicators)
+    assert breakdown.required_total == 3
+    assert breakdown.required_satisfied == 3
+    assert breakdown.required_coverage == Decimal("100.00")
+
+
+# Cenário 2: um REQUIRED aplicável ausente -> required_coverage < 100%.
+def test_required_coverage_drops_when_required_pillar_is_missing():
+    indicators = [
+        _etf_indicator("current_price", "Preço atual", "currency", value=Decimal("100.00")),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("500000")),
+        # "strategy" pillar (tracked_index/fund_strategy) ausente por completo.
+    ]
+    breakdown = coverage_breakdown_for_asset(InvestmentClass.ETF, indicators)
+    assert breakdown.required_total == 3
+    assert breakdown.required_satisfied == 2
+    assert breakdown.required_coverage == Decimal("66.67")
+    assert breakdown.required_coverage < Decimal("100")
+
+
+# Cenário 3: RECOMMENDED ausente -> required_coverage permanece 100%.
+def test_recommended_gap_does_not_affect_required_coverage():
+    indicators = [
+        _etf_indicator("current_price", "Preço atual", "currency", value=Decimal("100.00")),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("500000")),
+        _etf_indicator("tracked_index", "Índice", "text", value="IBOV"),
+        # management_fee (RECOMMENDED) ausente.
+    ]
+    breakdown = coverage_breakdown_for_asset(InvestmentClass.ETF, indicators)
+    assert breakdown.required_coverage == Decimal("100.00")
+    assert breakdown.recommended_coverage == Decimal("0.00")
+
+
+# Cenário 4: recommended_coverage considera somente RECOMMENDED (métrica independente).
+def test_recommended_coverage_is_independent_metric():
+    base = [
+        _etf_indicator("current_price", "Preço atual", "currency", value=Decimal("100.00")),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("500000")),
+        _etf_indicator("tracked_index", "Índice", "text", value="IBOV"),
+    ]
+    with_fee = base + [_etf_indicator("management_fee", "Taxa de administração", "percent", value=Decimal("0.5"))]
+
+    without = coverage_breakdown_for_asset(InvestmentClass.ETF, base)
+    with_ = coverage_breakdown_for_asset(InvestmentClass.ETF, with_fee)
+
+    assert without.recommended_coverage == Decimal("0.00")
+    assert with_.recommended_coverage == Decimal("100.00")
+    assert without.required_coverage == with_.required_coverage == Decimal("100.00")
+
+
+# Cenário 5: OPTIONAL ausente não altera required_coverage nem recommended_coverage.
+def test_optional_gap_does_not_affect_required_or_recommended_coverage():
+    required_pillar = IndicatorPillar(
+        key="req", importance=IndicatorImportance.REQUIRED, requirement_mode="ALL_OF", indicator_keys=["a"]
+    )
+    recommended_pillar = IndicatorPillar(
+        key="rec", importance=IndicatorImportance.RECOMMENDED, requirement_mode="ALL_OF", indicator_keys=["b"]
+    )
+    optional_pillar = IndicatorPillar(
+        key="opt", importance=IndicatorImportance.OPTIONAL, requirement_mode="ALL_OF", indicator_keys=["c"]
+    )
+    indicators = [
+        _etf_indicator("a", "A", "text", value="x"),
+        _etf_indicator("b", "B", "text", value="y"),
+        # "c" (OPTIONAL) ausente.
+    ]
+
+    required_coverage, _, _ = pillar_group_coverage([required_pillar], indicators)
+    recommended_coverage, _, _ = pillar_group_coverage([recommended_pillar], indicators)
+    optional_coverage, _, _ = pillar_group_coverage([optional_pillar], indicators)
+
+    assert required_coverage == Decimal("100.00")
+    assert recommended_coverage == Decimal("100.00")
+    assert optional_coverage == Decimal("0.00")
+
+
+# Cenário 6: EXPERIMENTAL ausente não reduz total_coverage normal.
+def test_experimental_pillar_excluded_from_total_coverage(monkeypatch):
+    required_pillar = IndicatorPillar(
+        key="req", importance=IndicatorImportance.REQUIRED, requirement_mode="ALL_OF", indicator_keys=["a"]
+    )
+    experimental_pillar = IndicatorPillar(
+        key="exp", importance=IndicatorImportance.EXPERIMENTAL, requirement_mode="ALL_OF", indicator_keys=["z"]
+    )
+    monkeypatch.setattr(
+        "app.engines.indicator_catalog.canonical_pillars_for_class",
+        lambda asset_class: [required_pillar, experimental_pillar],
+    )
+    indicators = [_etf_indicator("a", "A", "text", value="x")]  # "z" (EXPERIMENTAL) ausente.
+
+    breakdown = coverage_breakdown_for_asset(InvestmentClass.STOCK, indicators)
+
+    assert breakdown.total_applicable == 1
+    assert breakdown.total_coverage == Decimal("100.00")
+
+
+# Cenário 7: NOT_APPLICABLE é removido do denominador (a nível de pilar inteiro).
+def test_not_applicable_pillar_excluded_from_coverage_denominator():
+    price_pillar = IndicatorPillar(
+        key="price", importance=IndicatorImportance.REQUIRED, requirement_mode="ALL_OF", indicator_keys=["current_price"]
+    )
+    fully_na_pillar = IndicatorPillar(
+        key="extra", importance=IndicatorImportance.REQUIRED, requirement_mode="ALL_OF", indicator_keys=["fgc_eligible"]
+    )
+    indicators = [
+        _etf_indicator("current_price", "Preço", "currency", value=Decimal("10.00")),
+        NormalizedIndicator(
+            key="fgc_eligible",
+            label="FGC",
+            unit="text",
+            status=IndicatorStatus.NOT_APPLICABLE,
+            source="snapshot",
+            collected_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            confidence=ConfidenceLevel.LOW,
+        ),
+    ]
+
+    coverage, satisfied, total = pillar_group_coverage([price_pillar, fully_na_pillar], indicators)
+
+    assert total == 1
+    assert satisfied == 1
+    assert coverage == Decimal("100.00")
+
+
+# Cenário 8: ANY_OF com um membro disponível satisfaz o pilar e alimenta required_coverage.
+def test_any_of_pillar_satisfied_with_one_member_feeds_required_coverage():
+    pillars = canonical_pillars_for_class(InvestmentClass.ETF)
+    liquidity_pillar = next(item for item in pillars if item.key == "liquidity")
+    indicators = [_etf_indicator("volume", "Volume", "quantity", value=Decimal("1000"))]
+
+    result = evaluate_indicator_pillar(liquidity_pillar, indicators)
+    coverage, satisfied, total = pillar_group_coverage([liquidity_pillar], indicators)
+
+    assert result["satisfied"] is True
+    assert (satisfied, total) == (1, 1)
+    assert coverage == Decimal("100.00")
+
+
+# Cenário 9: ALL_OF com membro aplicável ausente reduz required_coverage.
+def test_all_of_missing_member_reduces_required_coverage():
+    indicators = [
+        _etf_indicator("treasury_title", "Título", "text", value="Tesouro Selic 2029"),
+        _etf_indicator("indexer", "Indexador", "text", value="SELIC"),
+        _etf_indicator("treasury_rate", "Taxa", "percent", value=Decimal("13.65")),
+        _etf_indicator("maturity_date", "Vencimento", "date", value="2029-01-01"),
+        # current_price (execution_price, ALL_OF) ausente.
+    ]
+    breakdown = coverage_breakdown_for_asset(InvestmentClass.TREASURY, indicators)
+
+    assert breakdown.required_total == 5
+    assert breakdown.required_satisfied == 4
+    assert breakdown.required_coverage == Decimal("80.00")
+
+
+# Cenário 10: scoring_coverage considera somente indicadores/categorias reais de scoring.
+def test_scoring_coverage_considers_only_real_scoring_categories():
+    indicators = [
+        _etf_indicator("roe", "ROE", "percent", value=Decimal("15.0")),
+        _etf_indicator("price_earnings", "P/L", "ratio", value=Decimal("10.0")),
+        _etf_indicator("net_debt_equity", "Dívida/PL", "ratio", status=IndicatorStatus.UNAVAILABLE),
+    ]
+    coverage, available, total = scoring_coverage_for_indicators(indicators)
+
+    assert total == 3
+    assert available == 2
+    assert coverage == Decimal("66.67")
+
+
+# Cenário 11: campo descritivo não aumenta scoring_coverage.
+def test_descriptive_field_does_not_increase_scoring_coverage():
+    baseline_coverage, baseline_available, baseline_total = scoring_coverage_for_indicators(
+        [_etf_indicator("roe", "ROE", "percent", value=Decimal("15.0"))]
+    )
+    with_descriptive = [
+        _etf_indicator("roe", "ROE", "percent", value=Decimal("15.0")),
+        _etf_indicator("segment", "Segmento", "text", value="tijolo"),
+    ]
+    coverage, available, total = scoring_coverage_for_indicators(with_descriptive)
+
+    assert total == baseline_total
+    assert available == baseline_available
+    assert coverage == baseline_coverage
+
+
+# Cenário 12: provider_coverage baixo, com essenciais válidos, não bloqueia sozinho.
+def test_low_provider_coverage_does_not_force_insufficient_confidence():
+    breakdown = CoverageBreakdown(
+        required_coverage=Decimal("100.00"),
+        required_satisfied=3,
+        required_total=3,
+        scoring_coverage=Decimal("85.00"),
+        provider_coverage=Decimal("10.00"),
+        provider_resolved=2,
+        provider_requested=20,
+    )
+    confidence = confidence_for_asset(
+        coverage_breakdown=breakdown,
+        scores=_two_category_scores(Decimal("85")),
+        overall_score=Decimal("85"),
+        data_quality=DataQualityReport(data_completeness=Decimal("90"), data_freshness=Decimal("90")),
+        anomaly_flags=[],
+    )
+    assert confidence != ConfidenceLevel.INSUFFICIENT
+    assert confidence == ConfidenceLevel.HIGH
+
+
+# Cenário 13: confidence LOW não bloqueia automaticamente (é um valor alcançável e final).
+def test_low_confidence_is_reachable_and_does_not_raise_or_block():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("45.00")),
+        scores=_two_category_scores(Decimal("45")),
+        overall_score=Decimal("45"),
+        data_quality=None,
+        anomaly_flags=None,
+    )
+    assert confidence == ConfidenceLevel.LOW
+
+
+# Cenário 14: REQUIRED indispensável ausente -> INSUFFICIENT.
+def test_missing_required_pillar_forces_insufficient_confidence():
+    breakdown = CoverageBreakdown(
+        required_coverage=Decimal("66.67"), required_satisfied=2, required_total=3, scoring_coverage=Decimal("90.00")
+    )
+    confidence = confidence_for_asset(
+        coverage_breakdown=breakdown,
+        scores=_two_category_scores(Decimal("90")),
+        overall_score=Decimal("90"),
+        data_quality=None,
+        anomaly_flags=None,
+    )
+    assert confidence == ConfidenceLevel.INSUFFICIENT
+
+
+# Cenário 15: preço indispensável ausente -> INSUFFICIENT (fim a fim via build_snapshot).
+def test_missing_price_forces_insufficient_confidence_end_to_end():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicators = [
+        NormalizedIndicator(
+            key="current_price",
+            label="Preço atual",
+            unit="currency",
+            status=IndicatorStatus.UNAVAILABLE,
+            source="snapshot",
+            collected_at=now,
+            confidence=ConfidenceLevel.INSUFFICIENT,
+            unavailable_reason="Provedor não retornou cotação.",
+        ),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("1000000")),
+        _etf_indicator("roe", "ROE", "percent", value=Decimal("15.0")),
+        _etf_indicator("price_book", "P/VP", "ratio", value=Decimal("1.2")),
+        _etf_indicator("net_debt_equity", "Dívida/PL", "ratio", value=Decimal("0.5")),
+    ]
+    base = AssetIntelligenceSnapshot(
+        symbol="XYZ4",
+        asset_class=InvestmentClass.STOCK,
+        indicators=indicators,
+        recommendation=RecommendationAction.INSUFFICIENT_DATA,
+        valuation_status=ValuationStatus.INSUFFICIENT_DATA,
+        valuation=ValuationAssessment(status=ValuationStatus.INSUFFICIENT_DATA, confidence=ConfidenceLevel.INSUFFICIENT),
+        confidence=ConfidenceLevel.INSUFFICIENT,
+        coverage_percentage=Decimal("0"),
+        available_indicators_count=0,
+        missing_indicators_count=0,
+        stale_indicators_count=0,
+        calculated_at=now,
+    )
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    assert result.confidence == ConfidenceLevel.INSUFFICIENT
+    assert result.coverage_breakdown.required_satisfied < result.coverage_breakdown.required_total
+
+
+# Cenário 16: identifier_unresolved crítico -> INSUFFICIENT independente da cobertura.
+def test_identifier_unresolved_anomaly_forces_insufficient_confidence():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("95.00")),
+        scores=_two_category_scores(Decimal("95")),
+        overall_score=Decimal("95"),
+        data_quality=None,
+        anomaly_flags=["identifier_unresolved"],
+    )
+    assert confidence == ConfidenceLevel.INSUFFICIENT
+
+
+# Cenário 17: anomalia crítica (conflito entre fontes) -> INSUFFICIENT.
+def test_critical_conflicting_sources_anomaly_forces_insufficient_confidence():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("95.00")),
+        scores=_two_category_scores(Decimal("95")),
+        overall_score=Decimal("95"),
+        data_quality=None,
+        anomaly_flags=["conflicting_sources"],
+    )
+    assert confidence == ConfidenceLevel.INSUFFICIENT
+
+
+# Cenário 18: rate_limited real é preservado como rate_limited (não rebaixado a genérico).
+def test_rate_limited_failure_is_preserved_not_downgraded():
+    assert classify_provider_failure_reason(MarketRateLimitError()) == ProviderFailureReason.RATE_LIMITED
+
+
+# Cenário 19: not_applicable não é tratado como falha real do provider.
+def test_not_applicable_is_not_treated_as_a_real_provider_failure():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicators = [
+        NormalizedIndicator(
+            key="ev_ebitda",
+            label="EV/EBITDA",
+            unit="ratio",
+            status=IndicatorStatus.AVAILABLE,
+            source="snapshot",
+            reference_date=now,
+            collected_at=now,
+            confidence=ConfidenceLevel.HIGH,
+            value=Decimal("12.5"),
+        ),
+    ]
+    validated, _ = IndicatorValidationService().validate(indicators, sector="banco", collected_at=now)
+
+    assert validated[0].status == IndicatorStatus.NOT_APPLICABLE
+    assert validated[0].provider_failure_reason == ProviderFailureReason.NOT_APPLICABLE
+
+    coverage, resolved, requested = provider_coverage_for_indicators(validated)
+    assert requested == 0
+    assert coverage is None
+
+
+# Cenário 20: causa desconhecida nunca inventa unauthorized/rate_limited/provider_unavailable.
+def test_unknown_provider_failure_never_invents_a_specific_cause():
+    assert classify_provider_failure_reason(None) == ProviderFailureReason.NOT_REPORTED
+    assert classify_provider_failure_reason(RuntimeError("erro genérico")) == ProviderFailureReason.NOT_REPORTED
+    assert classify_provider_failure_reason(MarketAssetNotFoundError()) not in {
+        ProviderFailureReason.RATE_LIMITED,
+        ProviderFailureReason.UNAUTHORIZED,
+        ProviderFailureReason.PROVIDER_UNAVAILABLE,
+    }
+
+
+# Cenário 21: coverage_percentage legado continua existindo ao lado do novo breakdown.
+def test_legacy_coverage_percentage_field_still_exists():
+    assert "coverage_percentage" in AssetIntelligenceSnapshot.model_fields
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    _, indicators = IndicatorNormalizationService().normalize_quote(
+        quote(), requested_symbol="PETR4", asset_type="Ação", collected_at=now
+    )
+    base = AssetIntelligenceSnapshot(
+        symbol="PETR4",
+        asset_class=InvestmentClass.STOCK,
+        indicators=indicators,
+        recommendation=RecommendationAction.INSUFFICIENT_DATA,
+        valuation_status=ValuationStatus.INSUFFICIENT_DATA,
+        valuation=ValuationAssessment(status=ValuationStatus.INSUFFICIENT_DATA, confidence=ConfidenceLevel.INSUFFICIENT),
+        confidence=ConfidenceLevel.INSUFFICIENT,
+        coverage_percentage=Decimal("0"),
+        available_indicators_count=0,
+        missing_indicators_count=0,
+        stale_indicators_count=0,
+        calculated_at=now,
+    )
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    assert isinstance(result.coverage_percentage, Decimal)
+    assert isinstance(result.coverage_breakdown, CoverageBreakdown)
+
+
+# Cenário 22: dado ausente nunca é convertido para zero.
+def test_missing_indicator_value_is_never_coerced_to_zero():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    quote_without_volume = quote().model_copy(update={"volume": None})
+
+    _, indicators = IndicatorNormalizationService().normalize_quote(
+        quote_without_volume, requested_symbol="PETR4", asset_type="Ação", collected_at=now
+    )
+    by_key = {item.key: item for item in indicators}
+
+    assert by_key["volume"].status == IndicatorStatus.UNAVAILABLE
+    assert by_key["volume"].value is None
+    assert by_key["liquidity"].status == IndicatorStatus.UNAVAILABLE
+    assert by_key["liquidity"].value is None
+
+
+# Cenário 23: mesmos inputs produzem sempre o mesmo resultado (determinismo).
+def test_coverage_breakdown_is_deterministic_for_same_inputs():
+    indicators = [
+        _etf_indicator("current_price", "Preço", "currency", value=Decimal("10.00")),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("1000")),
+        _etf_indicator("tracked_index", "Índice", "text", value="IBOV"),
+    ]
+    first = coverage_breakdown_for_asset(InvestmentClass.ETF, indicators)
+    second = coverage_breakdown_for_asset(InvestmentClass.ETF, indicators)
+    assert first == second
+
+
+# Cenário 24: denominador vazio é tratado explicitamente, sem divisão por zero.
+def test_empty_denominator_returns_none_without_zero_division():
+    assert canonical_pillars_for_class(InvestmentClass.INVESTMENT_FUND) == []
+    breakdown = coverage_breakdown_for_asset(InvestmentClass.INVESTMENT_FUND, [])
+
+    assert breakdown.required_coverage is None
+    assert breakdown.required_total == 0
+    assert breakdown.recommended_coverage is None
+    assert breakdown.total_coverage is None
+    assert breakdown.scoring_coverage is None
+    assert breakdown.provider_coverage is None
+
+
+# Cenário 25: required completo + scoring alto -> HIGH.
+def test_required_complete_and_high_scoring_yields_high_confidence():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("85.00")),
+        scores=_two_category_scores(Decimal("85")),
+        overall_score=Decimal("85"),
+        data_quality=None,
+        anomaly_flags=None,
+    )
+    assert confidence == ConfidenceLevel.HIGH
+
+
+# Cenário 26: required completo + scoring intermediário -> MEDIUM.
+def test_required_complete_and_intermediate_scoring_yields_medium_confidence():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("65.00")),
+        scores=_two_category_scores(Decimal("65")),
+        overall_score=Decimal("65"),
+        data_quality=None,
+        anomaly_flags=None,
+    )
+    assert confidence == ConfidenceLevel.MEDIUM
+
+
+# Cenário 27: required completo + scoring baixo porém ainda suficiente -> LOW.
+def test_required_complete_and_low_but_sufficient_scoring_yields_low_confidence():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("45.00")),
+        scores=_two_category_scores(Decimal("45")),
+        overall_score=Decimal("45"),
+        data_quality=None,
+        anomaly_flags=None,
+    )
+    assert confidence == ConfidenceLevel.LOW
+
+
+# Cenário 28: ausência de diagnóstico detalhado de provider não cria falso bloqueio.
+def test_missing_provider_failure_detail_does_not_force_blocking():
+    indicators = [
+        _etf_indicator("current_price", "Preço", "currency", value=Decimal("10.00")),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("1000")),
+        _etf_indicator("tracked_index", "Índice", "text", value="IBOV"),
+        _etf_indicator(
+            "beta", "Beta", "ratio", status=IndicatorStatus.UNAVAILABLE, provider_failure_reason=None
+        ),
+    ]
+    breakdown = coverage_breakdown_for_asset(InvestmentClass.ETF, indicators)
+    assert breakdown.required_coverage == Decimal("100.00")
+
+    confidence = confidence_for_asset(
+        coverage_breakdown=breakdown.model_copy(update={"scoring_coverage": Decimal("70.00")}),
+        scores=_two_category_scores(Decimal("70")),
+        overall_score=Decimal("70"),
+        data_quality=None,
+        anomaly_flags=None,
+    )
+    assert confidence != ConfidenceLevel.INSUFFICIENT
