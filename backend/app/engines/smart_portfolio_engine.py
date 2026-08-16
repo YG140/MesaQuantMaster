@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
@@ -10,6 +10,7 @@ from app.schemas.intelligence import (
     BuildPortfolioClassAllocation,
     BuildPortfolioExclusion,
     BuildPortfolioIndicator,
+    BuildPortfolioPreflight,
     BuildPortfolioRequest,
     BuildPortfolioResponse,
     BuildPortfolioSelection,
@@ -27,9 +28,24 @@ from app.schemas.market_intelligence import (
 )
 
 
-MINIMUM_COVERAGE = Decimal("40")
 HUNDRED = Decimal("100")
 CENT = Decimal("0.01")
+
+# Categorias reais de score já calculadas pelo motor P1 (market_intelligence_engine).
+# Usadas para derivar um ranking sem overall_score legado, sem jamais
+# preencher uma categoria ausente com zero.
+SCORE_COMPONENT_FIELDS = (
+    "quality_score",
+    "valuation_score",
+    "income_score",
+    "growth_score",
+    "debt_score",
+    "risk_score",
+    "liquidity_score",
+)
+
+CRITICAL_IDENTITY_ANOMALY_FLAGS = {"identifier_unresolved", "issuer_identity_unresolved"}
+CRITICAL_CONFLICT_ANOMALY_FLAGS = {"conflicting_sources"}
 
 CLASS_LABELS = {
     InvestmentClass.STOCK: "Ações",
@@ -65,6 +81,11 @@ class SmartPortfolioEngine:
         candidates: list[PortfolioCandidate],
         *,
         provider_errors: list[str] | None = None,
+        universe_total: int | None = None,
+        universe_considered: int | None = None,
+        universe_truncated: bool = False,
+        batch_size: int = 0,
+        batch_count: int = 0,
     ) -> BuildPortfolioResponse:
         now = datetime.now(timezone.utc)
         diagnosis = FinancialDiagnosisEngine.diagnose(request)
@@ -129,17 +150,30 @@ class SmartPortfolioEngine:
             )
             for item in class_allocations
         ]
+        sorted_exclusions = sorted(exclusions, key=lambda item: item.symbol)
+        preflight = cls._preflight(
+            candidates=candidates,
+            eligible=eligible,
+            exclusions=sorted_exclusions,
+            provider_errors=provider_errors,
+            universe_total=universe_total,
+            universe_considered=universe_considered,
+            universe_truncated=universe_truncated,
+            batch_size=batch_size,
+            batch_count=batch_count,
+        )
         return BuildPortfolioResponse(
             class_allocations=class_allocations,
             selections=selections,
             assets=assets,
-            exclusions=sorted(exclusions, key=lambda item: item.symbol),
+            exclusions=sorted_exclusions,
             total_allocated_percentage=allocated_percentage,
             total_allocated_amount=allocated_amount,
             unallocated_amount=unallocated,
             confidence=confidence,
             status=status,
             missing_data=missing,
+            preflight=preflight,
             strategy_summary=(
                 f"Objetivo {request.objective}; perfil {request.risk_profile}; "
                 f"horizonte {request.horizon}; até {request.max_assets} ativos."
@@ -153,6 +187,13 @@ class SmartPortfolioEngine:
 
     @classmethod
     def eligibility(cls, request, candidates):
+        """Elegibilidade estrutural (P2): usa o confidence já resolvido pelo P1
+        (required completo + scoring real suficiente + sem anomalia crítica) em
+        vez de reimplementar esses gates aqui. NÃO usa mais coverage_percentage
+        legado, data_quality.recommendation_blocked ou overall_score is None
+        como gates diretos — LOW/provider_coverage baixo/RECOMMENDED ou
+        OPTIONAL ausentes nunca bloqueiam sozinhos.
+        """
         eligible = []
         exclusions = []
         allowed = set(request.allowed_classes)
@@ -171,18 +212,11 @@ class SmartPortfolioEngine:
                     "Classe incompatível com o perfil conservador nesta versão."
                 )
             if snapshot.current_price is None:
-                reasons.append("Cotação atual indisponível.")
-            if snapshot.coverage_percentage < MINIMUM_COVERAGE:
-                reasons.append(
-                    f"Cobertura de {snapshot.coverage_percentage}% abaixo do mínimo de {MINIMUM_COVERAGE}%."
-                )
-            if snapshot.data_quality and snapshot.data_quality.recommendation_blocked:
-                reasons.append(
-                    snapshot.data_quality.blocking_reason
-                    or "Qualidade dos dados bloqueia recomendação."
-                )
-            if snapshot.overall_score is None:
-                reasons.append("Pontuação indisponível por cobertura insuficiente.")
+                reasons.append("Cotação atual indispensável não disponível.")
+            elif snapshot.current_price <= 0:
+                reasons.append("Cotação atual inválida (menor ou igual a zero).")
+            if snapshot.confidence == ConfidenceLevel.INSUFFICIENT:
+                reasons.append(cls._insufficiency_reason(snapshot))
             if reasons:
                 exclusions.append(
                     BuildPortfolioExclusion(
@@ -193,12 +227,30 @@ class SmartPortfolioEngine:
                 eligible.append(candidate)
         return eligible, exclusions
 
+    @staticmethod
+    def _insufficiency_reason(snapshot) -> str:
+        """Traduz confidence == INSUFFICIENT numa causa específica e real,
+        nunca uma mensagem genérica de "dados insuficientes"."""
+        anomaly_flags = set(snapshot.anomaly_flags or [])
+        if anomaly_flags & CRITICAL_IDENTITY_ANOMALY_FLAGS:
+            return "Identidade do ativo não resolvida."
+        if anomaly_flags & CRITICAL_CONFLICT_ANOMALY_FLAGS:
+            return "Conflito crítico entre fontes de dados."
+        breakdown = snapshot.coverage_breakdown
+        if (
+            breakdown is not None
+            and breakdown.required_total
+            and breakdown.required_satisfied < breakdown.required_total
+        ):
+            return "Pilar obrigatório aplicável não satisfeito."
+        return "Categorias reais de scoring insuficientes para uma análise confiável."
+
     @classmethod
     def score(cls, request, candidates):
         ranked = []
         for candidate in candidates:
             snapshot = candidate.snapshot
-            score = snapshot.overall_score or Decimal("0")
+            score = cls._effective_score(snapshot)
             if snapshot.strategy_fit_score is not None:
                 score = score * Decimal("0.8") + snapshot.strategy_fit_score * Decimal(
                     "0.2"
@@ -211,6 +263,27 @@ class SmartPortfolioEngine:
                 )
             ranked.append((candidate, score.quantize(CENT)))
         return sorted(ranked, key=lambda item: (-item[1], item[0].snapshot.symbol))
+
+    @staticmethod
+    def _effective_score(snapshot) -> Decimal:
+        """Nunca fabrica score. Usa overall_score real quando existir; senão
+        deriva a média SOMENTE dos score components realmente calculados
+        (nunca preenche um component ausente com zero). Um candidato sem
+        nenhum component real não deveria chegar aqui — teria
+        confidence == INSUFFICIENT e sido excluído em eligibility(); o
+        fallback para 0 abaixo é só uma rede de segurança determinística,
+        nunca um valor fabricado para um caso real.
+        """
+        if snapshot.overall_score is not None:
+            return snapshot.overall_score
+        components = [
+            value
+            for value in (getattr(snapshot, field) for field in SCORE_COMPONENT_FIELDS)
+            if value is not None
+        ]
+        if not components:
+            return Decimal("0")
+        return (sum(components, Decimal("0")) / Decimal(len(components))).quantize(CENT)
 
     @classmethod
     def allocate(cls, request, ranked):
@@ -261,7 +334,10 @@ class SmartPortfolioEngine:
             if item.status == IndicatorStatus.AVAILABLE
         ]
         reasons = list(snapshot.positive_reasons)
-        reasons.append(f"Cobertura mínima atendida ({snapshot.coverage_percentage}%).")
+        reasons.append(
+            f"Requisitos essenciais satisfeitos e scoring real suficiente "
+            f"(confidence {snapshot.confidence.value})."
+        )
         reasons.append(
             "Selecionado por pontuação determinística entre os ativos elegíveis."
         )
@@ -374,3 +450,68 @@ class SmartPortfolioEngine:
         if levels == {ConfidenceLevel.HIGH.value} and unallocated == 0:
             return ConfidenceLevel.HIGH.value
         return ConfidenceLevel.MEDIUM.value
+
+    @classmethod
+    def _preflight(
+        cls,
+        *,
+        candidates,
+        eligible,
+        exclusions,
+        provider_errors,
+        universe_total,
+        universe_considered,
+        universe_truncated,
+        batch_size,
+        batch_count,
+    ) -> BuildPortfolioPreflight:
+        """Diagnóstico estrutural do universo/elegibilidade (P2).
+
+        universe_total/universe_considered refletem o universo real quando
+        informados pelo chamador (batches); caso contrário assumem o próprio
+        conjunto de candidatos recebido, para engines-level callers que não
+        fazem batching (ex.: testes diretos de SmartPortfolioEngine.build).
+        """
+        snapshots = [candidate.snapshot for candidate in candidates]
+        assets_with_valid_price = sum(
+            1
+            for snapshot in snapshots
+            if snapshot.current_price is not None and snapshot.current_price > 0
+        )
+        required_complete_count = sum(
+            1
+            for snapshot in snapshots
+            if snapshot.coverage_breakdown.required_total == 0
+            or snapshot.coverage_breakdown.required_satisfied
+            == snapshot.coverage_breakdown.required_total
+        )
+        confidence_counts = Counter(snapshot.confidence.value for snapshot in snapshots)
+        class_counts = Counter(cls.class_label(snapshot.asset_class) for snapshot in snapshots)
+        exclusion_reason_counts: dict[str, int] = defaultdict(int)
+        for exclusion in exclusions:
+            for reason in exclusion.reasons:
+                exclusion_reason_counts[reason] += 1
+
+        return BuildPortfolioPreflight(
+            universe_total=universe_total if universe_total is not None else len(candidates),
+            universe_considered=(
+                universe_considered if universe_considered is not None else len(candidates)
+            ),
+            universe_truncated=universe_truncated,
+            batch_size=batch_size,
+            batch_count=batch_count,
+            snapshots_received=len(candidates),
+            assets_with_valid_price=assets_with_valid_price,
+            required_complete_count=required_complete_count,
+            confidence_high_count=confidence_counts.get(ConfidenceLevel.HIGH.value, 0),
+            confidence_medium_count=confidence_counts.get(ConfidenceLevel.MEDIUM.value, 0),
+            confidence_low_count=confidence_counts.get(ConfidenceLevel.LOW.value, 0),
+            confidence_insufficient_count=confidence_counts.get(
+                ConfidenceLevel.INSUFFICIENT.value, 0
+            ),
+            eligible_count=len(eligible),
+            excluded_count=len(exclusions),
+            provider_error_count=len(provider_errors or []),
+            class_counts=dict(class_counts),
+            exclusion_reason_counts=dict(exclusion_reason_counts),
+        )
