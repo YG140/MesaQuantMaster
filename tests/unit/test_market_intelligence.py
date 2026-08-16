@@ -2040,3 +2040,260 @@ def test_missing_provider_failure_detail_does_not_force_blocking():
         anomaly_flags=None,
     )
     assert confidence != ConfidenceLevel.INSUFFICIENT
+
+
+# =====================================================================
+# CORREÇÃO — desacoplamento do confidence do gate legado de coverage.
+#
+# confidence_for_asset não usa mais `overall_score is None` nem
+# `data_quality.recommendation_blocked` como gates diretos: ambos podiam
+# disparar puramente por causa do coverage_percentage legado (que mistura
+# indicadores não essenciais) ou por completeness/freshness não crítica,
+# contaminando indiretamente o novo confidence. RecommendationEngine e
+# SmartPortfolio continuam lendo esses mesmos campos legados sem qualquer
+# alteração nesta correção. Cada teste abaixo está rotulado com a letra do
+# cenário correspondente do prompt de correção.
+# =====================================================================
+
+
+def _stock_indicators_required_satisfied_but_low_legacy_coverage(now):
+    """59 indicadores do catálogo STOCK, apenas 7 AVAILABLE.
+
+    Satisfaz todos os pilares REQUIRED e alcança >=2 categorias de scoring
+    reais, mas o coverage_percentage legado (available/total sobre TODO o
+    catálogo) fica bem abaixo de 40 — o cenário exato que o gate antigo
+    penalizava indevidamente.
+    """
+    available_values = {
+        "current_price": Decimal("39.89"),
+        "volume": Decimal("1000000"),
+        "price_book": Decimal("1.25"),
+        "net_margin": Decimal("12.0"),
+        "net_debt_equity": Decimal("0.8"),
+        "dividend_yield": Decimal("5.5"),
+        "day_range": Decimal("2.1"),
+    }
+    indicators = []
+    for entry in indicators_for_class(InvestmentClass.STOCK):
+        if entry.key in available_values:
+            indicators.append(
+                NormalizedIndicator(
+                    key=entry.key,
+                    label=entry.label,
+                    unit=entry.unit,
+                    status=IndicatorStatus.AVAILABLE,
+                    source="snapshot",
+                    reference_date=now,
+                    collected_at=now,
+                    confidence=ConfidenceLevel.HIGH,
+                    value=available_values[entry.key],
+                )
+            )
+        else:
+            indicators.append(
+                NormalizedIndicator(
+                    key=entry.key,
+                    label=entry.label,
+                    unit=entry.unit,
+                    status=IndicatorStatus.UNAVAILABLE,
+                    source="snapshot",
+                    collected_at=now,
+                    confidence=ConfidenceLevel.INSUFFICIENT,
+                    unavailable_reason="Provedor não retornou este indicador.",
+                )
+            )
+    return indicators
+
+
+def _stock_required_satisfied_small_indicator_set():
+    return [
+        _etf_indicator("current_price", "Preço atual", "currency", value=Decimal("39.89")),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("1000000")),
+        _etf_indicator("price_book", "P/VP", "ratio", value=Decimal("1.25")),
+        _etf_indicator("net_margin", "Margem líquida", "percent", value=Decimal("12.0")),
+        _etf_indicator("net_debt_equity", "Dívida/PL", "ratio", value=Decimal("0.8")),
+    ]
+
+
+def _base_stock_snapshot(indicators, now, *, data_quality=None):
+    return AssetIntelligenceSnapshot(
+        symbol="XYZ4",
+        asset_class=InvestmentClass.STOCK,
+        indicators=indicators,
+        data_quality=data_quality,
+        recommendation=RecommendationAction.INSUFFICIENT_DATA,
+        valuation_status=ValuationStatus.INSUFFICIENT_DATA,
+        valuation=ValuationAssessment(status=ValuationStatus.INSUFFICIENT_DATA, confidence=ConfidenceLevel.INSUFFICIENT),
+        confidence=ConfidenceLevel.INSUFFICIENT,
+        coverage_percentage=Decimal("0"),
+        available_indicators_count=0,
+        missing_indicators_count=0,
+        stale_indicators_count=0,
+        calculated_at=now,
+    )
+
+
+# Cenário A: required=100 + scoring suficiente + coverage_percentage legado
+# < 40 por indicadores não essenciais -> confidence NÃO é INSUFFICIENT
+# (prova fim a fim via build_snapshot, não apenas chamando confidence_for_asset
+# com overall_score preenchido manualmente).
+def test_confidence_end_to_end_ignores_legacy_coverage_percentage_gate():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicators = _stock_indicators_required_satisfied_but_low_legacy_coverage(now)
+    base = _base_stock_snapshot(indicators, now)
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    # o gate legado continua disparando normalmente (overall_score vira None)...
+    assert result.coverage_percentage < Decimal("40")
+    assert result.overall_score is None
+    assert result.recommendation == RecommendationAction.INSUFFICIENT_DATA
+    # ...mas isso não contamina o novo confidence, que enxerga required=100%
+    # e categorias reais de score suficientes.
+    assert result.coverage_breakdown.required_coverage == Decimal("100.00")
+    assert result.confidence != ConfidenceLevel.INSUFFICIENT
+    assert result.confidence == ConfidenceLevel.LOW
+
+
+# Cenário B: required completos + scoring suficiente + data_quality.
+# recommendation_blocked=True (por completeness/freshness não crítica) ->
+# confidence NÃO é automaticamente INSUFFICIENT (fim a fim via build_snapshot).
+def test_confidence_end_to_end_ignores_non_critical_recommendation_blocked():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicators = _stock_required_satisfied_small_indicator_set()
+    blocked_quality = DataQualityReport(
+        data_completeness=Decimal("30.00"),
+        data_freshness=Decimal("30.00"),
+        data_quality_score=Decimal("21.00"),
+        recommendation_blocked=True,
+        blocking_reason="Não foi possível emitir uma avaliação confiável devido à qualidade ou à ausência dos dados.",
+    )
+    base = _base_stock_snapshot(indicators, now, data_quality=blocked_quality)
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    assert result.data_quality is not None
+    assert result.data_quality.recommendation_blocked is True
+    # RecommendationEngine (legado, intocado) ainda reage ao bloqueio.
+    assert result.recommendation == RecommendationAction.REVIEW_DATA
+    assert result.coverage_breakdown.required_coverage == Decimal("100.00")
+    assert result.confidence != ConfidenceLevel.INSUFFICIENT
+    assert result.confidence == ConfidenceLevel.HIGH
+
+
+# Cenário C: REQUIRED ausente -> continua INSUFFICIENT.
+def test_confidence_regression_missing_required_pillar_stays_insufficient():
+    breakdown = CoverageBreakdown(
+        required_coverage=Decimal("66.67"), required_satisfied=2, required_total=3, scoring_coverage=Decimal("95.00")
+    )
+    confidence = confidence_for_asset(
+        coverage_breakdown=breakdown,
+        scores=_two_category_scores(Decimal("95")),
+        overall_score=Decimal("95"),
+        data_quality=None,
+        anomaly_flags=None,
+    )
+    assert confidence == ConfidenceLevel.INSUFFICIENT
+
+
+# Cenário D: identifier_unresolved -> continua INSUFFICIENT.
+def test_confidence_regression_identifier_unresolved_stays_insufficient():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("95.00")),
+        scores=_two_category_scores(Decimal("95")),
+        overall_score=Decimal("95"),
+        data_quality=None,
+        anomaly_flags=["identifier_unresolved"],
+    )
+    assert confidence == ConfidenceLevel.INSUFFICIENT
+
+
+# Cenário E: conflicting_sources crítico -> continua INSUFFICIENT.
+def test_confidence_regression_conflicting_sources_stays_insufficient():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("95.00")),
+        scores=_two_category_scores(Decimal("95")),
+        overall_score=Decimal("95"),
+        data_quality=None,
+        anomaly_flags=["conflicting_sources"],
+    )
+    assert confidence == ConfidenceLevel.INSUFFICIENT
+
+
+# Cenário F: menos de duas categorias reais de scoring -> continua INSUFFICIENT.
+def test_confidence_regression_insufficient_scoring_categories_stays_insufficient():
+    breakdown = CoverageBreakdown(
+        required_coverage=Decimal("100.00"), required_satisfied=3, required_total=3, scoring_coverage=Decimal("95.00")
+    )
+    only_one_scored = {
+        "quality": ScoreBreakdown(
+            value=Decimal("95"),
+            available_indicators=2,
+            missing_indicators=0,
+            stale_indicators=0,
+            coverage_percentage=Decimal("100"),
+            confidence=ConfidenceLevel.HIGH,
+        ),
+        "valuation": ScoreBreakdown(
+            value=None,
+            available_indicators=0,
+            missing_indicators=2,
+            stale_indicators=0,
+            coverage_percentage=Decimal("0"),
+            confidence=ConfidenceLevel.INSUFFICIENT,
+        ),
+    }
+    confidence = confidence_for_asset(
+        coverage_breakdown=breakdown,
+        scores=only_one_scored,
+        overall_score=Decimal("95"),
+        data_quality=None,
+        anomaly_flags=None,
+    )
+    assert confidence == ConfidenceLevel.INSUFFICIENT
+
+
+# Cenário G: LOW continua alcançável e não bloqueante, mesmo com
+# overall_score=None e recommendation_blocked=True simultaneamente.
+def test_confidence_regression_low_remains_reachable_and_non_blocking():
+    confidence = confidence_for_asset(
+        coverage_breakdown=_perfect_breakdown(Decimal("50.00")),
+        scores=_two_category_scores(Decimal("50")),
+        overall_score=None,
+        data_quality=DataQualityReport(
+            data_completeness=Decimal("50"), data_freshness=Decimal("50"), recommendation_blocked=True
+        ),
+        anomaly_flags=None,
+    )
+    assert confidence == ConfidenceLevel.LOW
+
+
+# Cenário H: coverage_percentage legado continua existente e com a mesma
+# fórmula de sempre (available/total sobre todos os indicadores passados).
+def test_confidence_regression_legacy_coverage_percentage_field_untouched():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicators = _stock_indicators_required_satisfied_but_low_legacy_coverage(now)
+    base = _base_stock_snapshot(indicators, now)
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    total = len(indicators)
+    available = sum(1 for item in indicators if item.status == IndicatorStatus.AVAILABLE)
+    expected = (Decimal(available) / Decimal(total) * Decimal("100")).quantize(Decimal("0.01"))
+
+    assert "coverage_percentage" in AssetIntelligenceSnapshot.model_fields
+    assert result.coverage_percentage == expected
+
+
+# Cenário I: RecommendationEngine e SmartPortfolio continuam com o
+# comportamento legado intocado nesta fase (só o confidence foi desacoplado).
+def test_confidence_regression_recommendation_engine_still_gates_on_legacy_coverage():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicators = _stock_indicators_required_satisfied_but_low_legacy_coverage(now)
+    base = _base_stock_snapshot(indicators, now)
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    assert result.coverage_percentage < Decimal("40")
+    assert result.recommendation == RecommendationAction.INSUFFICIENT_DATA
+    assert result.confidence == ConfidenceLevel.LOW

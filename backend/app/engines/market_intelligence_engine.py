@@ -312,10 +312,23 @@ def confidence_for_asset(
 ) -> ConfidenceLevel:
     """Confidence estruturado do ativo (P1): HIGH/MEDIUM/LOW/INSUFFICIENT.
 
+    Avalia a SUFICIÊNCIA DOS DADOS de forma independente do gate legado
+    coverage_percentage < MINIMUM_SCORE_COVERAGE usado por overall_score e
+    por RecommendationEngine/SmartPortfolio (que permanecem como estão nesta
+    fase — a desvinculação é só no cálculo do confidence). `overall_score` e
+    `data_quality` continuam recebidos para compatibilidade de assinatura e
+    futura evolução, mas não são mais usados como gate sozinhos aqui:
+    overall_score pode ser None só porque coverage_percentage legado (que
+    mistura indicadores não essenciais) ficou abaixo de 40, e
+    data_quality.recommendation_blocked pode disparar por completeness/
+    freshness não crítica — nenhum dos dois, isoladamente, deve forçar
+    INSUFFICIENT no novo confidence.
+
     LOW nunca bloqueia sozinho — é apenas um sinal de menor cobertura/certeza.
-    INSUFFICIENT é reservado para condições realmente críticas: pilar REQUIRED
-    essencial não satisfeito, qualidade de dados bloqueante, poucas categorias
-    reais de score, ou anomalia crítica de identidade/conflito de fontes.
+    INSUFFICIENT é reservado para condições estruturalmente críticas: pilar
+    REQUIRED essencial não satisfeito (o que já cobre preço indispensável,
+    pois "price" é sempre um pilar REQUIRED ALL_OF), poucas categorias reais
+    de score, ou anomalia crítica de identidade/conflito de fontes.
     """
     if anomaly_flags and any(flag in CRITICAL_ANOMALY_FLAGS for flag in anomaly_flags):
         return ConfidenceLevel.INSUFFICIENT
@@ -326,11 +339,8 @@ def confidence_for_asset(
     if not required_complete:
         return ConfidenceLevel.INSUFFICIENT
 
-    if data_quality is not None and data_quality.recommendation_blocked:
-        return ConfidenceLevel.INSUFFICIENT
-
     scored_categories = sum(1 for score in scores.values() if score.value is not None)
-    if overall_score is None or scored_categories < MINIMUM_SCORING_CATEGORIES:
+    if scored_categories < MINIMUM_SCORING_CATEGORIES:
         return ConfidenceLevel.INSUFFICIENT
 
     scoring_coverage = coverage_breakdown.scoring_coverage or Decimal("0")
