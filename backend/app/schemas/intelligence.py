@@ -236,6 +236,13 @@ class BuildPortfolioPreflight(BaseModel):
     provider_error_count: int = 0
     class_counts: dict[str, int] = Field(default_factory=dict)
     exclusion_reason_counts: dict[str, int] = Field(default_factory=dict)
+    # Aditivo (P4): agregado a partir de resolution_summary (P4) /
+    # resolution_attempts (P3) de cada candidato — diagnóstico de fallback,
+    # nunca gate de elegibilidade.
+    provider_failure_reason_counts: dict[str, int] = Field(default_factory=dict)
+    fallback_success_count: int = 0
+    unresolved_after_fallback_count: int = 0
+    stale_assets_count: int = 0
 
 
 class FinancialDiagnosis(BaseModel):

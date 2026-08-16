@@ -5,6 +5,7 @@ from decimal import Decimal
 import json
 
 from app.core.config import settings
+from app.engines.indicator_catalog import indicator_temporal_validity_days
 from app.providers.bcb_sgs_provider import BcbSgsProvider
 from app.providers.cvm_open_data_provider import CvmOpenDataProvider
 from app.providers.tesouro_transparente_provider import TesouroTransparenteProvider
@@ -21,6 +22,7 @@ from app.schemas.market_intelligence import (
     ProviderFailureReason,
     ProviderResolutionAttempt,
     ResolutionOutcome,
+    ResolutionSummary,
 )
 from app.services.indicator_normalization_service import (
     IndicatorNormalizationService,
@@ -336,11 +338,29 @@ class IndicatorResolverService:
                     update={
                         "source": source,
                         "source_type": source_type,
-                        "valid_until": collected_at
-                        + timedelta(days=1 if source_type == "official" else 30),
+                        "valid_until": self._valid_until(
+                            candidate.key, collected_at, source_type=source_type
+                        ),
                         "freshness_status": "current",
                     }
                 )
+
+    @staticmethod
+    def _valid_until(
+        key: str, collected_at: datetime, *, source_type: str
+    ) -> datetime:
+        """Validade temporal (P4): fonte única via indicator_temporal_validity_days.
+
+        Usa a política do catálogo por indicador quando ela existe (ex.: preço
+        expira em 2 dias, dado cadastral em 3650) em vez do fallback genérico
+        por estágio — nunca estende artificialmente a validade de um dado.
+        Preserva o fallback conservador (1 dia oficial / 30 dias provider)
+        apenas para indicadores sem política declarada no catálogo.
+        """
+        validity_days = indicator_temporal_validity_days(key)
+        if validity_days is not None:
+            return collected_at + timedelta(days=validity_days)
+        return collected_at + timedelta(days=1 if source_type == "official" else 30)
 
     def _record_stage_attempts(
         self,
@@ -718,3 +738,61 @@ class IndicatorResolverService:
         if not settings.TESOURO_TRANSPARENTE_DATASET_URL:
             return None
         return TesouroTransparenteProvider(settings.TESOURO_TRANSPARENTE_DATASET_URL)
+
+
+def build_resolution_summary(
+    indicators: list[NormalizedIndicator],
+) -> ResolutionSummary:
+    """Agrega os resolution_attempts (P3) já existentes por indicador (P4).
+
+    Puramente derivado — não influencia confidence/coverage/elegibilidade,
+    apenas resume o que o resolver já registrou: quantas tentativas reais
+    ocorreram, quantas tiveram sucesso/falha, quantas foram um fallback bem
+    sucedido após pelo menos uma falha anterior no mesmo indicador, quantas
+    fontes distintas contribuíram, e a contagem por provider_failure_reason.
+    """
+    attempt_count = 0
+    success_count = 0
+    failure_count = 0
+    fallback_success_count = 0
+    unresolved_count = 0
+    stale_count = 0
+    sources: set[str] = set()
+    failure_reason_counts: dict[str, int] = {}
+
+    for indicator in indicators:
+        attempts = indicator.resolution_attempts
+        attempt_count += len(attempts)
+        seen_failure = False
+        for attempt in attempts:
+            if attempt.outcome == ResolutionOutcome.SUCCESS:
+                success_count += 1
+                sources.add(attempt.provider)
+                if seen_failure:
+                    fallback_success_count += 1
+            else:
+                failure_count += 1
+                seen_failure = True
+                if attempt.provider_failure_reason is not None:
+                    reason_key = attempt.provider_failure_reason.value
+                    failure_reason_counts[reason_key] = (
+                        failure_reason_counts.get(reason_key, 0) + 1
+                    )
+        if indicator.status == IndicatorStatus.STALE:
+            stale_count += 1
+        elif indicator.status not in (
+            IndicatorStatus.AVAILABLE,
+            IndicatorStatus.NOT_APPLICABLE,
+        ):
+            unresolved_count += 1
+
+    return ResolutionSummary(
+        attempt_count=attempt_count,
+        success_count=success_count,
+        failure_count=failure_count,
+        fallback_success_count=fallback_success_count,
+        unresolved_count=unresolved_count,
+        stale_count=stale_count,
+        sources_used=sorted(sources),
+        failure_reason_counts=failure_reason_counts,
+    )

@@ -119,18 +119,34 @@ class AssetAnalysisEngine:
         ]
         coverage = cls.coverage(base.indicators)
         coverage_breakdown = coverage_breakdown_for_asset(base.asset_class, base.indicators)
+        # Confidence estrutural (P1) é calculado ANTES da recomendação (P4) para
+        # que RecommendationEngine deixe de depender só do coverage legado —
+        # overall_score não é usado pelo cálculo de confidence (ver docstring
+        # de confidence_for_asset), então passar None aqui não afeta o resultado.
+        confidence = confidence_for_asset(
+            coverage_breakdown=coverage_breakdown,
+            scores=scores,
+            overall_score=None,
+            data_quality=base.data_quality,
+            anomaly_flags=base.anomaly_flags,
+        )
+        # overall_score exige base financeira estrutural real: pelo menos
+        # MINIMUM_SCORING_CATEGORIES categorias com valor realmente calculado
+        # (mesmo limiar usado pelo confidence). Nunca mais gated pelo
+        # coverage_percentage legado, que mistura indicadores não essenciais
+        # e podia zerar overall_score mesmo com categorias reais suficientes.
         overall = (
             (
                 sum(category_values, Decimal("0")) / Decimal(len(category_values))
             ).quantize(Decimal("0.01"))
-            if category_values and coverage >= MINIMUM_SCORE_COVERAGE
+            if len(category_values) >= MINIMUM_SCORING_CATEGORIES
             else None
         )
         recommendation = RecommendationEngine.recommend(
             base,
             scores=scores,
             valuation=valuation,
-            coverage=coverage,
+            confidence=confidence,
             overall_score=overall,
         )
         return base.model_copy(
@@ -151,13 +167,7 @@ class AssetAnalysisEngine:
                 "valuation_status": valuation.status,
                 "valuation": valuation,
                 "recommendation": recommendation,
-                "confidence": confidence_for_asset(
-                    coverage_breakdown=coverage_breakdown,
-                    scores=scores,
-                    overall_score=overall,
-                    data_quality=base.data_quality,
-                    anomaly_flags=base.anomaly_flags,
-                ),
+                "confidence": confidence,
                 "coverage_percentage": coverage,
                 "coverage_breakdown": coverage_breakdown,
                 "available_indicators_count": sum(
@@ -195,7 +205,9 @@ class AssetAnalysisEngine:
                     }
                 ],
                 "positive_reasons": positive_reasons(base),
-                "warning_reasons": warning_reasons(base, coverage),
+                "warning_reasons": warning_reasons(
+                    base, coverage_breakdown=coverage_breakdown, confidence=confidence
+                ),
             }
         )
 
@@ -269,10 +281,16 @@ class RecommendationEngine:
         snapshot: AssetIntelligenceSnapshot,
         scores: dict[str, ScoreBreakdown],
         valuation: ValuationAssessment,
-        coverage: Decimal,
+        confidence: ConfidenceLevel,
         overall_score: Decimal | None,
     ) -> RecommendationAction:
-        if coverage < MINIMUM_SCORE_COVERAGE:
+        # P4: o gate universal deixou de ser coverage_percentage legado (que
+        # mistura indicadores não essenciais e podia bloquear um ativo com
+        # required completo e scoring real suficiente). Passa a usar o
+        # confidence estrutural (P1): só bloqueia quando genuinamente
+        # INSUFFICIENT (pilar obrigatório não satisfeito, poucas categorias
+        # reais de scoring, ou anomalia crítica de identidade/conflito).
+        if confidence == ConfidenceLevel.INSUFFICIENT:
             return RecommendationAction.INSUFFICIENT_DATA
         if (
             snapshot.data_quality is not None
@@ -313,16 +331,16 @@ def confidence_for_asset(
     """Confidence estruturado do ativo (P1): HIGH/MEDIUM/LOW/INSUFFICIENT.
 
     Avalia a SUFICIÊNCIA DOS DADOS de forma independente do gate legado
-    coverage_percentage < MINIMUM_SCORE_COVERAGE usado por overall_score e
-    por RecommendationEngine/SmartPortfolio (que permanecem como estão nesta
-    fase — a desvinculação é só no cálculo do confidence). `overall_score` e
-    `data_quality` continuam recebidos para compatibilidade de assinatura e
-    futura evolução, mas não são mais usados como gate sozinhos aqui:
-    overall_score pode ser None só porque coverage_percentage legado (que
-    mistura indicadores não essenciais) ficou abaixo de 40, e
+    coverage_percentage < MINIMUM_SCORE_COVERAGE. Desde P4, RecommendationEngine
+    também usa este confidence como gate único de INSUFFICIENT_DATA (deixou
+    de gatear em coverage_percentage legado); SmartPortfolio já usava
+    confidence desde P2. `overall_score` e `data_quality` continuam
+    recebidos para compatibilidade de assinatura e futura evolução, mas não
+    são usados como gate sozinhos aqui: overall_score pode ser None mesmo
+    com dados estruturalmente suficientes (categorias reais < 2), e
     data_quality.recommendation_blocked pode disparar por completeness/
     freshness não crítica — nenhum dos dois, isoladamente, deve forçar
-    INSUFFICIENT no novo confidence.
+    INSUFFICIENT neste confidence.
 
     LOW nunca bloqueia sozinho — é apenas um sinal de menor cobertura/certeza.
     INSUFFICIENT é reservado para condições estruturalmente críticas: pilar
@@ -362,12 +380,14 @@ def positive_reasons(snapshot: AssetIntelligenceSnapshot) -> list[str]:
 
 def warning_reasons(
     snapshot: AssetIntelligenceSnapshot,
-    coverage: Decimal,
+    *,
+    coverage_breakdown: CoverageBreakdown,
+    confidence: ConfidenceLevel,
 ) -> list[str]:
     reasons = []
-    if coverage < MINIMUM_SCORE_COVERAGE:
+    if confidence == ConfidenceLevel.INSUFFICIENT:
         reasons.append(
-            "Não existem dados suficientes para uma análise confiável deste investimento."
+            _insufficient_confidence_reason(coverage_breakdown, snapshot.anomaly_flags)
         )
     if snapshot.strategy_fit_score is not None and snapshot.strategy_fit_score < 40:
         reasons.append("Classe acima dos limites definidos na política do usuário.")
@@ -376,3 +396,21 @@ def warning_reasons(
     if snapshot.data_quality is not None and snapshot.data_quality.blocking_reason:
         reasons.append(snapshot.data_quality.blocking_reason)
     return reasons
+
+
+def _insufficient_confidence_reason(
+    coverage_breakdown: CoverageBreakdown, anomaly_flags: list[str] | None
+) -> str:
+    """Traduz confidence == INSUFFICIENT numa causa específica e real (P4),
+    nunca a mensagem genérica "Dados insuficientes"."""
+    flags = set(anomaly_flags or [])
+    if flags & CRITICAL_ANOMALY_FLAGS:
+        return "Identidade do ativo ou conflito crítico entre fontes de dados não resolvido."
+    if (
+        coverage_breakdown.required_total
+        and coverage_breakdown.required_satisfied < coverage_breakdown.required_total
+    ):
+        missing = coverage_breakdown.required_total - coverage_breakdown.required_satisfied
+        plural = "pilares obrigatórios" if missing > 1 else "pilar obrigatório"
+        return f"{missing} {plural} não atendido(s) para esta classe de ativo."
+    return "Categorias reais de pontuação insuficientes para uma análise confiável."

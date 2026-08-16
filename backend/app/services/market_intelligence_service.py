@@ -33,7 +33,10 @@ from app.services.indicator_normalization_service import (
 )
 from app.services.indicator_validation_service import IndicatorValidationService
 from app.services.market_service import MarketService
-from app.services.indicator_resolver_service import IndicatorResolverService
+from app.services.indicator_resolver_service import (
+    IndicatorResolverService,
+    build_resolution_summary,
+)
 from app.services.portfolio_service import PortfolioService
 
 
@@ -212,6 +215,7 @@ class MarketIntelligenceService:
             current_weight=position.allocation if position else None,
             policy=policy,
         )
+        resolution_summary = build_resolution_summary(indicators)
         base = AssetIntelligenceSnapshot(
             asset_id=local_asset.id if local_asset is not None else None,
             symbol=(quote.ticker if quote else symbol).upper(),
@@ -247,6 +251,7 @@ class MarketIntelligenceService:
             available_indicators_count=0,
             missing_indicators_count=0,
             stale_indicators_count=0,
+            resolution_summary=resolution_summary,
             calculated_at=collected_at,
         )
         snapshot = engine_for_class(asset_class).build_snapshot(base)

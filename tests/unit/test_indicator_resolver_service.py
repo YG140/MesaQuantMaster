@@ -26,6 +26,7 @@ from app.services.indicator_normalization_service import (
     IndicatorNormalizationService,
     sanitize_failure_detail,
 )
+from app.engines.indicator_catalog import indicator_temporal_validity_days
 from app.services.indicator_resolver_service import IndicatorResolverService
 from app.services.market_service import MarketService
 
@@ -972,3 +973,116 @@ def test_cvm_persisted_data_fills_gap_before_manual():
     assert result.value == Decimal("1.40")
     assert result.source_type == "official"
     assert result.provenance["document_type"] == "ITR"
+
+
+# --- Validade temporal (P4): fonte única via indicator_temporal_validity_days ---
+
+
+def test_valid_until_uses_catalog_policy_for_a_price_like_key():
+    # current_price tem política própria no catálogo (2 dias) — o resolver
+    # deve usá-la em vez do fallback genérico de 30 dias por provider.
+    assert indicator_temporal_validity_days("current_price") == 2
+    valid_until = IndicatorResolverService._valid_until(
+        "current_price", NOW, source_type="provider"
+    )
+    assert valid_until == NOW + timedelta(days=2)
+
+
+def test_valid_until_falls_back_to_stage_default_for_unknown_key():
+    # Um indicador sem política declarada em indicator_temporal_validity_days
+    # continua usando o fallback conservador por estágio (1 dia oficial /
+    # 30 dias provider) — nunca estende a validade por conta própria.
+    assert indicator_temporal_validity_days("price_to_book") is None
+    valid_until_provider = IndicatorResolverService._valid_until(
+        "price_to_book", NOW, source_type="provider"
+    )
+    valid_until_official = IndicatorResolverService._valid_until(
+        "price_to_book", NOW, source_type="official"
+    )
+    assert valid_until_provider == NOW + timedelta(days=30)
+    assert valid_until_official == NOW + timedelta(days=1)
+
+
+def test_valid_until_registration_data_gets_long_catalog_validity():
+    # Dado cadastral (ex.: treasury_title) tem política de 3650 dias no
+    # catálogo — não deve expirar em 1 dia só por ter sido resolvido via
+    # fonte oficial (Tesouro Transparente).
+    assert indicator_temporal_validity_days("treasury_title") == 3650
+    valid_until = IndicatorResolverService._valid_until(
+        "treasury_title", NOW, source_type="official"
+    )
+    assert valid_until == NOW + timedelta(days=3650)
+
+
+def test_brapi_resolved_quarterly_fundamental_gets_catalog_validity_end_to_end():
+    # Fim a fim: price_earnings tem política de 90 dias no catálogo
+    # (fundamental_quarterly) e é resolvido via BRAPI (source_type=provider,
+    # cujo fallback seria 30 dias). O resolver deve usar os 90 dias do
+    # catálogo, não o fallback genérico do estágio.
+    assert indicator_temporal_validity_days("price_earnings") == 90
+    baseline = indicator("price_earnings")
+    result = resolve(
+        resolver(FakeMarket({"results": [{"priceEarnings": "8.50"}]})),
+        baseline=[baseline],
+    )
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.valid_until == NOW + timedelta(days=90)
+
+
+def test_brapi_resolved_indicator_without_catalog_policy_keeps_conservative_default():
+    # price_to_book (chave de teste sem política declarada em
+    # indicator_temporal_validity_days) continua usando o fallback
+    # conservador de 30 dias — nunca estende a validade por conta própria.
+    assert indicator_temporal_validity_days("price_to_book") is None
+    result = resolve(resolver(FakeMarket({"results": [{"priceToBook": "1.10"}]})))
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.valid_until == NOW + timedelta(days=30)
+
+
+# --- Determinismo fim a fim (cenário 40 do prompt P4) ----------------------
+
+
+def test_full_cascade_is_deterministic_across_repeated_runs():
+    def run():
+        account = SimpleNamespace(
+            normalized_key="price_to_book",
+            normalized_value=Decimal("1.40"),
+            acquisition_method="reported",
+            account_code="2.03",
+            account_description="Patrimônio Líquido",
+            original_value=Decimal("1.40"),
+        )
+        document = SimpleNamespace(
+            period_end=date(2026, 6, 30),
+            collected_at=NOW,
+            period_kind="year_to_date",
+            document_type="ITR",
+            scope="consolidated",
+        )
+        issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+
+        class CvmRepository:
+            def linked_issuer(self, asset_id):
+                return issuer
+
+            def latest_normalized(self, asset_id):
+                return [(account, document, issuer)]
+
+        service = IndicatorResolverService(
+            market_service=FakeMarket(MarketRateLimitError("429")),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=CvmRepository(),
+        )
+        return resolve(service, asset_id="asset")
+
+    first = run()
+    second = run()
+    assert first.value == second.value
+    assert first.source == second.source
+    assert first.valid_until == second.valid_until
+    assert [a.outcome for a in first.resolution_attempts] == [
+        a.outcome for a in second.resolution_attempts
+    ]
+    assert [a.provider_failure_reason for a in first.resolution_attempts] == [
+        a.provider_failure_reason for a in second.resolution_attempts
+    ]
