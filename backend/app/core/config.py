@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     AI_AGENT_MAX_MESSAGE_LENGTH: int = Field(default=4000, ge=1, le=20000)
     AI_AGENT_MAX_COMPARE_ASSETS: int = Field(default=10, ge=2, le=50)
     AI_AGENT_MAX_OUTPUT_TOKENS: int = Field(default=1200, ge=1, le=10000)
+    PORTFOLIO_UNIVERSE_MAX_ASSETS: int = Field(default=200, ge=1, le=2000)
 
     @field_validator("FRONTEND_ORIGINS", mode="before")
     @classmethod

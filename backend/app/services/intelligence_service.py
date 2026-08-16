@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from app.core.config import settings
 from app.engines.intelligence_engine import (
     PortfolioBuilderEngine,
     PortfolioIntelligenceEngine,
@@ -22,6 +23,13 @@ from app.schemas.intelligence import (
 from app.services.portfolio_service import PortfolioService
 from app.services.market_intelligence_service import MarketIntelligenceService
 from app.schemas.market_intelligence import AnalyzeAssetsRequest
+
+
+# Espelha AnalyzeAssetsRequest.symbols (max_length=50 em
+# app/schemas/market_intelligence.py) — o limite real de símbolos aceitos
+# por chamada ao analisador/resolver. Não é um número mágico independente:
+# se o schema mudar, os lotes passam a violar essa constante nos testes.
+MAX_SYMBOLS_PER_ANALYSIS_BATCH = 50
 
 
 class PortfolioIntelligenceService:
@@ -102,11 +110,30 @@ class PortfolioIntelligenceService:
         if self.asset_repository is None or self.market_intelligence_service is None:
             return SmartPortfolioEngine.build(data, [])
 
-        assets = [item for item in self.asset_repository.list() if item.is_active]
-        # O resolvedor aceita no máximo 50 símbolos por lote. A ordenação do
-        # repositório torna o universo e o resultado reproduzíveis.
-        assets = assets[:50]
-        if not assets:
+        # Ordenamos explicitamente por ticker (chave estável) em vez de
+        # confiar na ordem implícita do repositório, para que o universo e o
+        # resultado sejam sempre reproduzíveis. Deduplicamos por ticker e
+        # filtramos inativos na mesma passagem.
+        seen_tickers: set[str] = set()
+        active_assets = []
+        for item in sorted(self.asset_repository.list(), key=lambda asset: asset.ticker):
+            if not item.is_active:
+                continue
+            ticker = item.ticker.upper()
+            if ticker in seen_tickers:
+                continue
+            seen_tickers.add(ticker)
+            active_assets.append(item)
+
+        universe_total = len(active_assets)
+        universe_max = settings.PORTFOLIO_UNIVERSE_MAX_ASSETS
+        universe_truncated = universe_total > universe_max
+        considered_assets = (
+            active_assets[:universe_max] if universe_truncated else active_assets
+        )
+        universe_considered = len(considered_assets)
+
+        if not considered_assets:
             legacy = PortfolioBuilderEngine.build(data, self.get_policy(user_id))
             return legacy.model_copy(
                 update={
@@ -122,13 +149,26 @@ class PortfolioIntelligenceService:
                 }
             )
 
-        result = self.market_intelligence_service.analyze_assets(
-            AnalyzeAssetsRequest(symbols=[item.ticker for item in assets]),
-            user_id=user_id,
-        )
-        assets_by_symbol = {item.ticker.upper(): item for item in assets}
+        # Universo processado em lotes determinísticos (mesma ordem por
+        # ticker), nunca truncado silenciosamente acima de universe_max.
+        batches = [
+            considered_assets[index : index + MAX_SYMBOLS_PER_ANALYSIS_BATCH]
+            for index in range(0, universe_considered, MAX_SYMBOLS_PER_ANALYSIS_BATCH)
+        ]
+
+        snapshots = []
+        errors = []
+        for batch in batches:
+            result = self.market_intelligence_service.analyze_assets(
+                AnalyzeAssetsRequest(symbols=[item.ticker for item in batch]),
+                user_id=user_id,
+            )
+            snapshots.extend(result.snapshots)
+            errors.extend(result.errors)
+
+        assets_by_symbol = {item.ticker.upper(): item for item in considered_assets}
         candidates = []
-        for snapshot in result.snapshots:
+        for snapshot in snapshots:
             asset = assets_by_symbol.get(snapshot.symbol.upper())
             candidates.append(
                 PortfolioCandidate(
@@ -140,7 +180,12 @@ class PortfolioIntelligenceService:
         return SmartPortfolioEngine.build(
             data,
             candidates,
-            provider_errors=[item.message for item in result.errors],
+            provider_errors=[item.message for item in errors],
+            universe_total=universe_total,
+            universe_considered=universe_considered,
+            universe_truncated=universe_truncated,
+            batch_size=MAX_SYMBOLS_PER_ANALYSIS_BATCH,
+            batch_count=len(batches),
         )
 
     @staticmethod

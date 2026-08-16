@@ -216,6 +216,28 @@ class BuildPortfolioExclusion(BaseModel):
     reasons: list[str]
 
 
+class BuildPortfolioPreflight(BaseModel):
+    """Diagnóstico estrutural do universo/elegibilidade (P2), aditivo e compatível."""
+
+    universe_total: int = 0
+    universe_considered: int = 0
+    universe_truncated: bool = False
+    batch_size: int = 0
+    batch_count: int = 0
+    snapshots_received: int = 0
+    assets_with_valid_price: int = 0
+    required_complete_count: int = 0
+    confidence_high_count: int = 0
+    confidence_medium_count: int = 0
+    confidence_low_count: int = 0
+    confidence_insufficient_count: int = 0
+    eligible_count: int = 0
+    excluded_count: int = 0
+    provider_error_count: int = 0
+    class_counts: dict[str, int] = Field(default_factory=dict)
+    exclusion_reason_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class FinancialDiagnosis(BaseModel):
     phase: str
     estimated_monthly_capacity: Decimal | None = None
@@ -275,6 +297,7 @@ class BuildPortfolioResponse(BaseModel):
     confidence: str = "insufficient"
     status: str = "unavailable"
     missing_data: list[str] = Field(default_factory=list)
+    preflight: BuildPortfolioPreflight = Field(default_factory=BuildPortfolioPreflight)
     strategy_summary: str = ""
     diagnosis: FinancialDiagnosis
     contribution_plan: list[ContributionPriority] = Field(default_factory=list)
