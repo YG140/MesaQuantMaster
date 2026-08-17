@@ -13,7 +13,7 @@
     "api:types": "echo \"OpenAPI type generation will be enabled in a future sprint.\""
   },
   "dependencies": {
-    "@hookform/resolvers": "^5.2.2",
+    "@hookform/resolvers": "^5.8.0",
     "@tanstack/react-query": "^5.90.12",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
