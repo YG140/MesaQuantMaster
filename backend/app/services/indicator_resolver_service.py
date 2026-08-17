@@ -34,13 +34,51 @@ from app.services.indicator_normalization_service import (
 from app.services.market_service import MarketService
 
 
-# DFP é uma demonstração ANUAL: a próxima atualização só é esperada ~1 ano
-# depois do period_end. 100 dias expirava a validade meses antes da própria
-# CVM publicar a próxima DFP (comprovado em sincronização real: dado de
-# 2025-12-31 já aparecia STALE em 2026-08-17). Usa o mesmo raciocínio já
-# estabelecido para dado manual/cadastral anual (395 dias, ver _apply_manual)
-# — nunca estende artificialmente além do ciclo real de publicação da fonte.
-CVM_OFFICIAL_DATA_VALIDITY_DAYS = 395
+# Validade temporal de dado CVM por PERIODICIDADE REAL do documento — nunca
+# uma única janela genérica para "qualquer dado CVM" (auditoria confirmou
+# que CvmFinancialDocument.document_type chega intacto até este serviço via
+# CvmFinancialRepository.latest_normalized(), sem inferência por nome/ticker;
+# ver _cvm_valid_until()).
+#
+# DFP (Demonstrações Financeiras Padronizadas) é uma demonstração ANUAL —
+# o próximo dado só é esperado ~1 ano depois do period_end. 100 dias
+# expirava a validade meses antes da própria CVM publicar a próxima DFP
+# (comprovado em sincronização real: dado de 2025-12-31 já aparecia STALE
+# em 2026-08-17). 395 = ciclo anual (365) + margem para atraso de
+# publicação, mesmo raciocínio já estabelecido no código para dado
+# manual/cadastral anual (ver valid_until de 395 dias em _apply_manual).
+CVM_DFP_VALIDITY_DAYS = 395
+
+# ITR (Informações Trimestrais) é periódica — o próximo dado é esperado
+# ~1 trimestre (91 dias) depois do period_end, mais a folga regulatória de
+# entrega da CVM (45 dias corridos após o fim do trimestre) mais uma
+# margem de processamentos/atraso. 91 + 45 ≈ 136; arredondado para 120 para
+# não superestimar (mais conservador que o prazo regulatório completo).
+# Nunca herda a janela anual da DFP — um ITR antigo não pode ficar
+# artificialmente "current" por ~13 meses.
+CVM_ITR_VALIDITY_DAYS = 120
+
+# Fallback conservador para um document_type que não seja DFP nem ITR
+# (não deveria ocorrer com os providers atuais, mas nunca estende a
+# validade além do ciclo mais curto conhecido só por ausência de política).
+CVM_DEFAULT_VALIDITY_DAYS = CVM_ITR_VALIDITY_DAYS
+
+
+def _cvm_valid_until(reference_date: datetime, document_type: str | None) -> datetime:
+    """Validade temporal de um valor oficial CVM, por tipo real do documento.
+
+    Nunca infere o tipo pelo ticker/nome do indicador — recebe
+    `document_type` diretamente de CvmFinancialDocument.document_type
+    (DFP/ITR), propagado sem transformação desde o repository.
+    """
+    kind = (document_type or "").upper()
+    if kind == "DFP":
+        days = CVM_DFP_VALIDITY_DAYS
+    elif kind == "ITR":
+        days = CVM_ITR_VALIDITY_DAYS
+    else:
+        days = CVM_DEFAULT_VALIDITY_DAYS
+    return reference_date + timedelta(days=days)
 
 # Indicadores que DerivedIndicatorEngine sabe calcular a partir de
 # componentes brutos CVM (seção 6 do resolver híbrido) — só tentados quando
@@ -603,7 +641,7 @@ class IndicatorResolverService:
                     "source_type": "official",
                     "reference_date": reference,
                     "collected_at": self._aware(document.collected_at) or collected_at,
-                    "valid_until": reference + timedelta(days=CVM_OFFICIAL_DATA_VALIDITY_DAYS),
+                    "valid_until": _cvm_valid_until(reference, document.document_type),
                     "freshness_status": "current",
                     "confidence": ConfidenceLevel.HIGH,
                     "period": document.period_kind,
@@ -680,12 +718,16 @@ class IndicatorResolverService:
     ) -> set[str]:
         """Calcula indicadores derivados (seção 6 do resolver híbrido) a
         partir de componentes brutos já apurados pelo CVM, quando todos os
-        componentes necessários existem e compartilham o MESMO período de
-        referência — nunca mistura períodos incompatíveis, nunca divide por
-        zero, nunca converte ausência em zero.
+        componentes necessários existem e são COMPATÍVEIS — mesmo period_end
+        E mesmo document_type (DFP não se mistura com ITR: são periodicidades
+        diferentes, mesmo quando coincidem em period_end) — nunca divide por
+        zero, nunca converte ausência em zero. O document_type vencedor é
+        propagado para a política de validade temporal (_cvm_valid_until) e
+        para o provenance — um indicador derivado de ITR nunca herda a
+        janela de validade anual da DFP.
         """
         components: dict[str, Decimal] = {}
-        periods: dict[str, date] = {}
+        source: dict[str, tuple] = {}  # raw_key -> (period_end, document_type, period_kind)
         for raw_key in (
             "net_income",
             "equity",
@@ -704,16 +746,21 @@ class IndicatorResolverService:
                 (Decimal(account.normalized_value) for account, _, _ in rows),
                 Decimal("0"),
             )
-            periods[raw_key] = rows[0][1].period_end
+            document = rows[0][1]
+            source[raw_key] = (document.period_end, document.document_type, document.period_kind)
+
+        def _compatible(*keys: str) -> bool:
+            values = {source[k] for k in keys if k in source}
+            return len(values) == 1
 
         net_debt_value = components.get("net_debt")
-        net_debt_period = periods.get("net_debt")
+        net_debt_source = source.get("net_debt")
         calculations: list[tuple] = []
         if (
             net_debt_value is None
             and "gross_debt" in components
             and "cash_and_equivalents" in components
-            and periods["gross_debt"] == periods["cash_and_equivalents"]
+            and _compatible("gross_debt", "cash_and_equivalents")
         ):
             net_debt_result = DerivedIndicatorEngine.net_debt(
                 gross_debt=components["gross_debt"],
@@ -721,14 +768,10 @@ class IndicatorResolverService:
             )
             if net_debt_result is not None:
                 net_debt_value = net_debt_result.value
-                net_debt_period = periods["gross_debt"]
-                calculations.append((net_debt_result, net_debt_period))
+                net_debt_source = source["gross_debt"]
+                calculations.append((net_debt_result, net_debt_source))
 
-        def _same_period(*keys: str) -> bool:
-            values = {periods[k] for k in keys if k in periods}
-            return len(values) == 1
-
-        if "net_income" in components and "equity" in components and _same_period(
+        if "net_income" in components and "equity" in components and _compatible(
             "net_income", "equity"
         ):
             calculations.append(
@@ -736,10 +779,10 @@ class IndicatorResolverService:
                     DerivedIndicatorEngine.roe(
                         net_income=components["net_income"], equity=components["equity"]
                     ),
-                    periods["equity"],
+                    source["equity"],
                 )
             )
-        if "net_income" in components and "assets" in components and _same_period(
+        if "net_income" in components and "assets" in components and _compatible(
             "net_income", "assets"
         ):
             calculations.append(
@@ -747,26 +790,26 @@ class IndicatorResolverService:
                     DerivedIndicatorEngine.roa(
                         net_income=components["net_income"], assets=components["assets"]
                     ),
-                    periods["assets"],
+                    source["assets"],
                 )
             )
         if (
             net_debt_value is not None
             and "equity" in components
-            and net_debt_period == periods["equity"]
+            and net_debt_source == source["equity"]
         ):
             calculations.append(
                 (
                     DerivedIndicatorEngine.net_debt_equity(
                         net_debt=net_debt_value, equity=components["equity"]
                     ),
-                    periods["equity"],
+                    source["equity"],
                 )
             )
         if (
             "total_liabilities" in components
             and "assets" in components
-            and _same_period("total_liabilities", "assets")
+            and _compatible("total_liabilities", "assets")
         ):
             calculations.append(
                 (
@@ -774,13 +817,13 @@ class IndicatorResolverService:
                         total_liabilities=components["total_liabilities"],
                         assets=components["assets"],
                     ),
-                    periods["assets"],
+                    source["assets"],
                 )
             )
         if (
             "current_assets" in components
             and "current_liabilities" in components
-            and _same_period("current_assets", "current_liabilities")
+            and _compatible("current_assets", "current_liabilities")
         ):
             calculations.append(
                 (
@@ -788,12 +831,12 @@ class IndicatorResolverService:
                         current_assets=components["current_assets"],
                         current_liabilities=components["current_liabilities"],
                     ),
-                    periods["current_assets"],
+                    source["current_assets"],
                 )
             )
 
         resolved_keys: set[str] = set()
-        for result, period_end in calculations:
+        for result, (period_end, document_type, period_kind) in calculations:
             if result is None or result.key not in pending:
                 continue
             current = resolved.get(result.key)
@@ -803,7 +846,7 @@ class IndicatorResolverService:
             attempt = ProviderResolutionAttempt(
                 provider="CVM Dados Abertos (derivado)",
                 source_type="derived",
-                dataset="derived_indicator",
+                dataset=document_type,
                 outcome=ResolutionOutcome.SUCCESS,
                 attempted_at=collected_at,
                 reference_date=reference,
@@ -818,19 +861,21 @@ class IndicatorResolverService:
                     "source_type": "derived",
                     "reference_date": reference,
                     "collected_at": collected_at,
-                    "valid_until": reference + timedelta(days=CVM_OFFICIAL_DATA_VALIDITY_DAYS),
+                    "valid_until": _cvm_valid_until(reference, document_type),
                     "freshness_status": "current",
                     "confidence": ConfidenceLevel.HIGH,
-                    "period": "calculado a partir de DFP/ITR",
+                    "period": period_kind,
                     "unavailable_reason": None,
                     "provider_failure_reason": None,
                     "provenance": {
                         "provider": "cvm_derived",
+                        "document_type": document_type,
+                        "period_kind": period_kind,
+                        "reference_date": period_end.isoformat(),
                         "formula": result.formula,
                         "components": {
                             key: str(value) for key, value in result.components.items()
                         },
-                        "reference_date": period_end.isoformat(),
                     },
                     "resolution_attempts": [*current.resolution_attempts, attempt],
                 }

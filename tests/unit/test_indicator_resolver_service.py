@@ -662,8 +662,10 @@ def test_cvm_reference_date_collected_at_and_valid_until_preserved():
     )
     assert result.reference_date == datetime(2026, 6, 30, tzinfo=timezone.utc)
     assert result.collected_at == NOW
+    # document_type="ITR" acima -> janela trimestral (120d), nunca a anual
+    # da DFP (395d) — ver auditoria de periodicidade por tipo de documento.
     assert result.valid_until == datetime(2026, 6, 30, tzinfo=timezone.utc) + timedelta(
-        days=395
+        days=120
     )
     assert result.freshness_status == "current"
     assert result.source == "CVM Dados Abertos"
@@ -786,12 +788,12 @@ def _cvm_account(key, value, code, description="conta"):
     )
 
 
-def _cvm_document(period_end=date(2026, 6, 30)):
+def _cvm_document(period_end=date(2026, 6, 30), document_type="DFP", period_kind="annual"):
     return SimpleNamespace(
         period_end=period_end,
         collected_at=NOW,
-        period_kind="year_to_date",
-        document_type="ITR",
+        period_kind=period_kind,
+        document_type=document_type,
         scope="consolidated",
     )
 
@@ -895,7 +897,8 @@ def test_derived_indicator_stays_available_for_a_full_annual_filing_cycle():
     # Bug real encontrado em sincronização real: DFP é anual, então um
     # indicador derivado de period_end=2025-12-31 não pode expirar antes da
     # CVM publicar a próxima DFP (~1 ano depois) — 100 dias o marcava STALE
-    # já em abril, meses antes de qualquer dado novo existir.
+    # já em abril, meses antes de qualquer dado novo existir. document_type
+    # aqui é "DFP" (default de _cvm_document()).
     issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
     document = _cvm_document(period_end=date(2025, 12, 31))
     rows = [
@@ -923,6 +926,272 @@ def test_derived_indicator_stays_available_for_a_full_annual_filing_cycle():
     assert result["roe"].valid_until == datetime(
         2025, 12, 31, tzinfo=timezone.utc
     ) + timedelta(days=395)
+
+
+# --- Política temporal CVM por tipo de documento (DFP anual x ITR trimestral) -
+
+
+def test_a_dfp_recent_stays_available_within_the_annual_window():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    # NOW = 2026-07-20; period_end a 100 dias de NOW está bem dentro da
+    # janela anual da DFP (395 dias) mesmo já tendo ultrapassado 100 dias.
+    document = _cvm_document(period_end=date(2026, 4, 11), document_type="DFP")
+    rows = [
+        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("assets", "100000", "1"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("liabilities_assets")],
+        asset_id="asset-1",
+    )
+    assert result["liabilities_assets"].status == IndicatorStatus.AVAILABLE
+
+
+def test_b_dfp_old_becomes_stale_after_the_annual_window():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    # NOW = 2026-07-20; period_end 400 dias antes ultrapassa a janela
+    # anual da DFP (395 dias) -> não deve mais ser considerado AVAILABLE
+    # pela camada de validação de frescor (fica STALE/expirado).
+    old_reference = NOW.date() - timedelta(days=400)
+    document = _cvm_document(period_end=old_reference, document_type="DFP")
+    rows = [
+        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("assets", "100000", "1"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("liabilities_assets")],
+        asset_id="asset-1",
+    )
+    item = result["liabilities_assets"]
+    assert item.valid_until == datetime.combine(
+        old_reference, datetime.min.time(), tzinfo=timezone.utc
+    ) + timedelta(days=395)
+    assert item.valid_until < NOW
+
+
+def test_c_itr_recent_stays_available_within_the_quarterly_window():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    # NOW = 2026-07-20; period_end a 60 dias de NOW está dentro da janela
+    # trimestral do ITR (120 dias).
+    document = _cvm_document(
+        period_end=NOW.date() - timedelta(days=60),
+        document_type="ITR",
+        period_kind="year_to_date",
+    )
+    rows = [
+        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("assets", "100000", "1"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("liabilities_assets")],
+        asset_id="asset-1",
+    )
+    assert result["liabilities_assets"].status == IndicatorStatus.AVAILABLE
+
+
+def test_d_itr_old_becomes_stale_long_before_395_days():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    # 200 dias já ultrapassa a janela trimestral do ITR (120 dias), mas
+    # ainda estaria bem DENTRO da janela anual da DFP (395) — prova que um
+    # ITR antigo não pode ficar artificialmente "current" só por herdar a
+    # janela da DFP.
+    old_reference = NOW.date() - timedelta(days=200)
+    document = _cvm_document(
+        period_end=old_reference, document_type="ITR", period_kind="year_to_date"
+    )
+    rows = [
+        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("assets", "100000", "1"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("liabilities_assets")],
+        asset_id="asset-1",
+    )
+    item = result["liabilities_assets"]
+    assert item.valid_until == datetime.combine(
+        old_reference, datetime.min.time(), tzinfo=timezone.utc
+    ) + timedelta(days=120)
+    assert item.valid_until < NOW
+
+
+def test_e_derived_indicator_from_dfp_uses_dfp_validity_window():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document(period_end=date(2025, 12, 31), document_type="DFP")
+    rows = [
+        (_cvm_account("net_income", "1000", "3.11"), document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roe")],
+        asset_id="asset-1",
+    )
+    assert result["roe"].valid_until == datetime(
+        2025, 12, 31, tzinfo=timezone.utc
+    ) + timedelta(days=395)
+    assert result["roe"].provenance["document_type"] == "DFP"
+
+
+def test_f_derived_indicator_from_itr_uses_itr_validity_window():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document(
+        period_end=date(2026, 6, 30), document_type="ITR", period_kind="year_to_date"
+    )
+    rows = [
+        (_cvm_account("net_income", "1000", "3.11"), document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roe")],
+        asset_id="asset-1",
+    )
+    assert result["roe"].valid_until == datetime(
+        2026, 6, 30, tzinfo=timezone.utc
+    ) + timedelta(days=120)
+    assert result["roe"].provenance["document_type"] == "ITR"
+
+
+def test_g_derived_indicator_provenance_preserves_document_type_and_period_kind():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document(
+        period_end=date(2026, 3, 31), document_type="ITR", period_kind="quarterly_calculated"
+    )
+    rows = [
+        (_cvm_account("net_income", "500", "3.11"), document, issuer),
+        (_cvm_account("assets", "40000", "1"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roa")],
+        asset_id="asset-1",
+    )
+    provenance = result["roa"].provenance
+    assert provenance["document_type"] == "ITR"
+    assert provenance["period_kind"] == "quarterly_calculated"
+    assert provenance["reference_date"] == "2026-03-31"
+
+
+def test_derived_indicator_does_not_mix_dfp_and_itr_components_even_with_same_period_end():
+    # Mesmo period_end, document_type diferente -> nunca combinar: DFP e
+    # ITR são periodicidades distintas, mesmo quando coincidem em data.
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    same_date = date(2025, 12, 31)
+    dfp_document = _cvm_document(period_end=same_date, document_type="DFP")
+    itr_document = _cvm_document(
+        period_end=same_date, document_type="ITR", period_kind="year_to_date"
+    )
+    rows = [
+        (_cvm_account("net_income", "1000", "3.11"), dfp_document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), itr_document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roe")],
+        asset_id="asset-1",
+    )
+    assert result["roe"].status == IndicatorStatus.UNAVAILABLE
+    assert result["roe"].value is None
 
 
 def test_derived_net_debt_itself_is_stored_when_pending():
