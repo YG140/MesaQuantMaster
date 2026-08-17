@@ -56,6 +56,16 @@ class CvmFinancialService:
 
         document_ids = set()
         accounts_imported = 0
+        # O CSV oficial da CVM pode conter linhas literalmente duplicadas
+        # para a mesma (empresa, período, demonstração, conta, escopo,
+        # versão) — observado em sincronização real. upsert_account()
+        # consulta o banco para decidir INSERT vs UPDATE, mas essa consulta
+        # não enxerga um INSERT ainda não commitado dentro deste mesmo loop;
+        # sem esta deduplicação em memória, a segunda ocorrência tentaria
+        # inserir a mesma chave natural (document_id, account_code) de novo e
+        # violaria a constraint de unicidade. Mantém apenas a primeira
+        # ocorrência — nunca soma nem inventa um valor entre duplicatas.
+        seen_accounts: set[tuple] = set()
         for account in self.provider.iter_accounts(path, document_type, collected_at):
             document_key = (
                 account.cnpj,
@@ -68,6 +78,10 @@ class CvmFinancialService:
                 continue
             if not account.cnpj or not account.cvm_code:
                 continue
+            account_dedup_key = (document_key, account.scope, account.version, account.account_code)
+            if account_dedup_key in seen_accounts:
+                continue
+            seen_accounts.add(account_dedup_key)
             issuer = self.repository.upsert_issuer(
                 account.cnpj, account.cvm_code, account.issuer_name
             )

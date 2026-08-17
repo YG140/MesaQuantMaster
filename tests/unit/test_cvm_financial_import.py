@@ -273,6 +273,43 @@ def test_import_is_idempotent_and_prefers_latest_consolidated_version(
     assert stored_document.version == 2
 
 
+def test_import_handles_literal_duplicate_rows_in_the_same_document(tmp_path, db_session):
+    # Observado em sincronização real contra dados.cvm.gov.br: o CSV oficial
+    # pode conter duas linhas idênticas para a mesma (empresa, período,
+    # demonstração, conta, escopo, versão) — sem deduplicação em memória,
+    # isso violava a constraint de unicidade uq_cvm_document_account no
+    # meio do import (a consulta de upsert_account não via seu próprio
+    # INSERT ainda não commitado dentro do mesmo loop).
+    duplicated_line = row(code="1", value="4500413")
+    content = HEADER_BALANCE + duplicated_line + duplicated_line
+    path = write_archive(tmp_path, {"dfp_cia_aberta_BPA_con_2025.csv": content})
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    result = service.import_archive(path, "DFP", COLLECTED)
+    assert result["accounts_imported"] == 1
+    stored_account = db_session.query(CvmFinancialAccount).one()
+    assert stored_account.normalized_value == Decimal("4500413000")
+
+
+def test_import_duplicate_rows_does_not_affect_idempotent_reimport(tmp_path, db_session):
+    duplicated_line = row(code="1", value="10")
+    content = HEADER_BALANCE + duplicated_line + duplicated_line
+    path = write_archive(tmp_path, {"dfp_cia_aberta_BPA_con_2025.csv": content})
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    first = service.import_archive(path, "DFP", COLLECTED)
+    second = service.import_archive(path, "DFP", COLLECTED)
+    assert first["accounts_imported"] == 1
+    assert second["accounts_imported"] == 0
+    assert db_session.query(CvmFinancialAccount).count() == 1
+
+
 def test_asset_without_explicit_issuer_link_is_pending(db_session):
     asset = Asset(ticker="TEST3", name="Teste", asset_type="STOCK", currency="BRL")
     db_session.add(asset)

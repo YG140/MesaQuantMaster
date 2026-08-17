@@ -663,7 +663,7 @@ def test_cvm_reference_date_collected_at_and_valid_until_preserved():
     assert result.reference_date == datetime(2026, 6, 30, tzinfo=timezone.utc)
     assert result.collected_at == NOW
     assert result.valid_until == datetime(2026, 6, 30, tzinfo=timezone.utc) + timedelta(
-        days=100
+        days=395
     )
     assert result.freshness_status == "current"
     assert result.source == "CVM Dados Abertos"
@@ -889,6 +889,40 @@ def test_derived_net_debt_equity_from_gross_debt_and_cash_when_net_debt_absent()
     )
     assert result["net_debt_equity"].status == IndicatorStatus.AVAILABLE
     assert result["net_debt_equity"].value == Decimal("0.2000")
+
+
+def test_derived_indicator_stays_available_for_a_full_annual_filing_cycle():
+    # Bug real encontrado em sincronização real: DFP é anual, então um
+    # indicador derivado de period_end=2025-12-31 não pode expirar antes da
+    # CVM publicar a próxima DFP (~1 ano depois) — 100 dias o marcava STALE
+    # já em abril, meses antes de qualquer dado novo existir.
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document(period_end=date(2025, 12, 31))
+    rows = [
+        (_cvm_account("net_income", "1000", "3.11"), document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roe")],
+        asset_id="asset-1",
+    )
+    assert result["roe"].status == IndicatorStatus.AVAILABLE
+    assert result["roe"].valid_until == datetime(
+        2025, 12, 31, tzinfo=timezone.utc
+    ) + timedelta(days=395)
 
 
 def test_derived_net_debt_itself_is_stored_when_pending():

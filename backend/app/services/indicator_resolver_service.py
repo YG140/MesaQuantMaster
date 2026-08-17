@@ -34,6 +34,14 @@ from app.services.indicator_normalization_service import (
 from app.services.market_service import MarketService
 
 
+# DFP é uma demonstração ANUAL: a próxima atualização só é esperada ~1 ano
+# depois do period_end. 100 dias expirava a validade meses antes da própria
+# CVM publicar a próxima DFP (comprovado em sincronização real: dado de
+# 2025-12-31 já aparecia STALE em 2026-08-17). Usa o mesmo raciocínio já
+# estabelecido para dado manual/cadastral anual (395 dias, ver _apply_manual)
+# — nunca estende artificialmente além do ciclo real de publicação da fonte.
+CVM_OFFICIAL_DATA_VALIDITY_DAYS = 395
+
 # Indicadores que DerivedIndicatorEngine sabe calcular a partir de
 # componentes brutos CVM (seção 6 do resolver híbrido) — só tentados quando
 # ainda pendentes após BRAPI/CVM direto, nunca substituindo um valor já
@@ -595,7 +603,7 @@ class IndicatorResolverService:
                     "source_type": "official",
                     "reference_date": reference,
                     "collected_at": self._aware(document.collected_at) or collected_at,
-                    "valid_until": reference + timedelta(days=100),
+                    "valid_until": reference + timedelta(days=CVM_OFFICIAL_DATA_VALIDITY_DAYS),
                     "freshness_status": "current",
                     "confidence": ConfidenceLevel.HIGH,
                     "period": document.period_kind,
@@ -810,7 +818,7 @@ class IndicatorResolverService:
                     "source_type": "derived",
                     "reference_date": reference,
                     "collected_at": collected_at,
-                    "valid_until": reference + timedelta(days=100),
+                    "valid_until": reference + timedelta(days=CVM_OFFICIAL_DATA_VALIDITY_DAYS),
                     "freshness_status": "current",
                     "confidence": ConfidenceLevel.HIGH,
                     "period": "calculado a partir de DFP/ITR",
