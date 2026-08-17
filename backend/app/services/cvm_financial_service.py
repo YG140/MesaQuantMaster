@@ -161,7 +161,13 @@ class CvmFinancialService:
             raise ValueError("Ativo não encontrado.")
         if self.repository.get_issuer(issuer_id) is None:
             raise ValueError("Emissor CVM não encontrado.")
-        return self.repository.link_asset(asset_id, issuer_id)
+        link = self.repository.link_asset(asset_id, issuer_id)
+        # Ação manual de superusuário, unidade de trabalho completa e
+        # autocontida (nada mais pendente nesta chamada de serviço) — este
+        # nível é o dono apropriado da fronteira de commit, não o
+        # repository (que agora só dá flush, ver link_asset()).
+        self.repository.commit()
+        return link
 
     def asset_link(self, asset_id: UUID) -> dict:
         if self.asset_repository.get_by_id(asset_id) is None:

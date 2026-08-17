@@ -700,6 +700,7 @@ def test_cvm_reference_date_collected_at_and_valid_until_preserved():
 def test_auto_links_issuer_by_exact_cnpj_when_profile_provides_one():
     issuer = SimpleNamespace(id="issuer-1", cnpj="33000167000101", cvm_code="9512")
     linked = {}
+    commits = []
 
     class Cvm(_UnknownFiscalCalendarCvm):
         def linked_issuer(self, asset_id):
@@ -712,6 +713,12 @@ def test_auto_links_issuer_by_exact_cnpj_when_profile_provides_one():
         def link_asset(self, asset_id, issuer_id):
             linked[asset_id] = issuer
             return SimpleNamespace(asset_id=asset_id, issuer_id=issuer_id)
+
+        def commit(self):
+            # O repository (link_asset) não comita mais sozinho — quem
+            # decide comitar agora é o resolver, explicitamente, logo após
+            # criar o vínculo (ver _auto_link_cvm_issuer).
+            commits.append(True)
 
         def latest_normalized(self, asset_id):
             return []
@@ -729,6 +736,7 @@ def test_auto_links_issuer_by_exact_cnpj_when_profile_provides_one():
     # ocorreu (prova indireta: motivo deixou de ser IDENTIFIER_UNRESOLVED).
     assert result.provider_failure_reason == ProviderFailureReason.NOT_SYNCED
     assert linked["asset-1"] is issuer
+    assert commits == [True]
 
 
 def test_auto_link_never_matches_by_name_only_exact_cnpj():

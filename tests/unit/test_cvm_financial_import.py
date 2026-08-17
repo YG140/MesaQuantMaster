@@ -11,7 +11,7 @@ import pytest
 
 from app.engines.cvm_financial_engine import CvmFinancialEngine
 from app.models.asset import Asset
-from app.models.cvm_financial import CvmFinancialAccount, CvmFinancialDocument
+from app.models.cvm_financial import AssetCvmIssuer, CvmFinancialAccount, CvmFinancialDocument
 from app.providers.cvm_open_data_provider import (
     CvmArchiveError,
     CvmOpenDataProvider,
@@ -355,6 +355,90 @@ def test_fiscal_year_end_returns_none_when_issuer_has_only_itr(db_session):
         repository, cnpj="98765432000199", document_type="ITR", period_end=date(2026, 3, 31)
     )
     assert repository.fiscal_year_end(issuer.id) is None
+
+
+# --- Fronteira transacional de link_asset() ---------------------------------
+#
+# link_asset() agora é chamado tanto pela API manual quanto
+# automaticamente, no meio da resolução de indicadores
+# (IndicatorResolverService._auto_link_cvm_issuer). Um método de
+# repository usado como efeito colateral de um fluxo maior não deve
+# decidir sozinho a fronteira de transação nem confirmar trabalho não
+# relacionado ainda pendente na mesma sessão — por isso agora só dá
+# flush(), nunca commit().
+
+
+def test_link_asset_does_not_commit_the_whole_session(db_session):
+    repository = CvmFinancialRepository(db_session)
+    issuer = repository.upsert_issuer("11111111000191", "99999", "EMISSOR TESTE")
+    db_session.commit()
+
+    asset = Asset(ticker="LINK3", name="Ativo Vinculado", asset_type="STOCK", currency="BRL")
+    db_session.add(asset)
+    db_session.flush()
+    asset_id = asset.id
+
+    # Alteração pendente NÃO relacionada na MESMA sessão — nunca deve ser
+    # confirmada como efeito colateral de chamar link_asset().
+    unrelated_asset = Asset(
+        ticker="NAOREL3", name="Ativo Nao Relacionado", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(unrelated_asset)
+
+    link = repository.link_asset(asset_id, issuer.id)
+
+    # O vínculo fica imediatamente consultável na MESMA sessão após o
+    # flush() interno de link_asset() — não precisa de commit para isso.
+    assert link.issuer_id == issuer.id
+    assert (
+        db_session.query(AssetCvmIssuer)
+        .filter(AssetCvmIssuer.asset_id == asset_id)
+        .first()
+        is not None
+    )
+
+    # Prova de que link_asset() NÃO comitou a sessão: um rollback explícito
+    # (decisão de um chamador hipotético que decidiu não persistir) desfaz
+    # TANTO o vínculo QUANTO a alteração não relacionada — se link_asset()
+    # ainda comitasse internamente, o rollback não teria nada a desfazer e
+    # ambas as linhas continuariam existindo.
+    db_session.rollback()
+
+    assert (
+        db_session.query(AssetCvmIssuer)
+        .filter(AssetCvmIssuer.asset_id == asset_id)
+        .first()
+        is None
+    )
+    assert db_session.query(Asset).filter(Asset.ticker == "LINK3").first() is None
+    assert db_session.query(Asset).filter(Asset.ticker == "NAOREL3").first() is None
+    # O emissor, comitado ANTES do cenário sob teste, sobrevive ao
+    # rollback normalmente (não fazia parte da transação desfeita).
+    assert repository.get_issuer(issuer.id) is not None
+
+
+def test_link_asset_persists_normally_when_the_caller_commits(db_session):
+    # Contraste com o teste acima: quando o CHAMADOR decide comitar (como
+    # CvmFinancialService.link_asset() e
+    # IndicatorResolverService._auto_link_cvm_issuer() agora fazem
+    # explicitamente), o vínculo sobrevive normalmente.
+    repository = CvmFinancialRepository(db_session)
+    issuer = repository.upsert_issuer("22222222000102", "88888", "EMISSOR TESTE 2")
+    db_session.commit()
+
+    asset = Asset(ticker="LINK4", name="Ativo Vinculado 2", asset_type="STOCK", currency="BRL")
+    db_session.add(asset)
+    db_session.flush()
+
+    repository.link_asset(asset.id, issuer.id)
+    repository.commit()
+
+    assert (
+        db_session.query(AssetCvmIssuer)
+        .filter(AssetCvmIssuer.asset_id == asset.id)
+        .first()
+        is not None
+    )
 
 
 def test_asset_without_explicit_issuer_link_is_pending(db_session):

@@ -114,6 +114,22 @@ class CvmFinancialRepository:
         return self.db.query(CvmIssuer).filter(CvmIssuer.cnpj == cnpj).first()
 
     def link_asset(self, asset_id: UUID, issuer_id: UUID) -> AssetCvmIssuer:
+        """Cria ou atualiza o vínculo ativo<->emissor CVM.
+
+        Propositalmente NÃO comita: este método agora é chamado tanto pelo
+        fluxo manual (API de superusuário) quanto automaticamente, no meio
+        da resolução de indicadores (IndicatorResolverService), que possui
+        sua própria sessão com outras leituras/escritas em andamento — um
+        método de repository usado como efeito colateral de um fluxo maior
+        não deve decidir sozinho a fronteira de transação nem confirmar
+        trabalho não relacionado ainda pendente nessa mesma sessão. Usa
+        apenas flush(): o vínculo fica imediatamente consultável dentro da
+        MESMA sessão (inclusive para o refresh() abaixo), mas quem decide
+        quando comitar é o chamador (service/endpoint), que tem contexto
+        sobre a fronteira de transação apropriada — ver
+        CvmFinancialService.link_asset() (fluxo manual) e
+        IndicatorResolverService._auto_link_cvm_issuer() (fluxo automático).
+        """
         link = (
             self.db.query(AssetCvmIssuer)
             .filter(AssetCvmIssuer.asset_id == asset_id)
@@ -124,7 +140,7 @@ class CvmFinancialRepository:
             self.db.add(link)
         else:
             link.issuer_id = issuer_id
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(link)
         return link
 

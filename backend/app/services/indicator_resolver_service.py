@@ -815,6 +815,14 @@ class IndicatorResolverService:
         if issuer is None:
             return None
         self.cvm_repository.link_asset(asset_id, issuer.id)
+        # link_asset() só dá flush (ver CvmFinancialRepository.link_asset) —
+        # quem decide comitar é este chamador, que tem contexto: acabou de
+        # criar um fato de identidade novo e pequeno (o vínculo) que deve
+        # ficar durável independentemente do restante da resolução desta
+        # requisição. Não é a mesma coisa que o repository comitar
+        # cegamente qualquer trabalho pendente por efeito colateral de ter
+        # sido chamado — é uma decisão explícita e localizada aqui.
+        self.cvm_repository.commit()
         return issuer
 
     def _apply_cvm_derived_indicators(
