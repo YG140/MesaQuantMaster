@@ -27,7 +27,12 @@ from app.services.indicator_normalization_service import (
     sanitize_failure_detail,
 )
 from app.engines.indicator_catalog import indicator_temporal_validity_days
-from app.services.indicator_resolver_service import IndicatorResolverService
+from app.services.indicator_resolver_service import (
+    IndicatorResolverService,
+    _add_months,
+    _fiscal_year_end_for_period,
+    _next_cvm_report_deadline,
+)
 from app.services.market_service import MarketService
 
 
@@ -910,6 +915,96 @@ def test_derived_net_debt_equity_from_gross_debt_and_cash_when_net_debt_absent()
     assert result["net_debt_equity"].value == Decimal("0.2000")
 
 
+# --- Rollover do encerramento fiscal e prazo calendárico da DFP ------------
+#
+# Bugs reais encontrados: (1) fiscal_year_end observado carregava o ANO
+# histórico da DFP mais recente, produzindo valid_until < reference_date
+# para um ITR de um exercício mais novo; (2) "3 meses" da DFP era
+# aproximado como 90 dias corridos, que nem sempre equivale a 3 meses
+# calendáricos. Ver _fiscal_year_end_for_period() e
+# _next_cvm_report_deadline().
+
+
+def test_fiscal_year_end_for_period_rolls_forward_when_period_is_after_this_years_close():
+    # encerramento observado 31/12 (histórico, de uma DFP de 2025); um ITR
+    # de 2026-09-30 pertence ao ciclo fiscal que fecha em 2026-12-31, não
+    # ao ciclo que já fechou em 2025-12-31.
+    assert _fiscal_year_end_for_period(
+        date(2026, 9, 30), date(2025, 12, 31)
+    ) == date(2026, 12, 31)
+
+
+def test_fiscal_year_end_for_period_rolls_forward_for_non_calendar_fiscal_year():
+    # encerramento observado 30/06; um ITR de 2025-09-30 é POSTERIOR ao
+    # fechamento de 2025-06-30, logo já pertence ao ciclo que fecha em
+    # 2026-06-30.
+    assert _fiscal_year_end_for_period(
+        date(2025, 9, 30), date(2025, 6, 30)
+    ) == date(2026, 6, 30)
+
+
+def test_fiscal_year_end_for_period_keeps_same_year_when_period_precedes_close():
+    # encerramento observado 30/06; um ITR de 2026-03-31 é ANTERIOR ao
+    # fechamento de 2026-06-30, logo já pertence a esse mesmo ciclo —
+    # não precisa (nem deve) avançar para 2027.
+    assert _fiscal_year_end_for_period(
+        date(2026, 3, 31), date(2025, 6, 30)
+    ) == date(2026, 6, 30)
+
+
+def test_dfp_deadline_uses_calendar_months_not_a_flat_90_days():
+    # 2026-06-30 + 3 meses calendáricos = 2026-09-30 (não 2026-09-28, que
+    # seria o resultado de "+90 dias corridos").
+    assert _add_months(date(2026, 6, 30), 3) == date(2026, 9, 30)
+
+
+def test_last_quarter_itr_deadline_never_uses_stale_historical_dfp_year():
+    # Regressão do Bug 1: ITR de 2026-09-30 é o último trimestre antes do
+    # fechamento observado (31/12), mas o exercício RELEVANTE é o de 2026
+    # (que fecha em 2026-12-31), não o de 2025. O prazo da próxima DFP
+    # esperada é 2026-12-31 + 3 meses = 2027-03-31 — NUNCA 2026-03-31
+    # (que seria anterior ao próprio period_end, estruturalmente inválido).
+    deadline = _next_cvm_report_deadline(date(2026, 9, 30), "ITR", date(2025, 12, 31))
+    assert deadline == date(2027, 3, 31)
+    assert deadline >= date(2026, 9, 30)
+
+
+def test_last_quarter_itr_deadline_uses_calendar_months_for_non_calendar_fiscal_year():
+    # Regressão do Bug 2, combinada com o rollover do Bug 1: encerramento
+    # observado 30/06; ITR de 2026-03-31 é o último trimestre antes do
+    # fechamento de 2026-06-30 (mesmo ano, sem rollover necessário aqui).
+    # Prazo da DFP = 2026-06-30 + 3 meses calendáricos = 2026-09-30 (não
+    # 2026-09-28, que "+90 dias" daria).
+    deadline = _next_cvm_report_deadline(date(2026, 3, 31), "ITR", date(2025, 6, 30))
+    assert deadline == date(2026, 9, 30)
+
+
+def test_valid_until_never_precedes_reference_date_for_any_known_document_type():
+    # Invariante estrutural: para qualquer combinação plausível de
+    # period_end/document_type/fiscal_year_end, o prazo do próximo reporte
+    # nunca pode anteceder o próprio period_end.
+    cases = [
+        (date(2026, 9, 30), "ITR", date(2025, 12, 31)),
+        (date(2025, 9, 30), "ITR", date(2025, 6, 30)),
+        (date(2026, 3, 31), "ITR", date(2025, 6, 30)),
+        (date(2025, 12, 31), "DFP", None),
+        (date(2026, 6, 30), "ITR", date(2026, 12, 31)),
+        (date(2025, 3, 31), "ITR", date(2025, 12, 31)),
+        (date(2026, 5, 31), "ITR", None),
+    ]
+    for period_end, document_type, fiscal_year_end in cases:
+        deadline = _next_cvm_report_deadline(period_end, document_type, fiscal_year_end)
+        assert deadline >= period_end, (period_end, document_type, fiscal_year_end, deadline)
+
+
+def test_q2_2026_baseline_for_real_stocks_is_unchanged_by_the_rollover_fix():
+    # PETR4/VALE3/ITUB4 reais (encerramento observado 31/12/2025) para o
+    # ITR do 2º trimestre de 2026: a correção do rollover não pode
+    # regredir este caso já validado com dados reais (deadline=2026-11-14).
+    deadline = _next_cvm_report_deadline(date(2026, 6, 30), "ITR", date(2025, 12, 31))
+    assert deadline == date(2026, 11, 14)
+
+
 # --- Política temporal CVM: próximo reporte periódico esperado -------------
 #
 # valid_until deixa de ser uma janela fixa por document_type e passa a
@@ -1073,9 +1168,11 @@ def test_last_quarter_before_fiscal_year_end_uses_the_dfp_linked_deadline():
     # reporte esperado é a PRÓPRIA DFP, não "mais um trimestre". Exercício
     # social encerrado em 30/06 (não 31/12, para também provar que não há
     # suposição de calendário): este período_end (2026-03-31) é o último
-    # trimestre antes do fechamento (2026-06-30). DFP esperada até
-    # 2026-06-30 + 90 dias = 2026-09-28 — mais longe do que "+1 trimestre
-    # +45 dias" (2026-07-15) daria se tratado como um trimestre comum.
+    # trimestre antes do fechamento (2026-06-30), no MESMO ano (sem
+    # rollover necessário aqui). DFP esperada até 2026-06-30 + 3 meses
+    # CALENDÁRICOS = 2026-09-30 — mais longe do que "+1 trimestre +45
+    # dias" (2026-07-15) daria se tratado como um trimestre comum, e não
+    # os "2026-09-28" que a aproximação por dias corridos (90) daria.
     issuer = SimpleNamespace(id="issuer-1", cnpj="12345678000190", cvm_code="12345")
     document = _cvm_document(
         period_end=date(2026, 3, 31), document_type="ITR", period_kind="year_to_date"
@@ -1106,7 +1203,7 @@ def test_last_quarter_before_fiscal_year_end_uses_the_dfp_linked_deadline():
     )
     item = result["liabilities_assets"]
     assert item.status == IndicatorStatus.AVAILABLE
-    assert item.valid_until == datetime(2026, 9, 28, tzinfo=timezone.utc)
+    assert item.valid_until == datetime(2026, 9, 30, tzinfo=timezone.utc)
 
 
 def test_e_derived_indicator_from_dfp_uses_the_next_expected_itr_deadline():

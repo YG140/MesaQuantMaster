@@ -40,10 +40,11 @@ from app.services.market_service import MarketService
 # nunca uma janela fixa por tipo de documento sozinho. Regras oficiais
 # (CVM): ITR entregue em até 45 dias corridos após o fim de cada trimestre;
 # não existe ITR referente ao último trimestre (ele é incorporado à DFP);
-# DFP entregue em até 3 meses (90 dias) após o encerramento do exercício
-# social. Ver _cvm_valid_until() e _next_cvm_report_deadline().
+# DFP entregue em até 3 MESES (calendáricos, não "90 dias" — meses têm
+# tamanhos diferentes) após o encerramento do exercício social. Ver
+# _cvm_valid_until() e _next_cvm_report_deadline().
 CVM_QUARTERLY_FILING_DEADLINE_DAYS = 45
-CVM_ANNUAL_FILING_DEADLINE_DAYS = 90
+CVM_ANNUAL_FILING_DEADLINE_MONTHS = 3
 
 # Fallback conservador quando o encerramento do exercício social do emissor
 # é DESCONHECIDO (nenhuma DFP sincronizada ainda para ele — só ITR
@@ -68,25 +69,64 @@ def _add_days(value: date, days: int) -> date:
     return value + timedelta(days=days)
 
 
+def _fiscal_year_end_for_period(period_end: date, observed_fiscal_year_end: date) -> date:
+    """Projeta o encerramento fiscal OBSERVADO (mês/dia, real, do próprio
+    emissor) para o ciclo fiscal ao qual `period_end` efetivamente
+    pertence — nunca reutiliza o ANO histórico da DFP mais recente como se
+    fosse o do exercício corrente.
+
+    Um period_end pertence ao ciclo fiscal cujo encerramento (no mesmo mês/
+    dia observado) é o primeiro que ocorre em ou após ele. Ex.: encerramento
+    observado 31/12, period_end 2026-09-30 -> pertence ao ciclo que fecha em
+    2026-12-31 (não 2025-12-31, que já passou).
+    """
+    candidate = date(
+        period_end.year,
+        observed_fiscal_year_end.month,
+        min(
+            observed_fiscal_year_end.day,
+            calendar.monthrange(period_end.year, observed_fiscal_year_end.month)[1],
+        ),
+    )
+    if period_end <= candidate:
+        return candidate
+    return date(
+        period_end.year + 1,
+        observed_fiscal_year_end.month,
+        min(
+            observed_fiscal_year_end.day,
+            calendar.monthrange(period_end.year + 1, observed_fiscal_year_end.month)[1],
+        ),
+    )
+
+
 def _next_cvm_report_deadline(
-    period_end: date, document_type: str, fiscal_year_end: date | None
+    period_end: date, document_type: str, observed_fiscal_year_end: date | None
 ) -> date:
     """Data-limite regulatória do PRÓXIMO reporte periódico esperado que
     substituiria economicamente este documento.
 
     - DFP: o próximo reporte esperado é o primeiro ITR do exercício
-      seguinte (fiscal_year_end + 1 trimestre), com prazo de entrega de
-      45 dias.
+      seguinte (period_end + 1 trimestre), com prazo de entrega de 45 dias.
     - ITR que NÃO é o último trimestre antes do fechamento do exercício:
       o próximo reporte esperado é o próximo ITR (period_end + 1
       trimestre + 45 dias).
     - ITR que É o último trimestre antes do fechamento (ou, por segurança,
       qualquer ITR cujo period_end coincida com o próprio fechamento):
       o próximo reporte esperado é a DFP do exercício corrente
-      (fiscal_year_end + 90 dias) — nunca herda a janela de um ITR
-      seguinte que não existirá (não há ITR do último trimestre).
+      (encerramento fiscal RELEVANTE para este period_end + 3 meses
+      calendáricos) — nunca herda a janela de um ITR seguinte que não
+      existirá (não há ITR do último trimestre), e nunca usa o ANO
+      histórico da DFP mais recente cegamente: o mês/dia observado é
+      projetado para o ciclo fiscal ao qual este period_end pertence via
+      _fiscal_year_end_for_period().
     - fiscal_year_end desconhecido: usa o fallback conservador (nunca
       inventa calendário fiscal).
+
+    Invariante: o prazo nunca pode anteceder o próprio period_end — se a
+    aritmética de calendário resultasse nisso (não deveria, dado o
+    rollover acima), o resultado é travado no próprio period_end como
+    salvaguarda de última linha.
     """
     kind = (document_type or "").upper()
 
@@ -94,20 +134,26 @@ def _next_cvm_report_deadline(
         # period_end de uma DFP É o encerramento do exercício, por
         # definição regulatória — não é uma suposição.
         next_quarter_end = _add_months(period_end, 3)
-        return _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+        deadline = _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+        return max(deadline, period_end)
 
-    if fiscal_year_end is None:
-        return _add_days(period_end, CVM_UNKNOWN_FISCAL_CALENDAR_FALLBACK_DAYS)
+    if observed_fiscal_year_end is None:
+        deadline = _add_days(period_end, CVM_UNKNOWN_FISCAL_CALENDAR_FALLBACK_DAYS)
+        return max(deadline, period_end)
 
-    months_to_fye = (fiscal_year_end.month - period_end.month) % 12
+    relevant_fiscal_year_end = _fiscal_year_end_for_period(period_end, observed_fiscal_year_end)
+    months_to_fye = (relevant_fiscal_year_end.month - period_end.month) % 12
     if months_to_fye in (0, 3):
         # Último trimestre antes do fechamento (ou o próprio fechamento,
         # por segurança) -> o próximo reporte esperado é a DFP do
-        # exercício corrente.
-        return _add_days(fiscal_year_end, CVM_ANNUAL_FILING_DEADLINE_DAYS)
+        # exercício corrente, entregue em até 3 MESES calendáricos após o
+        # encerramento — nunca aproximado como "90 dias".
+        deadline = _add_months(relevant_fiscal_year_end, CVM_ANNUAL_FILING_DEADLINE_MONTHS)
+        return max(deadline, period_end)
 
     next_quarter_end = _add_months(period_end, 3)
-    return _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+    deadline = _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+    return max(deadline, period_end)
 
 
 def _cvm_valid_until(
