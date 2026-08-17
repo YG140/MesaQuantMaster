@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 import json
@@ -34,51 +35,99 @@ from app.services.indicator_normalization_service import (
 from app.services.market_service import MarketService
 
 
-# Validade temporal de dado CVM por PERIODICIDADE REAL do documento — nunca
-# uma única janela genérica para "qualquer dado CVM" (auditoria confirmou
-# que CvmFinancialDocument.document_type chega intacto até este serviço via
-# CvmFinancialRepository.latest_normalized(), sem inferência por nome/ticker;
-# ver _cvm_valid_until()).
-#
-# DFP (Demonstrações Financeiras Padronizadas) é uma demonstração ANUAL —
-# o próximo dado só é esperado ~1 ano depois do period_end. 100 dias
-# expirava a validade meses antes da própria CVM publicar a próxima DFP
-# (comprovado em sincronização real: dado de 2025-12-31 já aparecia STALE
-# em 2026-08-17). 395 = ciclo anual (365) + margem para atraso de
-# publicação, mesmo raciocínio já estabelecido no código para dado
-# manual/cadastral anual (ver valid_until de 395 dias em _apply_manual).
-CVM_DFP_VALIDITY_DAYS = 395
+# Validade temporal de dado CVM = prazo esperado para o PRÓXIMO reporte
+# financeiro periódico que substituiria economicamente este documento —
+# nunca uma janela fixa por tipo de documento sozinho. Regras oficiais
+# (CVM): ITR entregue em até 45 dias corridos após o fim de cada trimestre;
+# não existe ITR referente ao último trimestre (ele é incorporado à DFP);
+# DFP entregue em até 3 meses (90 dias) após o encerramento do exercício
+# social. Ver _cvm_valid_until() e _next_cvm_report_deadline().
+CVM_QUARTERLY_FILING_DEADLINE_DAYS = 45
+CVM_ANNUAL_FILING_DEADLINE_DAYS = 90
 
-# ITR (Informações Trimestrais) é periódica — o próximo dado é esperado
-# ~1 trimestre (91 dias) depois do period_end, mais a folga regulatória de
-# entrega da CVM (45 dias corridos após o fim do trimestre) mais uma
-# margem de processamentos/atraso. 91 + 45 ≈ 136; arredondado para 120 para
-# não superestimar (mais conservador que o prazo regulatório completo).
-# Nunca herda a janela anual da DFP — um ITR antigo não pode ficar
-# artificialmente "current" por ~13 meses.
-CVM_ITR_VALIDITY_DAYS = 120
-
-# Fallback conservador para um document_type que não seja DFP nem ITR
-# (não deveria ocorrer com os providers atuais, mas nunca estende a
-# validade além do ciclo mais curto conhecido só por ausência de política).
-CVM_DEFAULT_VALIDITY_DAYS = CVM_ITR_VALIDITY_DAYS
+# Fallback conservador quando o encerramento do exercício social do emissor
+# é DESCONHECIDO (nenhuma DFP sincronizada ainda para ele — só ITR
+# disponível): nunca inventa um calendário fiscal, apenas assume o ciclo
+# mínimo conhecido (1 trimestre + prazo regulatório de entrega), o mesmo
+# usado para um ITR que não é o último do exercício. Mantém o dado
+# conservadoramente mais curto em vez de estender por incerteza.
+CVM_UNKNOWN_FISCAL_CALENDAR_FALLBACK_DAYS = 91 + CVM_QUARTERLY_FILING_DEADLINE_DAYS
 
 
-def _cvm_valid_until(reference_date: datetime, document_type: str | None) -> datetime:
-    """Validade temporal de um valor oficial CVM, por tipo real do documento.
+def _add_months(value: date, months: int) -> date:
+    """Soma meses a uma data, ajustando para o último dia do mês resultante
+    quando necessário (ex.: 31/01 + 1 mês -> 28/02 ou 29/02)."""
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _add_days(value: date, days: int) -> date:
+    return value + timedelta(days=days)
+
+
+def _next_cvm_report_deadline(
+    period_end: date, document_type: str, fiscal_year_end: date | None
+) -> date:
+    """Data-limite regulatória do PRÓXIMO reporte periódico esperado que
+    substituiria economicamente este documento.
+
+    - DFP: o próximo reporte esperado é o primeiro ITR do exercício
+      seguinte (fiscal_year_end + 1 trimestre), com prazo de entrega de
+      45 dias.
+    - ITR que NÃO é o último trimestre antes do fechamento do exercício:
+      o próximo reporte esperado é o próximo ITR (period_end + 1
+      trimestre + 45 dias).
+    - ITR que É o último trimestre antes do fechamento (ou, por segurança,
+      qualquer ITR cujo period_end coincida com o próprio fechamento):
+      o próximo reporte esperado é a DFP do exercício corrente
+      (fiscal_year_end + 90 dias) — nunca herda a janela de um ITR
+      seguinte que não existirá (não há ITR do último trimestre).
+    - fiscal_year_end desconhecido: usa o fallback conservador (nunca
+      inventa calendário fiscal).
+    """
+    kind = (document_type or "").upper()
+
+    if kind == "DFP":
+        # period_end de uma DFP É o encerramento do exercício, por
+        # definição regulatória — não é uma suposição.
+        next_quarter_end = _add_months(period_end, 3)
+        return _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+
+    if fiscal_year_end is None:
+        return _add_days(period_end, CVM_UNKNOWN_FISCAL_CALENDAR_FALLBACK_DAYS)
+
+    months_to_fye = (fiscal_year_end.month - period_end.month) % 12
+    if months_to_fye in (0, 3):
+        # Último trimestre antes do fechamento (ou o próprio fechamento,
+        # por segurança) -> o próximo reporte esperado é a DFP do
+        # exercício corrente.
+        return _add_days(fiscal_year_end, CVM_ANNUAL_FILING_DEADLINE_DAYS)
+
+    next_quarter_end = _add_months(period_end, 3)
+    return _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+
+
+def _cvm_valid_until(
+    reference_date: datetime, document_type: str | None, fiscal_year_end: date | None
+) -> datetime:
+    """Validade temporal de um valor oficial CVM = prazo-limite esperado
+    para o PRÓXIMO reporte financeiro periódico que o substituiria.
 
     Nunca infere o tipo pelo ticker/nome do indicador — recebe
     `document_type` diretamente de CvmFinancialDocument.document_type
-    (DFP/ITR), propagado sem transformação desde o repository.
+    (DFP/ITR), propagado sem transformação desde o repository, e
+    `fiscal_year_end` observado no histórico real de DFP do próprio
+    emissor (CvmFinancialRepository.fiscal_year_end) — nunca assumido como
+    31/12 para todas as companhias.
     """
-    kind = (document_type or "").upper()
-    if kind == "DFP":
-        days = CVM_DFP_VALIDITY_DAYS
-    elif kind == "ITR":
-        days = CVM_ITR_VALIDITY_DAYS
-    else:
-        days = CVM_DEFAULT_VALIDITY_DAYS
-    return reference_date + timedelta(days=days)
+    deadline = _next_cvm_report_deadline(
+        reference_date.date(), document_type or "", fiscal_year_end
+    )
+    return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
+
 
 # Indicadores que DerivedIndicatorEngine sabe calcular a partir de
 # componentes brutos CVM (seção 6 do resolver híbrido) — só tentados quando
@@ -590,6 +639,13 @@ class IndicatorResolverService:
             )
             return
 
+        # Encerramento do exercício social OBSERVADO no histórico real de
+        # DFP deste emissor — nunca assumido como 31/12 para todos (ver
+        # CvmFinancialRepository.fiscal_year_end e _cvm_valid_until).
+        # Buscado uma única vez por ativo, reaproveitado para todas as
+        # contas brutas e para os indicadores derivados abaixo.
+        fiscal_year_end = self.cvm_repository.fiscal_year_end(issuer.id)
+
         grouped = {}
         for account, document, issuer_row in self.cvm_repository.latest_normalized(
             asset_id
@@ -641,7 +697,9 @@ class IndicatorResolverService:
                     "source_type": "official",
                     "reference_date": reference,
                     "collected_at": self._aware(document.collected_at) or collected_at,
-                    "valid_until": _cvm_valid_until(reference, document.document_type),
+                    "valid_until": _cvm_valid_until(
+                        reference, document.document_type, fiscal_year_end
+                    ),
                     "freshness_status": "current",
                     "confidence": ConfidenceLevel.HIGH,
                     "period": document.period_kind,
@@ -672,7 +730,7 @@ class IndicatorResolverService:
         derived_pending = still_pending & set(DERIVED_INDICATOR_KEYS)
         if derived_pending:
             derived_resolved = self._apply_cvm_derived_indicators(
-                resolved, grouped, derived_pending, collected_at
+                resolved, grouped, derived_pending, collected_at, fiscal_year_end
             )
             still_pending -= derived_resolved
 
@@ -714,17 +772,22 @@ class IndicatorResolverService:
         return issuer
 
     def _apply_cvm_derived_indicators(
-        self, resolved, grouped, pending: set[str], collected_at: datetime
+        self,
+        resolved,
+        grouped,
+        pending: set[str],
+        collected_at: datetime,
+        fiscal_year_end: date | None,
     ) -> set[str]:
         """Calcula indicadores derivados (seção 6 do resolver híbrido) a
         partir de componentes brutos já apurados pelo CVM, quando todos os
         componentes necessários existem e são COMPATÍVEIS — mesmo period_end
         E mesmo document_type (DFP não se mistura com ITR: são periodicidades
         diferentes, mesmo quando coincidem em period_end) — nunca divide por
-        zero, nunca converte ausência em zero. O document_type vencedor é
-        propagado para a política de validade temporal (_cvm_valid_until) e
-        para o provenance — um indicador derivado de ITR nunca herda a
-        janela de validade anual da DFP.
+        zero, nunca converte ausência em zero. O document_type e o
+        period_end vencedores são propagados para a política de validade
+        temporal por próximo reporte esperado (_cvm_valid_until) e para o
+        provenance.
         """
         components: dict[str, Decimal] = {}
         source: dict[str, tuple] = {}  # raw_key -> (period_end, document_type, period_kind)
@@ -861,7 +924,9 @@ class IndicatorResolverService:
                     "source_type": "derived",
                     "reference_date": reference,
                     "collected_at": collected_at,
-                    "valid_until": _cvm_valid_until(reference, document_type),
+                    "valid_until": _cvm_valid_until(
+                        reference, document_type, fiscal_year_end
+                    ),
                     "freshness_status": "current",
                     "confidence": ConfidenceLevel.HIGH,
                     "period": period_kind,

@@ -310,6 +310,53 @@ def test_import_duplicate_rows_does_not_affect_idempotent_reimport(tmp_path, db_
     assert db_session.query(CvmFinancialAccount).count() == 1
 
 
+def _seed_document(repository, *, cnpj, document_type, period_end, version=1):
+    issuer = repository.upsert_issuer(cnpj, "12345", "COMPANHIA ACAO S.A.")
+    account = raw_itr("1", period_end) if document_type == "ITR" else CvmRawAccount(
+        document_type="DFP",
+        statement_type="BPA",
+        scope="consolidated",
+        cnpj=cnpj,
+        cvm_code="12345",
+        issuer_name="COMPANHIA ACAO S.A.",
+        reference_date=period_end,
+        version=version,
+        period_start=None,
+        period_end=period_end,
+        period_kind="annual",
+        currency="REAL",
+        scale="MIL",
+        account_code="1",
+        account_description="Ativo Total",
+        original_value=Decimal("100"),
+        normalized_value=Decimal("100000"),
+        is_fixed_account=True,
+        collected_at=COLLECTED,
+    )
+    document = repository.upsert_document(issuer.id, account)
+    repository.commit()
+    return issuer, document
+
+
+def test_fiscal_year_end_returns_most_recent_dfp_period_end(db_session):
+    repository = CvmFinancialRepository(db_session)
+    issuer, _ = _seed_document(
+        repository, cnpj="12345678000190", document_type="DFP", period_end=date(2024, 12, 31)
+    )
+    _seed_document(
+        repository, cnpj="12345678000190", document_type="DFP", period_end=date(2025, 12, 31)
+    )
+    assert repository.fiscal_year_end(issuer.id) == date(2025, 12, 31)
+
+
+def test_fiscal_year_end_returns_none_when_issuer_has_only_itr(db_session):
+    repository = CvmFinancialRepository(db_session)
+    issuer, _ = _seed_document(
+        repository, cnpj="98765432000199", document_type="ITR", period_end=date(2026, 3, 31)
+    )
+    assert repository.fiscal_year_end(issuer.id) is None
+
+
 def test_asset_without_explicit_issuer_link_is_pending(db_session):
     asset = Asset(ticker="TEST3", name="Teste", asset_type="STOCK", currency="BRL")
     db_session.add(asset)

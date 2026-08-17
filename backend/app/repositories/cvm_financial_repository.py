@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -130,6 +130,32 @@ class CvmFinancialRepository:
 
     def get_issuer(self, issuer_id: UUID) -> CvmIssuer | None:
         return self.db.get(CvmIssuer, issuer_id)
+
+    def fiscal_year_end(self, issuer_id: UUID) -> date | None:
+        """Encerramento do exercício social deste emissor, OBSERVADO nos
+        próprios dados — nunca assumido como 31/12 para todo mundo.
+
+        Uma DFP cobre sempre o exercício social completo, então seu
+        period_end É o encerramento do exercício por definição regulatória
+        (não é uma inferência). Usa a DFP consolidada mais recente
+        disponível; retorna None se o emissor ainda não tiver nenhuma DFP
+        sincronizada (ex.: apenas ITR disponível) — o chamador deve tratar
+        isso como calendário fiscal desconhecido, nunca adivinhar.
+        """
+        document = (
+            self.db.query(CvmFinancialDocument)
+            .filter(
+                CvmFinancialDocument.issuer_id == issuer_id,
+                CvmFinancialDocument.document_type == "DFP",
+                CvmFinancialDocument.scope == "consolidated",
+            )
+            .order_by(
+                CvmFinancialDocument.reference_date.desc(),
+                CvmFinancialDocument.version.desc(),
+            )
+            .first()
+        )
+        return document.period_end if document is not None else None
 
     def list_issuers(self, limit: int = 100) -> list[CvmIssuer]:
         return (
