@@ -1,0 +1,16 @@
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directories:
+      - "/"
+      - "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: "npm"
+    directory: "/frontend_web"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
