@@ -24,10 +24,18 @@ class MarketService:
     _search_cache: TTLCache[list[MarketAssetResponse]] = TTLCache()
     _quote_cache: TTLCache[QuoteResponse] = TTLCache()
     _profile_cache: TTLCache[MarketProfileResponse] = TTLCache()
+    # Mantido apenas como alvo inofensivo de clear_caches() (compatibilidade);
+    # cada instância usa seu PRÓPRIO conjunto (ver __init__) — nunca este.
+    # Um plano restrito para UM ticker não pode "vazar" para outros tickers
+    # nem sobreviver além da própria instância/requisição: essa era
+    # exatamente a causa de um único 403 (ex.: FII fora do plano gratuito)
+    # derrubar permanentemente o acesso a um dataset inteiro para todos os
+    # demais ativos do processo.
     _restricted_domains: set[str] = set()
 
     def __init__(self, provider: BaseMarketProvider | None = None):
         self.provider = provider or ProviderFactory.get_provider()
+        self._restricted_domains: set[str] = set()
 
     def get_quote(self, ticker: str) -> QuoteResponse:
         quotes = self.get_quotes([ticker])
@@ -275,27 +283,42 @@ class MarketService:
         )
 
     def get_stock_dataset(self, dataset: str, symbols: list[str], **params):
-        capability = f"stocks:{dataset}"
-        if capability in self._restricted_domains:
-            raise MarketPermissionError(
-                "Recurso BRAPI não permitido pelo plano configurado."
-            )
-        try:
-            return self.provider.get_stock_dataset(dataset, symbols, **params)
-        except MarketPermissionError:
-            self._restricted_domains.add(capability)
-            raise
+        return self._call_with_restriction_cache(
+            "stocks",
+            dataset,
+            symbols,
+            lambda: self.provider.get_stock_dataset(dataset, symbols, **params),
+        )
 
     def get_fii_dataset(self, dataset: str, symbols: list[str], **params):
-        capability = f"fii:{dataset}"
-        if capability in self._restricted_domains:
+        return self._call_with_restriction_cache(
+            "fii",
+            dataset,
+            symbols,
+            lambda: self.provider.get_fii_dataset(dataset, symbols, **params),
+        )
+
+    def _call_with_restriction_cache(self, domain: str, dataset: str, symbols: list[str], call):
+        """Evita repetir uma chamada já sabidamente restrita, sem generalizar
+        a restrição para outros símbolos.
+
+        A granularidade é por (domínio, dataset, símbolo): um 403 em um FII
+        específico (ex.: ALZR11 em fii:indicators) nunca deve impedir a
+        tentativa de OUTRO FII (ex.: MXRF11) no mesmo dataset — cada ticker
+        tem seu próprio estado de plano no BRAPI. Só há curto-circuito quando
+        TODOS os símbolos do lote já estão marcados como restritos.
+        """
+        keys = [f"{domain}:{dataset}:{symbol}" for symbol in symbols] or [
+            f"{domain}:{dataset}"
+        ]
+        if all(key in self._restricted_domains for key in keys):
             raise MarketPermissionError(
                 "Recurso BRAPI não permitido pelo plano configurado."
             )
         try:
-            return self.provider.get_fii_dataset(dataset, symbols, **params)
+            return call()
         except MarketPermissionError:
-            self._restricted_domains.add(capability)
+            self._restricted_domains.update(keys)
             raise
 
     @classmethod

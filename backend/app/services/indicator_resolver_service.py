@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 import json
 
 from app.core.config import settings
+from app.engines.derived_indicator_engine import DerivedIndicatorEngine
 from app.engines.indicator_catalog import indicator_temporal_validity_days
 from app.providers.bcb_sgs_provider import BcbSgsProvider
 from app.providers.cvm_open_data_provider import CvmOpenDataProvider
@@ -31,6 +33,160 @@ from app.services.indicator_normalization_service import (
     sanitize_failure_detail,
 )
 from app.services.market_service import MarketService
+
+
+# Validade temporal de dado CVM = prazo esperado para o PRÓXIMO reporte
+# financeiro periódico que substituiria economicamente este documento —
+# nunca uma janela fixa por tipo de documento sozinho. Regras oficiais
+# (CVM): ITR entregue em até 45 dias corridos após o fim de cada trimestre;
+# não existe ITR referente ao último trimestre (ele é incorporado à DFP);
+# DFP entregue em até 3 MESES (calendáricos, não "90 dias" — meses têm
+# tamanhos diferentes) após o encerramento do exercício social. Ver
+# _cvm_valid_until() e _next_cvm_report_deadline().
+CVM_QUARTERLY_FILING_DEADLINE_DAYS = 45
+CVM_ANNUAL_FILING_DEADLINE_MONTHS = 3
+
+# Fallback conservador quando o encerramento do exercício social do emissor
+# é DESCONHECIDO (nenhuma DFP sincronizada ainda para ele — só ITR
+# disponível): nunca inventa um calendário fiscal, apenas assume o ciclo
+# mínimo conhecido (1 trimestre + prazo regulatório de entrega), o mesmo
+# usado para um ITR que não é o último do exercício. Mantém o dado
+# conservadoramente mais curto em vez de estender por incerteza.
+CVM_UNKNOWN_FISCAL_CALENDAR_FALLBACK_DAYS = 91 + CVM_QUARTERLY_FILING_DEADLINE_DAYS
+
+
+def _add_months(value: date, months: int) -> date:
+    """Soma meses a uma data, ajustando para o último dia do mês resultante
+    quando necessário (ex.: 31/01 + 1 mês -> 28/02 ou 29/02)."""
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _add_days(value: date, days: int) -> date:
+    return value + timedelta(days=days)
+
+
+def _fiscal_year_end_for_period(period_end: date, observed_fiscal_year_end: date) -> date:
+    """Projeta o encerramento fiscal OBSERVADO (mês/dia, real, do próprio
+    emissor) para o ciclo fiscal ao qual `period_end` efetivamente
+    pertence — nunca reutiliza o ANO histórico da DFP mais recente como se
+    fosse o do exercício corrente.
+
+    Um period_end pertence ao ciclo fiscal cujo encerramento (no mesmo mês/
+    dia observado) é o primeiro que ocorre em ou após ele. Ex.: encerramento
+    observado 31/12, period_end 2026-09-30 -> pertence ao ciclo que fecha em
+    2026-12-31 (não 2025-12-31, que já passou).
+    """
+    candidate = date(
+        period_end.year,
+        observed_fiscal_year_end.month,
+        min(
+            observed_fiscal_year_end.day,
+            calendar.monthrange(period_end.year, observed_fiscal_year_end.month)[1],
+        ),
+    )
+    if period_end <= candidate:
+        return candidate
+    return date(
+        period_end.year + 1,
+        observed_fiscal_year_end.month,
+        min(
+            observed_fiscal_year_end.day,
+            calendar.monthrange(period_end.year + 1, observed_fiscal_year_end.month)[1],
+        ),
+    )
+
+
+def _next_cvm_report_deadline(
+    period_end: date, document_type: str, observed_fiscal_year_end: date | None
+) -> date:
+    """Data-limite regulatória do PRÓXIMO reporte periódico esperado que
+    substituiria economicamente este documento.
+
+    - DFP: o próximo reporte esperado é o primeiro ITR do exercício
+      seguinte (period_end + 1 trimestre), com prazo de entrega de 45 dias.
+    - ITR que NÃO é o último trimestre antes do fechamento do exercício:
+      o próximo reporte esperado é o próximo ITR (period_end + 1
+      trimestre + 45 dias).
+    - ITR que É o último trimestre antes do fechamento (ou, por segurança,
+      qualquer ITR cujo period_end coincida com o próprio fechamento):
+      o próximo reporte esperado é a DFP do exercício corrente
+      (encerramento fiscal RELEVANTE para este period_end + 3 meses
+      calendáricos) — nunca herda a janela de um ITR seguinte que não
+      existirá (não há ITR do último trimestre), e nunca usa o ANO
+      histórico da DFP mais recente cegamente: o mês/dia observado é
+      projetado para o ciclo fiscal ao qual este period_end pertence via
+      _fiscal_year_end_for_period().
+    - fiscal_year_end desconhecido: usa o fallback conservador (nunca
+      inventa calendário fiscal).
+
+    Invariante: o prazo nunca pode anteceder o próprio period_end — se a
+    aritmética de calendário resultasse nisso (não deveria, dado o
+    rollover acima), o resultado é travado no próprio period_end como
+    salvaguarda de última linha.
+    """
+    kind = (document_type or "").upper()
+
+    if kind == "DFP":
+        # period_end de uma DFP É o encerramento do exercício, por
+        # definição regulatória — não é uma suposição.
+        next_quarter_end = _add_months(period_end, 3)
+        deadline = _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+        return max(deadline, period_end)
+
+    if observed_fiscal_year_end is None:
+        deadline = _add_days(period_end, CVM_UNKNOWN_FISCAL_CALENDAR_FALLBACK_DAYS)
+        return max(deadline, period_end)
+
+    relevant_fiscal_year_end = _fiscal_year_end_for_period(period_end, observed_fiscal_year_end)
+    months_to_fye = (relevant_fiscal_year_end.month - period_end.month) % 12
+    if months_to_fye in (0, 3):
+        # Último trimestre antes do fechamento (ou o próprio fechamento,
+        # por segurança) -> o próximo reporte esperado é a DFP do
+        # exercício corrente, entregue em até 3 MESES calendáricos após o
+        # encerramento — nunca aproximado como "90 dias".
+        deadline = _add_months(relevant_fiscal_year_end, CVM_ANNUAL_FILING_DEADLINE_MONTHS)
+        return max(deadline, period_end)
+
+    next_quarter_end = _add_months(period_end, 3)
+    deadline = _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+    return max(deadline, period_end)
+
+
+def _cvm_valid_until(
+    reference_date: datetime, document_type: str | None, fiscal_year_end: date | None
+) -> datetime:
+    """Validade temporal de um valor oficial CVM = prazo-limite esperado
+    para o PRÓXIMO reporte financeiro periódico que o substituiria.
+
+    Nunca infere o tipo pelo ticker/nome do indicador — recebe
+    `document_type` diretamente de CvmFinancialDocument.document_type
+    (DFP/ITR), propagado sem transformação desde o repository, e
+    `fiscal_year_end` observado no histórico real de DFP do próprio
+    emissor (CvmFinancialRepository.fiscal_year_end) — nunca assumido como
+    31/12 para todas as companhias.
+    """
+    deadline = _next_cvm_report_deadline(
+        reference_date.date(), document_type or "", fiscal_year_end
+    )
+    return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
+
+
+# Indicadores que DerivedIndicatorEngine sabe calcular a partir de
+# componentes brutos CVM (seção 6 do resolver híbrido) — só tentados quando
+# ainda pendentes após BRAPI/CVM direto, nunca substituindo um valor já
+# resolvido por fonte de maior prioridade.
+DERIVED_INDICATOR_KEYS = (
+    "roe",
+    "roa",
+    "net_debt",
+    "net_debt_equity",
+    "liabilities_assets",
+    "current_liquidity",
+)
 
 
 class IndicatorResolverService:
@@ -117,7 +273,7 @@ class IndicatorResolverService:
                 )
 
         if asset_id is not None and self._has_unresolved(resolved):
-            self._apply_cvm(resolved, asset_id, collected_at)
+            self._apply_cvm(resolved, asset_id, collected_at, symbol=symbol)
 
         if self._has_unresolved(resolved):
             self._apply_stale_snapshot_fallback(resolved, symbol, collected_at)
@@ -507,7 +663,7 @@ class IndicatorResolverService:
                 }
             )
 
-    def _apply_cvm(self, resolved, asset_id, collected_at) -> None:
+    def _apply_cvm(self, resolved, asset_id, collected_at, symbol=None) -> None:
         if self.cvm_repository is None:
             return
         pending = self._unresolved_keys(resolved)
@@ -515,6 +671,8 @@ class IndicatorResolverService:
             return
 
         issuer = self.cvm_repository.linked_issuer(asset_id)
+        if issuer is None and symbol is not None:
+            issuer = self._auto_link_cvm_issuer(asset_id, symbol)
         if issuer is None:
             self._append_attempts(
                 resolved,
@@ -526,6 +684,13 @@ class IndicatorResolverService:
                 attempted_at=collected_at,
             )
             return
+
+        # Encerramento do exercício social OBSERVADO no histórico real de
+        # DFP deste emissor — nunca assumido como 31/12 para todos (ver
+        # CvmFinancialRepository.fiscal_year_end e _cvm_valid_until).
+        # Buscado uma única vez por ativo, reaproveitado para todas as
+        # contas brutas e para os indicadores derivados abaixo.
+        fiscal_year_end = self.cvm_repository.fiscal_year_end(issuer.id)
 
         grouped = {}
         for account, document, issuer_row in self.cvm_repository.latest_normalized(
@@ -578,7 +743,9 @@ class IndicatorResolverService:
                     "source_type": "official",
                     "reference_date": reference,
                     "collected_at": self._aware(document.collected_at) or collected_at,
-                    "valid_until": reference + timedelta(days=100),
+                    "valid_until": _cvm_valid_until(
+                        reference, document.document_type, fiscal_year_end
+                    ),
                     "freshness_status": "current",
                     "confidence": ConfidenceLevel.HIGH,
                     "period": document.period_kind,
@@ -606,6 +773,13 @@ class IndicatorResolverService:
             resolved_keys.add(key)
 
         still_pending = pending - resolved_keys
+        derived_pending = still_pending & set(DERIVED_INDICATOR_KEYS)
+        if derived_pending:
+            derived_resolved = self._apply_cvm_derived_indicators(
+                resolved, grouped, derived_pending, collected_at, fiscal_year_end
+            )
+            still_pending -= derived_resolved
+
         if still_pending:
             self._append_attempts(
                 resolved,
@@ -616,6 +790,209 @@ class IndicatorResolverService:
                 reason=ProviderFailureReason.NOT_REPORTED,
                 attempted_at=collected_at,
             )
+
+    def _auto_link_cvm_issuer(self, asset_id, symbol: str):
+        """Vincula automaticamente ativo<->emissor CVM por CNPJ EXATO.
+
+        Nunca por nome (sem fuzzy matching silencioso — ver seção 7 do
+        resolver híbrido): usa o CNPJ retornado pelo perfil do provedor de
+        mercado e só vincula se houver correspondência exata e única com um
+        CvmIssuer já sincronizado via DFP/ITR. Qualquer falha ao buscar o
+        perfil (provider indisponível, ticker sem perfil etc.) é absorvida
+        aqui e apenas resulta em "ainda não vinculado" — nunca interrompe a
+        cascata de resolução.
+        """
+        if self.market_service is None:
+            return None
+        try:
+            profile = self.market_service.get_profile(symbol)
+        except Exception:
+            return None
+        cnpj = CvmOpenDataProvider.normalize_cnpj(getattr(profile, "cnpj", None) or "")
+        if not cnpj:
+            return None
+        issuer = self.cvm_repository.find_issuer_by_cnpj(cnpj)
+        if issuer is None:
+            return None
+        self.cvm_repository.link_asset(asset_id, issuer.id)
+        return issuer
+
+    def _apply_cvm_derived_indicators(
+        self,
+        resolved,
+        grouped,
+        pending: set[str],
+        collected_at: datetime,
+        fiscal_year_end: date | None,
+    ) -> set[str]:
+        """Calcula indicadores derivados (seção 6 do resolver híbrido) a
+        partir de componentes brutos já apurados pelo CVM, quando todos os
+        componentes necessários existem e são COMPATÍVEIS — mesmo period_end
+        E mesmo document_type (DFP não se mistura com ITR: são periodicidades
+        diferentes, mesmo quando coincidem em period_end) — nunca divide por
+        zero, nunca converte ausência em zero. O document_type e o
+        period_end vencedores são propagados para a política de validade
+        temporal por próximo reporte esperado (_cvm_valid_until) e para o
+        provenance.
+        """
+        components: dict[str, Decimal] = {}
+        source: dict[str, tuple] = {}  # raw_key -> (period_end, document_type, period_kind)
+        for raw_key in (
+            "net_income",
+            "equity",
+            "assets",
+            "net_debt",
+            "total_liabilities",
+            "current_assets",
+            "current_liabilities",
+            "gross_debt",
+            "cash_and_equivalents",
+        ):
+            rows = grouped.get(raw_key)
+            if not rows:
+                continue
+            components[raw_key] = sum(
+                (Decimal(account.normalized_value) for account, _, _ in rows),
+                Decimal("0"),
+            )
+            document = rows[0][1]
+            source[raw_key] = (document.period_end, document.document_type, document.period_kind)
+
+        def _compatible(*keys: str) -> bool:
+            values = {source[k] for k in keys if k in source}
+            return len(values) == 1
+
+        net_debt_value = components.get("net_debt")
+        net_debt_source = source.get("net_debt")
+        calculations: list[tuple] = []
+        if (
+            net_debt_value is None
+            and "gross_debt" in components
+            and "cash_and_equivalents" in components
+            and _compatible("gross_debt", "cash_and_equivalents")
+        ):
+            net_debt_result = DerivedIndicatorEngine.net_debt(
+                gross_debt=components["gross_debt"],
+                cash_and_equivalents=components["cash_and_equivalents"],
+            )
+            if net_debt_result is not None:
+                net_debt_value = net_debt_result.value
+                net_debt_source = source["gross_debt"]
+                calculations.append((net_debt_result, net_debt_source))
+
+        if "net_income" in components and "equity" in components and _compatible(
+            "net_income", "equity"
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.roe(
+                        net_income=components["net_income"], equity=components["equity"]
+                    ),
+                    source["equity"],
+                )
+            )
+        if "net_income" in components and "assets" in components and _compatible(
+            "net_income", "assets"
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.roa(
+                        net_income=components["net_income"], assets=components["assets"]
+                    ),
+                    source["assets"],
+                )
+            )
+        if (
+            net_debt_value is not None
+            and "equity" in components
+            and net_debt_source == source["equity"]
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.net_debt_equity(
+                        net_debt=net_debt_value, equity=components["equity"]
+                    ),
+                    source["equity"],
+                )
+            )
+        if (
+            "total_liabilities" in components
+            and "assets" in components
+            and _compatible("total_liabilities", "assets")
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.liabilities_assets(
+                        total_liabilities=components["total_liabilities"],
+                        assets=components["assets"],
+                    ),
+                    source["assets"],
+                )
+            )
+        if (
+            "current_assets" in components
+            and "current_liabilities" in components
+            and _compatible("current_assets", "current_liabilities")
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.current_liquidity(
+                        current_assets=components["current_assets"],
+                        current_liabilities=components["current_liabilities"],
+                    ),
+                    source["current_assets"],
+                )
+            )
+
+        resolved_keys: set[str] = set()
+        for result, (period_end, document_type, period_kind) in calculations:
+            if result is None or result.key not in pending:
+                continue
+            current = resolved.get(result.key)
+            if current is None or current.status in self._RESOLVED_STATUSES:
+                continue
+            reference = datetime.combine(period_end, time.min, tzinfo=timezone.utc)
+            attempt = ProviderResolutionAttempt(
+                provider="CVM Dados Abertos (derivado)",
+                source_type="derived",
+                dataset=document_type,
+                outcome=ResolutionOutcome.SUCCESS,
+                attempted_at=collected_at,
+                reference_date=reference,
+            )
+            resolved[result.key] = current.model_copy(
+                update={
+                    "value": result.value,
+                    "display_value": display_value(result.value, result.unit, None),
+                    "unit": result.unit,
+                    "status": IndicatorStatus.AVAILABLE,
+                    "source": "CVM Dados Abertos (derivado)",
+                    "source_type": "derived",
+                    "reference_date": reference,
+                    "collected_at": collected_at,
+                    "valid_until": _cvm_valid_until(
+                        reference, document_type, fiscal_year_end
+                    ),
+                    "freshness_status": "current",
+                    "confidence": ConfidenceLevel.HIGH,
+                    "period": period_kind,
+                    "unavailable_reason": None,
+                    "provider_failure_reason": None,
+                    "provenance": {
+                        "provider": "cvm_derived",
+                        "document_type": document_type,
+                        "period_kind": period_kind,
+                        "reference_date": period_end.isoformat(),
+                        "formula": result.formula,
+                        "components": {
+                            key: str(value) for key, value in result.components.items()
+                        },
+                    },
+                    "resolution_attempts": [*current.resolution_attempts, attempt],
+                }
+            )
+            resolved_keys.add(result.key)
+        return resolved_keys
 
     def _apply_stale_snapshot_fallback(
         self, resolved: dict[str, NormalizedIndicator], symbol: str, collected_at: datetime

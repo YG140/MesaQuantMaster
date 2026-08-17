@@ -273,6 +273,90 @@ def test_import_is_idempotent_and_prefers_latest_consolidated_version(
     assert stored_document.version == 2
 
 
+def test_import_handles_literal_duplicate_rows_in_the_same_document(tmp_path, db_session):
+    # Observado em sincronização real contra dados.cvm.gov.br: o CSV oficial
+    # pode conter duas linhas idênticas para a mesma (empresa, período,
+    # demonstração, conta, escopo, versão) — sem deduplicação em memória,
+    # isso violava a constraint de unicidade uq_cvm_document_account no
+    # meio do import (a consulta de upsert_account não via seu próprio
+    # INSERT ainda não commitado dentro do mesmo loop).
+    duplicated_line = row(code="1", value="4500413")
+    content = HEADER_BALANCE + duplicated_line + duplicated_line
+    path = write_archive(tmp_path, {"dfp_cia_aberta_BPA_con_2025.csv": content})
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    result = service.import_archive(path, "DFP", COLLECTED)
+    assert result["accounts_imported"] == 1
+    stored_account = db_session.query(CvmFinancialAccount).one()
+    assert stored_account.normalized_value == Decimal("4500413000")
+
+
+def test_import_duplicate_rows_does_not_affect_idempotent_reimport(tmp_path, db_session):
+    duplicated_line = row(code="1", value="10")
+    content = HEADER_BALANCE + duplicated_line + duplicated_line
+    path = write_archive(tmp_path, {"dfp_cia_aberta_BPA_con_2025.csv": content})
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    first = service.import_archive(path, "DFP", COLLECTED)
+    second = service.import_archive(path, "DFP", COLLECTED)
+    assert first["accounts_imported"] == 1
+    assert second["accounts_imported"] == 0
+    assert db_session.query(CvmFinancialAccount).count() == 1
+
+
+def _seed_document(repository, *, cnpj, document_type, period_end, version=1):
+    issuer = repository.upsert_issuer(cnpj, "12345", "COMPANHIA ACAO S.A.")
+    account = raw_itr("1", period_end) if document_type == "ITR" else CvmRawAccount(
+        document_type="DFP",
+        statement_type="BPA",
+        scope="consolidated",
+        cnpj=cnpj,
+        cvm_code="12345",
+        issuer_name="COMPANHIA ACAO S.A.",
+        reference_date=period_end,
+        version=version,
+        period_start=None,
+        period_end=period_end,
+        period_kind="annual",
+        currency="REAL",
+        scale="MIL",
+        account_code="1",
+        account_description="Ativo Total",
+        original_value=Decimal("100"),
+        normalized_value=Decimal("100000"),
+        is_fixed_account=True,
+        collected_at=COLLECTED,
+    )
+    document = repository.upsert_document(issuer.id, account)
+    repository.commit()
+    return issuer, document
+
+
+def test_fiscal_year_end_returns_most_recent_dfp_period_end(db_session):
+    repository = CvmFinancialRepository(db_session)
+    issuer, _ = _seed_document(
+        repository, cnpj="12345678000190", document_type="DFP", period_end=date(2024, 12, 31)
+    )
+    _seed_document(
+        repository, cnpj="12345678000190", document_type="DFP", period_end=date(2025, 12, 31)
+    )
+    assert repository.fiscal_year_end(issuer.id) == date(2025, 12, 31)
+
+
+def test_fiscal_year_end_returns_none_when_issuer_has_only_itr(db_session):
+    repository = CvmFinancialRepository(db_session)
+    issuer, _ = _seed_document(
+        repository, cnpj="98765432000199", document_type="ITR", period_end=date(2026, 3, 31)
+    )
+    assert repository.fiscal_year_end(issuer.id) is None
+
+
 def test_asset_without_explicit_issuer_link_is_pending(db_session):
     asset = Asset(ticker="TEST3", name="Teste", asset_type="STOCK", currency="BRL")
     db_session.add(asset)
