@@ -8,8 +8,26 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { getCurrentUser, loginUser, registerUser } from "../../services/endpoints/auth";
+import { investorProfileEndpoints } from "../../services/endpoints/investorProfile";
 import { setUnauthorizedHandler } from "../../services/apiClient";
 import type { User } from "../../types/api";
+
+const ONBOARDING_PENDING_STATUSES = new Set([
+  "needs_onboarding",
+  "in_progress",
+  "pending_confirmation",
+]);
+
+async function postLoginDestination(token: string): Promise<string> {
+  try {
+    const status = await investorProfileEndpoints.status(token);
+    return ONBOARDING_PENDING_STATUSES.has(status.status) ? "/onboarding" : "/";
+  } catch {
+    // Diagnóstico do backend indisponível não deve travar o login — a
+    // aplicação normal (e o OnboardingGate) continuam protegendo as rotas.
+    return "/";
+  }
+}
 
 const SESSION_KEY = "mesa_quant_session";
 
@@ -77,7 +95,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = await getCurrentUser(tokenResponse.access_token);
       setToken(tokenResponse.access_token);
       setUser(currentUser);
-      navigate("/", { replace: true });
+      const destination = await postLoginDestination(tokenResponse.access_token);
+      navigate(destination, { replace: true });
     },
     [navigate],
   );

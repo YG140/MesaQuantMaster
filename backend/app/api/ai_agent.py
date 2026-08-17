@@ -6,6 +6,7 @@ from app.ai.exceptions import AIAgentError
 from app.ai.tools import AIToolRegistry
 from app.api.deps import get_current_active_user
 from app.api.intelligence import get_service as get_intelligence_service
+from app.api.investor_profile import get_service as get_investor_profile_service
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
@@ -37,6 +38,7 @@ def get_ai_agent_service(db: Session = Depends(get_db)) -> AIAgentService:
     registry = AIToolRegistry(
         market_intelligence=intelligence.market_intelligence_service,
         portfolio_intelligence=intelligence,
+        investor_profile=get_investor_profile_service(db),
         max_compare_assets=settings.AI_AGENT_MAX_COMPARE_ASSETS,
     )
     agent = AIAgent(

@@ -9,6 +9,7 @@ from app.ai.exceptions import AIToolValidationError
 from app.schemas.intelligence import BuildPortfolioRequest
 from app.schemas.market_intelligence import AnalyzeAssetsRequest
 from app.services.intelligence_service import PortfolioIntelligenceService
+from app.services.investor_profile_service import InvestorProfileService
 from app.services.market_intelligence_service import MarketIntelligenceService
 
 
@@ -56,12 +57,17 @@ class BuildPortfolioSuggestionArguments(ToolArguments):
     available_amount: Decimal = Field(gt=0, max_digits=16, decimal_places=2)
 
 
+class GetInvestorProfileArguments(ToolArguments):
+    pass
+
+
 TOOL_MODELS: dict[str, type[ToolArguments]] = {
     "analyze_asset": AnalyzeAssetArguments,
     "compare_assets": CompareAssetsArguments,
     "analyze_portfolio": AnalyzePortfolioArguments,
     "get_portfolio_policy": GetPortfolioPolicyArguments,
     "build_portfolio_suggestion": BuildPortfolioSuggestionArguments,
+    "get_investor_profile": GetInvestorProfileArguments,
 }
 
 TOOL_DESCRIPTIONS = {
@@ -71,6 +77,11 @@ TOOL_DESCRIPTIONS = {
     "get_portfolio_policy": "Obtém a política real do usuário autenticado.",
     "build_portfolio_suggestion": (
         "Calcula uma sugestão educacional read-only usando a política e os motores."
+    ),
+    "get_investor_profile": (
+        "Obtém um resumo minimizado do perfil do investidor autenticado "
+        "(classificação, dimensões e política proposta), sem dados financeiros "
+        "detalhados nem respostas brutas do questionário."
     ),
 }
 
@@ -100,10 +111,12 @@ class AIToolRegistry:
         *,
         market_intelligence: MarketIntelligenceService,
         portfolio_intelligence: PortfolioIntelligenceService,
+        investor_profile: InvestorProfileService | None = None,
         max_compare_assets: int = 10,
     ):
         self.market_intelligence = market_intelligence
         self.portfolio_intelligence = portfolio_intelligence
+        self.investor_profile = investor_profile
         self.max_compare_assets = max_compare_assets
 
     @property
@@ -133,6 +146,10 @@ class AIToolRegistry:
             result = self.portfolio_intelligence.get_policy(user_id)
             if result is None:
                 return _json_data(name, {"status": "insufficient_data", "policy": None})
+        elif name == "get_investor_profile":
+            if self.investor_profile is None:
+                return _json_data(name, {"status": "insufficient_data"})
+            result = self.investor_profile.get_profile(user_id)
         else:
             result = self._build_suggestion(parsed.available_amount, user_id)
 
@@ -214,6 +231,24 @@ def _compact_tool_data(tool_name: str, data: dict[str, Any]) -> dict[str, Any]:
             "maximum_weight_per_issuer",
             "rebalance_tolerance",
             "allocations",
+        )
+    if tool_name == "get_investor_profile":
+        # Nunca inclui: answers brutas, income_range, investable_net_worth_range,
+        # has_relevant_debt, dependents, initial_contribution — apenas o
+        # resumo necessário para a IA explicar a classificação ao usuário.
+        return _select(
+            data,
+            "status",
+            "primary_objective",
+            "horizon",
+            "monthly_contribution",
+            "liquidity_need",
+            "income_need",
+            "allowed_classes",
+            "restricted_classes",
+            "dimensions",
+            "explanations",
+            "policy_preview",
         )
     return _select(
         data,
