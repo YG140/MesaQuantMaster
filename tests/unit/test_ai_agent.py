@@ -276,6 +276,76 @@ def test_registry_wires_all_read_only_services_to_authenticated_user():
     assert calls[-1][2] == Decimal("5000")
 
 
+def test_get_investor_profile_tool_uses_only_authenticated_user():
+    user_id = uuid4()
+    other_user_id = uuid4()
+    calls = []
+
+    class FakeInvestorProfileService:
+        def get_profile(self, received_user_id):
+            calls.append(received_user_id)
+            return {
+                "id": str(uuid4()),
+                "user_id": str(received_user_id),
+                "status": "complete",
+                "primary_objective": "crescimento_patrimonial",
+                "dimensions": {"overall_classification": "Moderado"},
+            }
+
+    registry = AIToolRegistry(
+        market_intelligence=SimpleNamespace(),
+        portfolio_intelligence=SimpleNamespace(),
+        investor_profile=FakeInvestorProfileService(),
+    )
+    result = registry.execute("get_investor_profile", {}, user_id)
+
+    assert calls == [user_id]
+    assert other_user_id not in calls
+    assert "user_id" not in json.dumps(result)
+
+
+def test_get_investor_profile_never_leaks_detailed_financial_fields():
+    class FakeInvestorProfileService:
+        def get_profile(self, received_user_id):
+            return {
+                "id": str(uuid4()),
+                "user_id": str(received_user_id),
+                "status": "complete",
+                "primary_objective": "aposentadoria",
+                "income_range": "8000_a_20000",
+                "investable_net_worth_range": "acima_200000",
+                "has_relevant_debt": True,
+                "dependents": 2,
+                "initial_contribution": "50000",
+                "answers": {"knowledge": {"answers": {"volatilidade": "b"}}},
+                "dimensions": {"overall_classification": "Moderado"},
+            }
+
+    registry = AIToolRegistry(
+        market_intelligence=SimpleNamespace(),
+        portfolio_intelligence=SimpleNamespace(),
+        investor_profile=FakeInvestorProfileService(),
+    )
+    result = registry.execute("get_investor_profile", {}, uuid4())
+    payload = json.dumps(result)
+
+    assert "income_range" not in payload
+    assert "investable_net_worth_range" not in payload
+    assert "has_relevant_debt" not in payload
+    assert "dependents" not in payload
+    assert "initial_contribution" not in payload
+    assert "answers" not in payload
+    assert "8000_a_20000" not in payload
+
+
+def test_get_investor_profile_gracefully_degrades_when_not_wired():
+    registry = AIToolRegistry(
+        market_intelligence=SimpleNamespace(), portfolio_intelligence=SimpleNamespace()
+    )
+    result = registry.execute("get_investor_profile", {}, uuid4())
+    assert result["untrusted_tool_data"]["status"] == "insufficient_data"
+
+
 def test_asset_payload_is_minimized_before_provider():
     class Snapshot(BaseModel):
         symbol: str
@@ -409,6 +479,7 @@ def test_only_read_only_tools_are_registered_with_strict_schema():
         "analyze_portfolio",
         "get_portfolio_policy",
         "build_portfolio_suggestion",
+        "get_investor_profile",
     }
     assert all(tool["strict"] for tool in tool_definitions())
     assert all(

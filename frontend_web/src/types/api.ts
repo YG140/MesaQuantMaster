@@ -12,6 +12,137 @@ export type TokenResponse = {
   token_type: string;
 };
 
+export type OnboardingStatus =
+  | "needs_onboarding"
+  | "in_progress"
+  | "pending_confirmation"
+  | "complete"
+  | "needs_review";
+
+export type InvestorProfileStatusResponse = {
+  status: OnboardingStatus;
+  version: number;
+  last_reviewed_at: string | null;
+  confirmed_at: string | null;
+  updated_at: string | null;
+};
+
+export type ObjectivesAnswer = {
+  primary_objective: string | null;
+  secondary_objectives: string[];
+};
+export type HorizonAnswer = { horizon: string | null };
+export type ContributionAnswer = {
+  initial_contribution: string | null;
+  monthly_contribution: string | null;
+  contribution_stability: "fixo" | "variavel" | null;
+};
+export type FinancialSituationAnswer = {
+  income_range: string | null;
+  investable_net_worth_range: string | null;
+  emergency_reserve_months: number | null;
+  has_relevant_debt: boolean | null;
+  dependents: number | null;
+};
+export type LiquidityAnswer = { liquidity_need: string | null };
+export type IncomeNeedAnswer = { income_need: string | null };
+export type KnowledgeAnswer = { answers: Record<string, string> };
+export type RiskToleranceAnswer = { scenarios: Record<string, string> };
+export type RestrictionsAnswer = {
+  restricted_classes: string[];
+  allowed_classes: string[];
+};
+
+export type InvestorProfileAnswers = {
+  objectives?: ObjectivesAnswer | null;
+  horizon?: HorizonAnswer | null;
+  contribution?: ContributionAnswer | null;
+  financial_situation?: FinancialSituationAnswer | null;
+  liquidity?: LiquidityAnswer | null;
+  income_need?: IncomeNeedAnswer | null;
+  knowledge?: KnowledgeAnswer | null;
+  risk_tolerance?: RiskToleranceAnswer | null;
+  restrictions?: RestrictionsAnswer | null;
+};
+
+export type InvestorProfileDimensions = {
+  risk_tolerance_score: number;
+  risk_capacity_score: number;
+  horizon_score: number;
+  liquidity_need_score: number;
+  income_need_score: number;
+  knowledge_score: number;
+  emergency_reserve_adequacy_score: number;
+  overall_classification: string;
+};
+
+export type DimensionExplanation = {
+  dimension: string;
+  rule: string;
+  result: string | number;
+  message: string;
+};
+
+export type PolicyPreviewAllocation = {
+  asset_class: string;
+  target_percentage: string;
+  minimum_percentage: string;
+  maximum_percentage: string;
+  enabled: boolean;
+};
+
+export type PolicyPreview = {
+  objective: string;
+  risk_profile: string;
+  investment_horizon: string;
+  monthly_contribution: string;
+  liquidity_need: string;
+  income_need: boolean;
+  emergency_reserve_months: number;
+  maximum_weight_per_asset: string;
+  maximum_weight_per_sector: string;
+  maximum_weight_per_issuer: string;
+  rebalance_tolerance: string;
+  allocations: PolicyPreviewAllocation[];
+};
+
+export type InvestorProfileEvaluation = {
+  dimensions: InvestorProfileDimensions;
+  explanations: DimensionExplanation[];
+  policy_preview: PolicyPreview;
+  missing_sections: string[];
+};
+
+export type InvestorProfile = {
+  id: string;
+  user_id: string;
+  status: OnboardingStatus;
+  version: number;
+  primary_objective: string | null;
+  secondary_objectives: string[] | null;
+  horizon: string | null;
+  initial_contribution: string | null;
+  monthly_contribution: string | null;
+  contribution_stability: string | null;
+  income_range: string | null;
+  investable_net_worth_range: string | null;
+  emergency_reserve_months: number | null;
+  has_relevant_debt: boolean | null;
+  dependents: number | null;
+  liquidity_need: string | null;
+  income_need: string | null;
+  allowed_classes: string[] | null;
+  restricted_classes: string[] | null;
+  dimensions: InvestorProfileDimensions | null;
+  explanations: DimensionExplanation[] | null;
+  policy_preview: PolicyPreview | null;
+  evaluated_at: string | null;
+  confirmed_at: string | null;
+  last_reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Brokerage = {
   id: string;
   name: string;
