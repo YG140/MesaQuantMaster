@@ -251,6 +251,13 @@ class SmartPortfolioEngine:
         for candidate in candidates:
             snapshot = candidate.snapshot
             score = cls._effective_score(snapshot)
+            if score is None:
+                # Invariante estrutural (P4): eligibility() já excluiu todo
+                # candidato com confidence == INSUFFICIENT, o que cobre
+                # "nenhum score component real". Se mesmo assim chegar aqui
+                # sem nenhum component, o candidato é excluído do ranking em
+                # vez de receber um score inventado — nunca 0.
+                continue
             if snapshot.strategy_fit_score is not None:
                 score = score * Decimal("0.8") + snapshot.strategy_fit_score * Decimal(
                     "0.2"
@@ -265,14 +272,16 @@ class SmartPortfolioEngine:
         return sorted(ranked, key=lambda item: (-item[1], item[0].snapshot.symbol))
 
     @staticmethod
-    def _effective_score(snapshot) -> Decimal:
+    def _effective_score(snapshot) -> Decimal | None:
         """Nunca fabrica score. Usa overall_score real quando existir; senão
         deriva a média SOMENTE dos score components realmente calculados
-        (nunca preenche um component ausente com zero). Um candidato sem
-        nenhum component real não deveria chegar aqui — teria
-        confidence == INSUFFICIENT e sido excluído em eligibility(); o
-        fallback para 0 abaixo é só uma rede de segurança determinística,
-        nunca um valor fabricado para um caso real.
+        (nunca preenche um component ausente com zero).
+
+        Um candidato sem overall_score e sem nenhum component real não
+        deveria chegar aqui — teria confidence == INSUFFICIENT e sido
+        excluído em eligibility(). Se isso ocorrer mesmo assim (P4: violação
+        de invariante, não caso real esperado), retorna None em vez de um
+        score fabricado; o chamador (score()) exclui o candidato do ranking.
         """
         if snapshot.overall_score is not None:
             return snapshot.overall_score
@@ -282,7 +291,7 @@ class SmartPortfolioEngine:
             if value is not None
         ]
         if not components:
-            return Decimal("0")
+            return None
         return (sum(components, Decimal("0")) / Decimal(len(components))).quantize(CENT)
 
     @classmethod
@@ -492,6 +501,23 @@ class SmartPortfolioEngine:
             for reason in exclusion.reasons:
                 exclusion_reason_counts[reason] += 1
 
+        # Aditivo (P4): agrega o resolution_summary (P4) de cada snapshot —
+        # puro diagnóstico de fontes/fallback, nunca usado como gate aqui.
+        provider_failure_reason_counts: dict[str, int] = defaultdict(int)
+        fallback_success_count = 0
+        unresolved_after_fallback_count = 0
+        stale_assets_count = 0
+        for snapshot in snapshots:
+            summary = snapshot.resolution_summary
+            if summary is None:
+                continue
+            for reason, count in summary.failure_reason_counts.items():
+                provider_failure_reason_counts[reason] += count
+            fallback_success_count += summary.fallback_success_count
+            unresolved_after_fallback_count += summary.unresolved_count
+            if summary.stale_count > 0:
+                stale_assets_count += 1
+
         return BuildPortfolioPreflight(
             universe_total=universe_total if universe_total is not None else len(candidates),
             universe_considered=(
@@ -514,4 +540,8 @@ class SmartPortfolioEngine:
             provider_error_count=len(provider_errors or []),
             class_counts=dict(class_counts),
             exclusion_reason_counts=dict(exclusion_reason_counts),
+            provider_failure_reason_counts=dict(provider_failure_reason_counts),
+            fallback_success_count=fallback_success_count,
+            unresolved_after_fallback_count=unresolved_after_fallback_count,
+            stale_assets_count=stale_assets_count,
         )

@@ -13,7 +13,12 @@ from app.engines.indicator_catalog import (
     provider_coverage_for_indicators,
     scoring_coverage_for_indicators,
 )
-from app.engines.market_intelligence_engine import AssetAnalysisEngine, confidence_for_asset
+from app.engines.market_intelligence_engine import (
+    AssetAnalysisEngine,
+    RecommendationEngine,
+    confidence_for_asset,
+    warning_reasons,
+)
 from app.models.asset import Asset
 from app.models.indicator_snapshot import IndicatorSnapshot
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
@@ -25,7 +30,10 @@ from app.repositories.indicator_snapshot_repository import (
 )
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
 from app.schemas.market import QuoteResponse, QuotesResponse
-from app.providers.exceptions import MarketAssetNotFoundError, MarketRateLimitError
+from app.providers.exceptions import (
+    MarketAssetNotFoundError,
+    MarketRateLimitError,
+)
 from app.schemas.market_intelligence import (
     AnalyzeAssetsRequest,
     AssetIntelligenceSnapshot,
@@ -38,7 +46,9 @@ from app.schemas.market_intelligence import (
     InvestmentClass,
     NormalizedIndicator,
     ProviderFailureReason,
+    ProviderResolutionAttempt,
     RecommendationAction,
+    ResolutionOutcome,
     ScoreBreakdown,
     ValuationAssessment,
     ValuationStatus,
@@ -47,6 +57,7 @@ from app.services.indicator_normalization_service import (
     IndicatorNormalizationService,
     classify_provider_failure_reason,
 )
+from app.services.indicator_resolver_service import build_resolution_summary
 from app.services.indicator_validation_service import IndicatorValidationService
 from app.services.market_intelligence_service import (
     MarketIntelligenceService,
@@ -207,8 +218,16 @@ def test_missing_fundamental_categories_do_not_score_as_zero():
     assert result.debt_score is None
     assert result.quality_score is None
     assert result.liquidity_score is not None
-    assert result.overall_score is None
+    # P4: overall_score não é mais gated por coverage_percentage legado —
+    # exige apenas >= MINIMUM_SCORING_CATEGORIES categorias reais (aqui,
+    # liquidity + risk a partir de preço/volume/variação da quote mínima).
+    # Nunca 0/fabricado: é a média real dessas categorias já calculadas.
+    assert result.overall_score is not None
+    assert result.overall_score > Decimal("0")
     assert result.valuation_status == ValuationStatus.INSUFFICIENT_DATA
+    # required (valuation/profitability/leverage) continua incompleto com só
+    # a quote mínima, então confidence continua INSUFFICIENT — overall_score
+    # e confidence são sinais independentes (P4).
     assert result.confidence == ConfidenceLevel.INSUFFICIENT
 
 
@@ -2043,16 +2062,21 @@ def test_missing_provider_failure_detail_does_not_force_blocking():
 
 
 # =====================================================================
-# CORREÇÃO — desacoplamento do confidence do gate legado de coverage.
+# CORREÇÃO — desacoplamento do confidence do gate legado de coverage (P1),
+# e fechamento final em P4: RecommendationEngine/overall_score também
+# deixaram de usar coverage_percentage legado como gate universal.
 #
-# confidence_for_asset não usa mais `overall_score is None` nem
+# confidence_for_asset não usa `overall_score is None` nem
 # `data_quality.recommendation_blocked` como gates diretos: ambos podiam
 # disparar puramente por causa do coverage_percentage legado (que mistura
 # indicadores não essenciais) ou por completeness/freshness não crítica,
-# contaminando indiretamente o novo confidence. RecommendationEngine e
-# SmartPortfolio continuam lendo esses mesmos campos legados sem qualquer
-# alteração nesta correção. Cada teste abaixo está rotulado com a letra do
-# cenário correspondente do prompt de correção.
+# contaminando indiretamente o confidence. Na fase P1, RecommendationEngine e
+# SmartPortfolio continuavam lendo esses mesmos campos legados sem alteração
+# — isso está registrado nos cenários A e I abaixo, que P4 atualizou para o
+# comportamento final: RecommendationEngine agora usa o confidence estrutural
+# (não mais coverage_percentage legado) como gate universal; SmartPortfolio
+# já usava confidence desde o P2 e permanece inalterado. Cada teste abaixo
+# está rotulado com a letra do cenário correspondente do prompt de correção.
 # =====================================================================
 
 
@@ -2136,7 +2160,10 @@ def _base_stock_snapshot(indicators, now, *, data_quality=None):
 # Cenário A: required=100 + scoring suficiente + coverage_percentage legado
 # < 40 por indicadores não essenciais -> confidence NÃO é INSUFFICIENT
 # (prova fim a fim via build_snapshot, não apenas chamando confidence_for_asset
-# com overall_score preenchido manualmente).
+# com overall_score preenchido manualmente). P4: overall_score e
+# RecommendationEngine também deixaram de depender do coverage legado, então
+# o mesmo cenário agora produz overall_score real e uma recomendação
+# estrutural, não mais INSUFFICIENT_DATA.
 def test_confidence_end_to_end_ignores_legacy_coverage_percentage_gate():
     now = datetime(2026, 7, 16, tzinfo=timezone.utc)
     indicators = _stock_indicators_required_satisfied_but_low_legacy_coverage(now)
@@ -2144,12 +2171,15 @@ def test_confidence_end_to_end_ignores_legacy_coverage_percentage_gate():
 
     result = AssetAnalysisEngine.build_snapshot(base)
 
-    # o gate legado continua disparando normalmente (overall_score vira None)...
+    # coverage_percentage legado continua existindo e baixo (compatibilidade)...
     assert result.coverage_percentage < Decimal("40")
-    assert result.overall_score is None
-    assert result.recommendation == RecommendationAction.INSUFFICIENT_DATA
-    # ...mas isso não contamina o novo confidence, que enxerga required=100%
-    # e categorias reais de score suficientes.
+    # ...mas não bloqueia mais overall_score nem a recomendação (P4): há
+    # categorias reais de score suficientes, então ambos são calculados de
+    # verdade, nunca None/insuficiente só por causa do coverage legado.
+    assert result.overall_score is not None
+    assert result.recommendation != RecommendationAction.INSUFFICIENT_DATA
+    # o novo confidence enxerga required=100% e categorias reais de score
+    # suficientes, e permanece LOW (não bloqueante) — nunca INSUFFICIENT.
     assert result.coverage_breakdown.required_coverage == Decimal("100.00")
     assert result.confidence != ConfidenceLevel.INSUFFICIENT
     assert result.confidence == ConfidenceLevel.LOW
@@ -2285,9 +2315,13 @@ def test_confidence_regression_legacy_coverage_percentage_field_untouched():
     assert result.coverage_percentage == expected
 
 
-# Cenário I: RecommendationEngine e SmartPortfolio continuam com o
-# comportamento legado intocado nesta fase (só o confidence foi desacoplado).
-def test_confidence_regression_recommendation_engine_still_gates_on_legacy_coverage():
+# Cenário I (atualizado em P4): na fase P1, RecommendationEngine ainda
+# gateava em coverage_percentage legado mesmo com confidence desacoplado —
+# esse comportamento estava documentado como deliberadamente adiado para P4.
+# P4 fecha essa lacuna: RecommendationEngine agora usa o mesmo confidence
+# estrutural, então required=100% + scoring suficiente (confidence LOW, não
+# INSUFFICIENT) já não é mais bloqueado por coverage_percentage < 40.
+def test_recommendation_engine_no_longer_gates_on_legacy_coverage_percentage_alone():
     now = datetime(2026, 7, 16, tzinfo=timezone.utc)
     indicators = _stock_indicators_required_satisfied_but_low_legacy_coverage(now)
     base = _base_stock_snapshot(indicators, now)
@@ -2295,5 +2329,395 @@ def test_confidence_regression_recommendation_engine_still_gates_on_legacy_cover
     result = AssetAnalysisEngine.build_snapshot(base)
 
     assert result.coverage_percentage < Decimal("40")
-    assert result.recommendation == RecommendationAction.INSUFFICIENT_DATA
     assert result.confidence == ConfidenceLevel.LOW
+    assert result.recommendation != RecommendationAction.INSUFFICIENT_DATA
+
+
+# =====================================================================
+# P4 — fechamento estrutural: RecommendationEngine agora gateia por
+# confidence (não mais coverage_percentage legado), warning_reasons com
+# causa específica, resolution_summary agregado a partir de P3.
+# =====================================================================
+
+
+def _valuation(
+    status=ValuationStatus.NEAR_ESTIMATED_VALUE, confidence=ConfidenceLevel.MEDIUM
+):
+    return ValuationAssessment(status=status, confidence=confidence)
+
+
+def _snapshot_for_recommend(
+    *, confidence=ConfidenceLevel.MEDIUM, data_quality=None, strategy_fit_score=None
+):
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    return AssetIntelligenceSnapshot(
+        symbol="XYZ4",
+        asset_class=InvestmentClass.STOCK,
+        indicators=[],
+        data_quality=data_quality,
+        strategy_fit_score=strategy_fit_score,
+        recommendation=RecommendationAction.INSUFFICIENT_DATA,
+        valuation_status=ValuationStatus.INSUFFICIENT_DATA,
+        valuation=ValuationAssessment(
+            status=ValuationStatus.INSUFFICIENT_DATA, confidence=ConfidenceLevel.INSUFFICIENT
+        ),
+        confidence=confidence,
+        coverage_percentage=Decimal("0"),
+        available_indicators_count=0,
+        missing_indicators_count=0,
+        stale_indicators_count=0,
+        calculated_at=now,
+    )
+
+
+def test_recommendation_engine_blocks_only_when_confidence_is_insufficient():
+    snapshot = _snapshot_for_recommend(confidence=ConfidenceLevel.INSUFFICIENT)
+    action = RecommendationEngine.recommend(
+        snapshot,
+        scores={},
+        valuation=_valuation(),
+        confidence=ConfidenceLevel.INSUFFICIENT,
+        overall_score=Decimal("90"),
+    )
+    assert action == RecommendationAction.INSUFFICIENT_DATA
+
+
+def test_recommendation_engine_does_not_block_on_low_medium_or_high_confidence():
+    for level in (ConfidenceLevel.LOW, ConfidenceLevel.MEDIUM, ConfidenceLevel.HIGH):
+        snapshot = _snapshot_for_recommend(confidence=level)
+        action = RecommendationEngine.recommend(
+            snapshot,
+            scores={},
+            valuation=_valuation(),
+            confidence=level,
+            overall_score=Decimal("80"),
+        )
+        assert action != RecommendationAction.INSUFFICIENT_DATA
+
+
+def test_recommendation_engine_still_reviews_on_data_quality_block():
+    blocked_quality = DataQualityReport(
+        data_completeness=Decimal("30"),
+        data_freshness=Decimal("30"),
+        recommendation_blocked=True,
+    )
+    snapshot = _snapshot_for_recommend(
+        confidence=ConfidenceLevel.MEDIUM, data_quality=blocked_quality
+    )
+    action = RecommendationEngine.recommend(
+        snapshot,
+        scores={},
+        valuation=_valuation(),
+        confidence=ConfidenceLevel.MEDIUM,
+        overall_score=Decimal("80"),
+    )
+    assert action == RecommendationAction.REVIEW_DATA
+
+
+def test_recommendation_engine_reviews_when_valuation_insufficient_but_confidence_ok():
+    snapshot = _snapshot_for_recommend(confidence=ConfidenceLevel.MEDIUM)
+    action = RecommendationEngine.recommend(
+        snapshot,
+        scores={},
+        valuation=_valuation(
+            status=ValuationStatus.INSUFFICIENT_DATA, confidence=ConfidenceLevel.INSUFFICIENT
+        ),
+        confidence=ConfidenceLevel.MEDIUM,
+        overall_score=Decimal("80"),
+    )
+    assert action == RecommendationAction.REVIEW_DATA
+
+
+def test_recommendation_engine_analyze_to_buy_above_threshold_with_ok_confidence():
+    snapshot = _snapshot_for_recommend(confidence=ConfidenceLevel.HIGH)
+    action = RecommendationEngine.recommend(
+        snapshot,
+        scores={},
+        valuation=_valuation(),
+        confidence=ConfidenceLevel.HIGH,
+        overall_score=Decimal("80"),
+    )
+    assert action == RecommendationAction.ANALYZE_TO_BUY
+
+
+def test_warning_reasons_never_uses_generic_insufficient_message_for_missing_required():
+    breakdown = CoverageBreakdown(
+        required_coverage=Decimal("66.67"), required_satisfied=2, required_total=3
+    )
+    snapshot = _snapshot_for_recommend(confidence=ConfidenceLevel.INSUFFICIENT)
+    reasons = warning_reasons(
+        snapshot, coverage_breakdown=breakdown, confidence=ConfidenceLevel.INSUFFICIENT
+    )
+    assert reasons
+    assert "Não existem dados suficientes" not in reasons[0]
+    assert "pilar" in reasons[0].lower()
+
+
+def test_warning_reasons_cites_scoring_categories_when_required_is_complete():
+    breakdown = CoverageBreakdown(
+        required_coverage=Decimal("100.00"), required_satisfied=3, required_total=3
+    )
+    snapshot = _snapshot_for_recommend(confidence=ConfidenceLevel.INSUFFICIENT)
+    reasons = warning_reasons(
+        snapshot, coverage_breakdown=breakdown, confidence=ConfidenceLevel.INSUFFICIENT
+    )
+    assert reasons
+    assert "categorias" in reasons[0].lower()
+
+
+def test_warning_reasons_cites_identity_or_conflict_for_critical_anomaly():
+    breakdown = CoverageBreakdown(
+        required_coverage=Decimal("100.00"), required_satisfied=3, required_total=3
+    )
+    snapshot = _snapshot_for_recommend(confidence=ConfidenceLevel.INSUFFICIENT).model_copy(
+        update={"anomaly_flags": ["identifier_unresolved"]}
+    )
+    reasons = warning_reasons(
+        snapshot, coverage_breakdown=breakdown, confidence=ConfidenceLevel.INSUFFICIENT
+    )
+    assert reasons
+    assert "identidade" in reasons[0].lower()
+
+
+def test_warning_reasons_empty_when_confidence_not_insufficient():
+    breakdown = CoverageBreakdown(
+        required_coverage=Decimal("100.00"), required_satisfied=3, required_total=3
+    )
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    snapshot = _snapshot_for_recommend(confidence=ConfidenceLevel.HIGH).model_copy(
+        update={"market_updated_at": now}
+    )
+    reasons = warning_reasons(
+        snapshot, coverage_breakdown=breakdown, confidence=ConfidenceLevel.HIGH
+    )
+    assert reasons == []
+
+
+# --- resolution_summary agregado (P4) a partir de resolution_attempts (P3) ---
+
+
+def _attempt(outcome, *, provider="BRAPI", reason=None, source_type="provider"):
+    return ProviderResolutionAttempt(
+        provider=provider,
+        source_type=source_type,
+        outcome=outcome,
+        provider_failure_reason=reason,
+        attempted_at=datetime(2026, 7, 16, tzinfo=timezone.utc),
+    )
+
+
+def test_resolution_summary_counts_attempts_successes_failures_and_fallback():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    resolved_first_try = NormalizedIndicator(
+        key="current_price",
+        label="Preço",
+        unit="currency",
+        status=IndicatorStatus.AVAILABLE,
+        source="BRAPI",
+        collected_at=now,
+        confidence=ConfidenceLevel.HIGH,
+        value=Decimal("10"),
+        resolution_attempts=[_attempt(ResolutionOutcome.SUCCESS)],
+    )
+    fallback_resolved = NormalizedIndicator(
+        key="treasury_rate",
+        label="Taxa",
+        unit="percent",
+        status=IndicatorStatus.AVAILABLE,
+        source="Tesouro Transparente",
+        collected_at=now,
+        confidence=ConfidenceLevel.HIGH,
+        value=Decimal("6"),
+        resolution_attempts=[
+            _attempt(
+                ResolutionOutcome.FAILURE,
+                provider="BRAPI",
+                reason=ProviderFailureReason.RATE_LIMITED,
+            ),
+            _attempt(
+                ResolutionOutcome.SUCCESS,
+                provider="Tesouro Transparente",
+                source_type="official",
+            ),
+        ],
+    )
+    still_missing = NormalizedIndicator(
+        key="dividend_yield",
+        label="DY",
+        unit="percent",
+        status=IndicatorStatus.UNAVAILABLE,
+        source="BRAPI",
+        collected_at=now,
+        confidence=ConfidenceLevel.INSUFFICIENT,
+        resolution_attempts=[
+            _attempt(ResolutionOutcome.FAILURE, reason=ProviderFailureReason.NOT_REPORTED)
+        ],
+    )
+    stale_one = NormalizedIndicator(
+        key="price_book",
+        label="P/VP",
+        unit="ratio",
+        status=IndicatorStatus.STALE,
+        source="CVM",
+        collected_at=now,
+        confidence=ConfidenceLevel.LOW,
+        resolution_attempts=[
+            _attempt(
+                ResolutionOutcome.SUCCESS, provider="CVM", reason=ProviderFailureReason.STALE
+            )
+        ],
+    )
+
+    summary = build_resolution_summary(
+        [resolved_first_try, fallback_resolved, still_missing, stale_one]
+    )
+
+    assert summary.attempt_count == 5
+    assert summary.success_count == 3
+    assert summary.failure_count == 2
+    assert summary.fallback_success_count == 1
+    assert summary.unresolved_count == 1
+    assert summary.stale_count == 1
+    assert "BRAPI" in summary.sources_used
+    assert "Tesouro Transparente" in summary.sources_used
+    assert summary.failure_reason_counts["rate_limited"] == 1
+    assert summary.failure_reason_counts["not_reported"] == 1
+
+
+def test_resolution_summary_empty_when_no_attempts_ever_made():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    available = NormalizedIndicator(
+        key="current_price",
+        label="Preço",
+        unit="currency",
+        status=IndicatorStatus.AVAILABLE,
+        source="BRAPI",
+        collected_at=now,
+        confidence=ConfidenceLevel.HIGH,
+        value=Decimal("10"),
+    )
+    summary = build_resolution_summary([available])
+    assert summary.attempt_count == 0
+    assert summary.success_count == 0
+    assert summary.sources_used == []
+
+
+def test_resolution_summary_failure_reason_counts_never_carry_raw_detail():
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicator = NormalizedIndicator(
+        key="current_price",
+        label="Preço",
+        unit="currency",
+        status=IndicatorStatus.UNAVAILABLE,
+        source="BRAPI",
+        collected_at=now,
+        confidence=ConfidenceLevel.INSUFFICIENT,
+        resolution_attempts=[
+            ProviderResolutionAttempt(
+                provider="BRAPI",
+                source_type="provider",
+                outcome=ResolutionOutcome.FAILURE,
+                provider_failure_reason=ProviderFailureReason.UNAUTHORIZED,
+                attempted_at=now,
+                detail="[REDACTED]",
+            )
+        ],
+    )
+    summary = build_resolution_summary([indicator])
+    assert list(summary.failure_reason_counts.keys()) == ["unauthorized"]
+    assert "Bearer" not in str(summary.failure_reason_counts)
+
+
+# --- fim a fim (cenários 36-38 do prompt P4) -------------------------------
+
+
+def test_end_to_end_partial_fallback_low_confidence_still_gets_recommendation():
+    """Cenário 36: required completo + >=2 categorias reais + coverage legado
+    < 40 + fallback parcial resolvido + confidence LOW -> NÃO vira
+    INSUFFICIENT_DATA só por causa do coverage legado ou do fallback parcial."""
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicators = _stock_indicators_required_satisfied_but_low_legacy_coverage(now)
+    # marca um dos indicadores como resolvido via fallback após uma falha real.
+    by_key = {item.key: item for item in indicators}
+    rate_limited = by_key["dividend_yield"].model_copy(
+        update={
+            "resolution_attempts": [
+                _attempt(
+                    ResolutionOutcome.FAILURE,
+                    provider="BRAPI",
+                    reason=ProviderFailureReason.RATE_LIMITED,
+                ),
+                _attempt(ResolutionOutcome.SUCCESS, provider="CVM Dados Abertos", source_type="official"),
+            ]
+        }
+    )
+    indicators = [rate_limited if item.key == "dividend_yield" else item for item in indicators]
+    base = _base_stock_snapshot(indicators, now)
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    assert result.confidence == ConfidenceLevel.LOW
+    assert result.recommendation != RecommendationAction.INSUFFICIENT_DATA
+    assert result.overall_score is not None
+
+
+def test_end_to_end_partial_valuation_insufficiency_does_not_block_whole_asset():
+    """Cenário 37: required completo + scoring suficiente, mas valuation
+    isoladamente insuficiente -> REVIEW_DATA, nunca ANÁLISE INSUFICIENTE.
+
+    O pilar REQUIRED "valuation" aceita price_earnings/price_book/ev_ebitda
+    (ANY_OF), enquanto ValuationEngine.assess só reconhece
+    price_earnings/price_book/dividend_yield. Usando ev_ebitda em vez de
+    price_book satisfaz o pilar estrutural sem satisfazer ValuationEngine —
+    prova que os dois são sinais independentes.
+    """
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    indicators = [
+        _etf_indicator("current_price", "Preço atual", "currency", value=Decimal("39.89")),
+        _etf_indicator("volume", "Volume", "quantity", value=Decimal("1000000")),
+        _etf_indicator("ev_ebitda", "EV/EBITDA", "ratio", value=Decimal("6.5")),
+        _etf_indicator("net_margin", "Margem líquida", "percent", value=Decimal("12.0")),
+        _etf_indicator("net_debt_equity", "Dívida/PL", "ratio", value=Decimal("0.8")),
+    ]
+    base = _base_stock_snapshot(indicators, now)
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    assert result.coverage_breakdown.required_coverage == Decimal("100.00")
+    assert result.valuation_status == ValuationStatus.INSUFFICIENT_DATA
+    assert result.confidence != ConfidenceLevel.INSUFFICIENT
+    assert result.recommendation == RecommendationAction.REVIEW_DATA
+
+
+def test_end_to_end_total_fallback_failure_never_becomes_zero_and_explains_cause():
+    """Cenário 38: nenhuma fonte resolve um indicador REQUIRED -> valor
+    continua None (nunca 0), confidence pode ficar INSUFFICIENT, e a
+    mensagem explica a causa real (pilar obrigatório), não genérica."""
+    now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+    price = NormalizedIndicator(
+        key="current_price",
+        label="Preço atual",
+        unit="currency",
+        status=IndicatorStatus.UNAVAILABLE,
+        source="BRAPI",
+        collected_at=now,
+        confidence=ConfidenceLevel.INSUFFICIENT,
+        unavailable_reason="Nenhuma fonte resolveu o preço.",
+        resolution_attempts=[
+            _attempt(ResolutionOutcome.FAILURE, reason=ProviderFailureReason.PROVIDER_UNAVAILABLE),
+            _attempt(ResolutionOutcome.FAILURE, provider="CVM Dados Abertos", source_type="official", reason=ProviderFailureReason.NOT_SYNCED),
+        ],
+    )
+    base = _base_stock_snapshot([price], now)
+
+    result = AssetAnalysisEngine.build_snapshot(base)
+
+    resolved_price = next(item for item in result.indicators if item.key == "current_price")
+    assert resolved_price.value is None
+    assert resolved_price.value != Decimal("0")
+    assert result.confidence == ConfidenceLevel.INSUFFICIENT
+    assert result.warning_reasons
+    assert "Não existem dados suficientes" not in result.warning_reasons[0]
+    summary = build_resolution_summary(result.indicators)
+    assert summary.failure_count == 2
+    assert summary.unresolved_count == 1

@@ -15,6 +15,7 @@ from app.schemas.market_intelligence import (
     InvestmentClass,
     NormalizedIndicator,
     RecommendationAction,
+    ResolutionSummary,
     ValuationAssessment,
     ValuationStatus,
 )
@@ -487,12 +488,25 @@ def test_missing_score_component_is_excluded_not_zero_filled():
 
 
 def test_no_zero_fill_when_overall_score_and_components_all_missing():
-    """overall_score=None + nenhum component real: o fallback determinístico
-    para 0 é só rede de segurança (candidato assim teria confidence
-    INSUFFICIENT e seria excluído antes de chegar ao ranking), nunca um
-    valor fabricado para um caso real analisável."""
+    """P4: overall_score=None + nenhum component real nunca mais vira score 0.
+
+    Um candidato assim teria confidence INSUFFICIENT e seria excluído antes
+    de chegar ao ranking pela eligibility() normal — se ainda assim chegar
+    aqui, é tratado como violação de invariante: _effective_score retorna
+    None (nunca um valor fabricado), e o candidato não recebe ranking
+    numérico nenhum."""
     snapshot = candidate("ZZZZ3", score=None).snapshot
-    assert SmartPortfolioEngine._effective_score(snapshot) == Decimal("0")
+    assert SmartPortfolioEngine._effective_score(snapshot) is None
+    assert SmartPortfolioEngine._effective_score(snapshot) != Decimal("0")
+
+
+def test_candidate_without_any_real_score_is_excluded_from_ranking_not_scored_zero():
+    """P4: score() nunca inclui no ranking um candidato sem overall_score e
+    sem nenhum score component real — é excluído, não recebe score 0."""
+    req = request()
+    portfolio_candidate = candidate("ZZZZ3", score=None)
+    ranked = SmartPortfolioEngine.score(req, [portfolio_candidate])
+    assert ranked == []
 
 
 # Cenário 23: ranking alternativo usa somente components reais (fim a fim).
@@ -851,3 +865,98 @@ def test_max_assets_limits_final_selection_not_universe_considered():
 # Cenário 58: provider errors permanecem diagnósticos (não substituem dados
 # válidos nem derrubam o resultado) — já provado em
 # test_partial_batch_failure_preserves_valid_snapshots_and_counts_errors.
+
+
+# =====================================================================
+# P4 — preflight agregado a partir de resolution_summary (P4)/
+# resolution_attempts (P3). Puro diagnóstico, nunca gate de elegibilidade.
+# =====================================================================
+
+
+def test_preflight_aggregates_provider_failure_reasons_and_fallback_from_candidates():
+    with_fallback = candidate("AAAA3", confidence=ConfidenceLevel.MEDIUM)
+    with_fallback = PortfolioCandidate(
+        snapshot=with_fallback.snapshot.model_copy(
+            update={
+                "resolution_summary": ResolutionSummary(
+                    attempt_count=2,
+                    success_count=1,
+                    failure_count=1,
+                    fallback_success_count=1,
+                    unresolved_count=0,
+                    stale_count=0,
+                    sources_used=["CVM Dados Abertos"],
+                    failure_reason_counts={"rate_limited": 1},
+                )
+            }
+        ),
+        sector=with_fallback.sector,
+        issuer=with_fallback.issuer,
+    )
+    with_unresolved = candidate("BBBB3", confidence=ConfidenceLevel.MEDIUM)
+    with_unresolved = PortfolioCandidate(
+        snapshot=with_unresolved.snapshot.model_copy(
+            update={
+                "resolution_summary": ResolutionSummary(
+                    attempt_count=1,
+                    success_count=0,
+                    failure_count=1,
+                    fallback_success_count=0,
+                    unresolved_count=1,
+                    stale_count=1,
+                    sources_used=[],
+                    failure_reason_counts={"not_synced": 1},
+                )
+            }
+        ),
+        sector=with_unresolved.sector,
+        issuer=with_unresolved.issuer,
+    )
+    no_summary = candidate("CCCC3", confidence=ConfidenceLevel.MEDIUM)
+
+    response = SmartPortfolioEngine.build(
+        request(), [with_fallback, with_unresolved, no_summary]
+    )
+
+    assert response.preflight.provider_failure_reason_counts == {
+        "rate_limited": 1,
+        "not_synced": 1,
+    }
+    assert response.preflight.fallback_success_count == 1
+    assert response.preflight.unresolved_after_fallback_count == 1
+    assert response.preflight.stale_assets_count == 1
+
+
+def test_preflight_defaults_are_safe_when_no_candidate_has_resolution_summary():
+    plain = candidate("AAAA3", confidence=ConfidenceLevel.MEDIUM)
+    response = SmartPortfolioEngine.build(request(), [plain])
+
+    assert response.preflight.provider_failure_reason_counts == {}
+    assert response.preflight.fallback_success_count == 0
+    assert response.preflight.unresolved_after_fallback_count == 0
+    assert response.preflight.stale_assets_count == 0
+
+
+def test_preflight_never_uses_resolution_summary_as_eligibility_gate():
+    # Mesmo com falha/stale/unresolved agregados, o candidato continua
+    # elegível se confidence não for INSUFFICIENT — resolution_summary é
+    # só diagnóstico, nunca gate.
+    stale_but_medium = candidate("AAAA3", confidence=ConfidenceLevel.MEDIUM)
+    stale_but_medium = PortfolioCandidate(
+        snapshot=stale_but_medium.snapshot.model_copy(
+            update={
+                "resolution_summary": ResolutionSummary(
+                    attempt_count=1,
+                    failure_count=1,
+                    unresolved_count=1,
+                    stale_count=1,
+                    failure_reason_counts={"provider_unavailable": 1},
+                )
+            }
+        ),
+        sector=stale_but_medium.sector,
+        issuer=stale_but_medium.issuer,
+    )
+    response = SmartPortfolioEngine.build(request(), [stale_but_medium])
+    assert response.preflight.stale_assets_count == 1
+    assert any(asset.symbol == "AAAA3" for asset in response.assets)

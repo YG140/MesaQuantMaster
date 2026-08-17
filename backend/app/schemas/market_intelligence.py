@@ -299,6 +299,24 @@ class ValuationAssessment(BaseModel):
     data_date: datetime | None = None
 
 
+class ResolutionSummary(BaseModel):
+    """Diagnóstico agregado (P4) derivado de resolution_attempts (P3).
+
+    Puramente observacional: nenhuma decisão estrutural (confidence,
+    coverage_breakdown, elegibilidade) depende deste campo — é derivado em
+    runtime a partir dos indicadores já resolvidos, sem plataforma externa.
+    """
+
+    attempt_count: int = 0
+    success_count: int = 0
+    failure_count: int = 0
+    fallback_success_count: int = 0
+    unresolved_count: int = 0
+    stale_count: int = 0
+    sources_used: list[str] = Field(default_factory=list)
+    failure_reason_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class AssetIntelligenceSnapshot(BaseModel):
     asset_id: UUID | None = None
     symbol: str
@@ -333,6 +351,7 @@ class AssetIntelligenceSnapshot(BaseModel):
     positive_reasons: list[str] = Field(default_factory=list)
     warning_reasons: list[str] = Field(default_factory=list)
     missing_data: list[str] = Field(default_factory=list)
+    resolution_summary: ResolutionSummary | None = None
     calculated_at: datetime
 
 
