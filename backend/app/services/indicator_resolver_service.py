@@ -5,6 +5,7 @@ from decimal import Decimal
 import json
 
 from app.core.config import settings
+from app.engines.derived_indicator_engine import DerivedIndicatorEngine
 from app.engines.indicator_catalog import indicator_temporal_validity_days
 from app.providers.bcb_sgs_provider import BcbSgsProvider
 from app.providers.cvm_open_data_provider import CvmOpenDataProvider
@@ -31,6 +32,20 @@ from app.services.indicator_normalization_service import (
     sanitize_failure_detail,
 )
 from app.services.market_service import MarketService
+
+
+# Indicadores que DerivedIndicatorEngine sabe calcular a partir de
+# componentes brutos CVM (seção 6 do resolver híbrido) — só tentados quando
+# ainda pendentes após BRAPI/CVM direto, nunca substituindo um valor já
+# resolvido por fonte de maior prioridade.
+DERIVED_INDICATOR_KEYS = (
+    "roe",
+    "roa",
+    "net_debt",
+    "net_debt_equity",
+    "liabilities_assets",
+    "current_liquidity",
+)
 
 
 class IndicatorResolverService:
@@ -117,7 +132,7 @@ class IndicatorResolverService:
                 )
 
         if asset_id is not None and self._has_unresolved(resolved):
-            self._apply_cvm(resolved, asset_id, collected_at)
+            self._apply_cvm(resolved, asset_id, collected_at, symbol=symbol)
 
         if self._has_unresolved(resolved):
             self._apply_stale_snapshot_fallback(resolved, symbol, collected_at)
@@ -507,7 +522,7 @@ class IndicatorResolverService:
                 }
             )
 
-    def _apply_cvm(self, resolved, asset_id, collected_at) -> None:
+    def _apply_cvm(self, resolved, asset_id, collected_at, symbol=None) -> None:
         if self.cvm_repository is None:
             return
         pending = self._unresolved_keys(resolved)
@@ -515,6 +530,8 @@ class IndicatorResolverService:
             return
 
         issuer = self.cvm_repository.linked_issuer(asset_id)
+        if issuer is None and symbol is not None:
+            issuer = self._auto_link_cvm_issuer(asset_id, symbol)
         if issuer is None:
             self._append_attempts(
                 resolved,
@@ -606,6 +623,13 @@ class IndicatorResolverService:
             resolved_keys.add(key)
 
         still_pending = pending - resolved_keys
+        derived_pending = still_pending & set(DERIVED_INDICATOR_KEYS)
+        if derived_pending:
+            derived_resolved = self._apply_cvm_derived_indicators(
+                resolved, grouped, derived_pending, collected_at
+            )
+            still_pending -= derived_resolved
+
         if still_pending:
             self._append_attempts(
                 resolved,
@@ -616,6 +640,195 @@ class IndicatorResolverService:
                 reason=ProviderFailureReason.NOT_REPORTED,
                 attempted_at=collected_at,
             )
+
+    def _auto_link_cvm_issuer(self, asset_id, symbol: str):
+        """Vincula automaticamente ativo<->emissor CVM por CNPJ EXATO.
+
+        Nunca por nome (sem fuzzy matching silencioso — ver seção 7 do
+        resolver híbrido): usa o CNPJ retornado pelo perfil do provedor de
+        mercado e só vincula se houver correspondência exata e única com um
+        CvmIssuer já sincronizado via DFP/ITR. Qualquer falha ao buscar o
+        perfil (provider indisponível, ticker sem perfil etc.) é absorvida
+        aqui e apenas resulta em "ainda não vinculado" — nunca interrompe a
+        cascata de resolução.
+        """
+        if self.market_service is None:
+            return None
+        try:
+            profile = self.market_service.get_profile(symbol)
+        except Exception:
+            return None
+        cnpj = CvmOpenDataProvider.normalize_cnpj(getattr(profile, "cnpj", None) or "")
+        if not cnpj:
+            return None
+        issuer = self.cvm_repository.find_issuer_by_cnpj(cnpj)
+        if issuer is None:
+            return None
+        self.cvm_repository.link_asset(asset_id, issuer.id)
+        return issuer
+
+    def _apply_cvm_derived_indicators(
+        self, resolved, grouped, pending: set[str], collected_at: datetime
+    ) -> set[str]:
+        """Calcula indicadores derivados (seção 6 do resolver híbrido) a
+        partir de componentes brutos já apurados pelo CVM, quando todos os
+        componentes necessários existem e compartilham o MESMO período de
+        referência — nunca mistura períodos incompatíveis, nunca divide por
+        zero, nunca converte ausência em zero.
+        """
+        components: dict[str, Decimal] = {}
+        periods: dict[str, date] = {}
+        for raw_key in (
+            "net_income",
+            "equity",
+            "assets",
+            "net_debt",
+            "total_liabilities",
+            "current_assets",
+            "current_liabilities",
+            "gross_debt",
+            "cash_and_equivalents",
+        ):
+            rows = grouped.get(raw_key)
+            if not rows:
+                continue
+            components[raw_key] = sum(
+                (Decimal(account.normalized_value) for account, _, _ in rows),
+                Decimal("0"),
+            )
+            periods[raw_key] = rows[0][1].period_end
+
+        net_debt_value = components.get("net_debt")
+        net_debt_period = periods.get("net_debt")
+        calculations: list[tuple] = []
+        if (
+            net_debt_value is None
+            and "gross_debt" in components
+            and "cash_and_equivalents" in components
+            and periods["gross_debt"] == periods["cash_and_equivalents"]
+        ):
+            net_debt_result = DerivedIndicatorEngine.net_debt(
+                gross_debt=components["gross_debt"],
+                cash_and_equivalents=components["cash_and_equivalents"],
+            )
+            if net_debt_result is not None:
+                net_debt_value = net_debt_result.value
+                net_debt_period = periods["gross_debt"]
+                calculations.append((net_debt_result, net_debt_period))
+
+        def _same_period(*keys: str) -> bool:
+            values = {periods[k] for k in keys if k in periods}
+            return len(values) == 1
+
+        if "net_income" in components and "equity" in components and _same_period(
+            "net_income", "equity"
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.roe(
+                        net_income=components["net_income"], equity=components["equity"]
+                    ),
+                    periods["equity"],
+                )
+            )
+        if "net_income" in components and "assets" in components and _same_period(
+            "net_income", "assets"
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.roa(
+                        net_income=components["net_income"], assets=components["assets"]
+                    ),
+                    periods["assets"],
+                )
+            )
+        if (
+            net_debt_value is not None
+            and "equity" in components
+            and net_debt_period == periods["equity"]
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.net_debt_equity(
+                        net_debt=net_debt_value, equity=components["equity"]
+                    ),
+                    periods["equity"],
+                )
+            )
+        if (
+            "total_liabilities" in components
+            and "assets" in components
+            and _same_period("total_liabilities", "assets")
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.liabilities_assets(
+                        total_liabilities=components["total_liabilities"],
+                        assets=components["assets"],
+                    ),
+                    periods["assets"],
+                )
+            )
+        if (
+            "current_assets" in components
+            and "current_liabilities" in components
+            and _same_period("current_assets", "current_liabilities")
+        ):
+            calculations.append(
+                (
+                    DerivedIndicatorEngine.current_liquidity(
+                        current_assets=components["current_assets"],
+                        current_liabilities=components["current_liabilities"],
+                    ),
+                    periods["current_assets"],
+                )
+            )
+
+        resolved_keys: set[str] = set()
+        for result, period_end in calculations:
+            if result is None or result.key not in pending:
+                continue
+            current = resolved.get(result.key)
+            if current is None or current.status in self._RESOLVED_STATUSES:
+                continue
+            reference = datetime.combine(period_end, time.min, tzinfo=timezone.utc)
+            attempt = ProviderResolutionAttempt(
+                provider="CVM Dados Abertos (derivado)",
+                source_type="derived",
+                dataset="derived_indicator",
+                outcome=ResolutionOutcome.SUCCESS,
+                attempted_at=collected_at,
+                reference_date=reference,
+            )
+            resolved[result.key] = current.model_copy(
+                update={
+                    "value": result.value,
+                    "display_value": display_value(result.value, result.unit, None),
+                    "unit": result.unit,
+                    "status": IndicatorStatus.AVAILABLE,
+                    "source": "CVM Dados Abertos (derivado)",
+                    "source_type": "derived",
+                    "reference_date": reference,
+                    "collected_at": collected_at,
+                    "valid_until": reference + timedelta(days=100),
+                    "freshness_status": "current",
+                    "confidence": ConfidenceLevel.HIGH,
+                    "period": "calculado a partir de DFP/ITR",
+                    "unavailable_reason": None,
+                    "provider_failure_reason": None,
+                    "provenance": {
+                        "provider": "cvm_derived",
+                        "formula": result.formula,
+                        "components": {
+                            key: str(value) for key, value in result.components.items()
+                        },
+                        "reference_date": period_end.isoformat(),
+                    },
+                    "resolution_attempts": [*current.resolution_attempts, attempt],
+                }
+            )
+            resolved_keys.add(result.key)
+        return resolved_keys
 
     def _apply_stale_snapshot_fallback(
         self, resolved: dict[str, NormalizedIndicator], symbol: str, collected_at: datetime

@@ -9,10 +9,18 @@ from app.providers.cvm_open_data_provider import CvmRawAccount
 class CvmFinancialEngine:
     """Mapeamento explícito de contas fixas CVM; não acessa banco ou rede."""
 
+    # Chaves alinhadas ao contrato canônico de app.engines.indicator_catalog:
+    # itens de balanço/DRE que possuem indicador de catálogo correspondente
+    # usam o MESMO nome (assets, cash_and_equivalents, equity, current_assets,
+    # current_liabilities, gross_debt) para que _apply_cvm() consiga casar o
+    # valor com o indicador certo. Itens sem indicador de catálogo próprio
+    # (total_liabilities, revenue, net_income etc.) mantêm nome descritivo —
+    # servem apenas como componentes de entrada para DerivedIndicatorEngine,
+    # nunca são publicados como indicador autônomo.
     ACCOUNT_MAP = {
-        ("BPA", "1"): "total_assets",
+        ("BPA", "1"): "assets",
         ("BPA", "1.01"): "current_assets",
-        ("BPA", "1.01.01"): "cash",
+        ("BPA", "1.01.01"): "cash_and_equivalents",
         ("BPP", "2"): "total_liabilities",
         ("BPP", "2.01"): "current_liabilities",
         ("BPP", "2.03"): "equity",

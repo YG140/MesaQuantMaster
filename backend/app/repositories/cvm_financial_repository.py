@@ -102,6 +102,17 @@ class CvmFinancialRepository:
         )
         return link.issuer if link else None
 
+    def find_issuer_by_cnpj(self, cnpj: str) -> CvmIssuer | None:
+        """Busca um emissor CVM por CNPJ exato (somente dígitos).
+
+        Usado para vinculação automática ativo<->emissor por identificador
+        oficial — nunca por correspondência de nome (ver seção 7 do resolver
+        híbrido: CNPJ exato é a prioridade determinística máxima).
+        """
+        if not cnpj:
+            return None
+        return self.db.query(CvmIssuer).filter(CvmIssuer.cnpj == cnpj).first()
+
     def link_asset(self, asset_id: UUID, issuer_id: UUID) -> AssetCvmIssuer:
         link = (
             self.db.query(AssetCvmIssuer)

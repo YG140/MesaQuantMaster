@@ -34,7 +34,7 @@ from app.services.market_service import MarketService
 NOW = datetime(2026, 7, 20, tzinfo=timezone.utc)
 
 
-def indicator(key="price_to_book"):
+def indicator(key="price_book"):
     return NormalizedIndicator(
         key=key,
         label=key,
@@ -50,9 +50,10 @@ def indicator(key="price_to_book"):
 
 
 class FakeMarket:
-    def __init__(self, payload=None):
+    def __init__(self, payload=None, profile=None):
         self.payload = payload
         self.calls = 0
+        self.profile = profile
 
     def get_stock_dataset(self, dataset, symbols, **params):
         self.calls += 1
@@ -62,6 +63,11 @@ class FakeMarket:
 
     def get_fii_dataset(self, dataset, symbols, **params):
         return self.get_stock_dataset(dataset, symbols, **params)
+
+    def get_profile(self, ticker):
+        if isinstance(self.profile, Exception):
+            raise self.profile
+        return self.profile
 
 
 class FakeSnapshots:
@@ -78,7 +84,7 @@ class FakeSnapshots:
 
 def snapshot(value="1.25", valid=True):
     return SimpleNamespace(
-        indicator_key="price_to_book",
+        indicator_key="price_book",
         value=Decimal(value),
         unit="ratio",
         source="CVM",
@@ -219,7 +225,7 @@ def test_stale_snapshot_does_not_override_manual_priority_order():
     # Snapshot stale resolve antes do manual: manual nao deve sobrescrever.
     stale = snapshot(value="1.10", valid=False)
     manual = SimpleNamespace(
-        indicator_key="price_to_book",
+        indicator_key="price_book",
         value=Decimal("9.99"),
         unit="ratio",
         source_description="Manual",
@@ -257,10 +263,10 @@ def test_brapi_success_records_success_attempt():
 
 
 def test_brapi_returns_only_part_of_the_indicators():
-    baseline = [indicator("price_to_book"), indicator("dividend_yield")]
+    baseline = [indicator("price_book"), indicator("dividend_yield")]
     market = FakeMarket({"results": [{"priceToBook": "1.10"}]})
     result = resolve_all(resolver(market), baseline)
-    assert result["price_to_book"].status == IndicatorStatus.AVAILABLE
+    assert result["price_book"].status == IndicatorStatus.AVAILABLE
     assert result["dividend_yield"].status == IndicatorStatus.UNAVAILABLE
     assert result["dividend_yield"].value is None
     assert (
@@ -333,10 +339,10 @@ def test_provider_class_not_applicable_class_specific_indicator_not_called():
 
 
 def test_partial_fallback_preserves_already_resolved_indicators():
-    baseline = [indicator("price_to_book"), indicator("dividend_yield")]
+    baseline = [indicator("price_book"), indicator("dividend_yield")]
     market = FakeMarket({"results": [{"priceToBook": "1.10"}]})
     result = resolve_all(resolver(market), baseline)
-    resolved_pb = result["price_to_book"]
+    resolved_pb = result["price_book"]
     assert resolved_pb.status == IndicatorStatus.AVAILABLE
     assert len(resolved_pb.resolution_attempts) == 1
     assert resolved_pb.resolution_attempts[0].outcome == ResolutionOutcome.SUCCESS
@@ -623,7 +629,7 @@ def test_cvm_issuer_has_data_but_not_for_this_key_is_not_reported():
 
 def test_cvm_reference_date_collected_at_and_valid_until_preserved():
     account = SimpleNamespace(
-        normalized_key="price_to_book",
+        normalized_key="price_book",
         normalized_value=Decimal("1.40"),
         acquisition_method="reported",
         account_code="2.03",
@@ -664,12 +670,349 @@ def test_cvm_reference_date_collected_at_and_valid_until_preserved():
     assert result.source_type == "official"
 
 
+# --- Vinculação automática de emissor CVM por CNPJ exato -------------------
+
+
+def test_auto_links_issuer_by_exact_cnpj_when_profile_provides_one():
+    issuer = SimpleNamespace(id="issuer-1", cnpj="33000167000101", cvm_code="9512")
+    linked = {}
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return linked.get(asset_id)
+
+        def find_issuer_by_cnpj(self, cnpj):
+            assert cnpj == "33000167000101"
+            return issuer
+
+        def link_asset(self, asset_id, issuer_id):
+            linked[asset_id] = issuer
+            return SimpleNamespace(asset_id=asset_id, issuer_id=issuer_id)
+
+        def latest_normalized(self, asset_id):
+            return []
+
+    market = FakeMarket(profile=SimpleNamespace(cnpj="33.000.167/0001-01"))
+    result = resolve(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        asset_id="asset-1",
+    )
+    # Sem dados sincronizados ainda -> NOT_SYNCED, mas a vinculação já
+    # ocorreu (prova indireta: motivo deixou de ser IDENTIFIER_UNRESOLVED).
+    assert result.provider_failure_reason == ProviderFailureReason.NOT_SYNCED
+    assert linked["asset-1"] is issuer
+
+
+def test_auto_link_never_matches_by_name_only_exact_cnpj():
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return None
+
+        def find_issuer_by_cnpj(self, cnpj):
+            # CNPJ do provider não bate com nenhum emissor sincronizado.
+            assert cnpj == "99999999000199"
+            return None
+
+    market = FakeMarket(profile=SimpleNamespace(cnpj="99.999.999/0001-99"))
+    result = resolve(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        asset_id="asset-1",
+    )
+    assert result.provider_failure_reason == ProviderFailureReason.IDENTIFIER_UNRESOLVED
+
+
+def test_auto_link_gracefully_degrades_when_profile_lookup_fails():
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return None
+
+    market = FakeMarket(profile=MarketProviderUnavailableError("indisponivel"))
+    result = resolve(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        asset_id="asset-1",
+    )
+    assert result.provider_failure_reason == ProviderFailureReason.IDENTIFIER_UNRESOLVED
+
+
+def test_auto_link_does_not_run_when_already_linked():
+    issuer = SimpleNamespace(cnpj="33000167000101", cvm_code="9512")
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def find_issuer_by_cnpj(self, cnpj):
+            raise AssertionError("não deveria buscar por CNPJ quando já vinculado")
+
+        def latest_normalized(self, asset_id):
+            return []
+
+    market = FakeMarket(profile=SimpleNamespace(cnpj="33.000.167/0001-01"))
+    result = resolve(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        asset_id="asset-1",
+    )
+    assert result.provider_failure_reason == ProviderFailureReason.NOT_SYNCED
+
+
+# --- Indicadores derivados de componentes CVM (roe, roa, net_debt_equity,
+# liabilities_assets, current_liquidity) -------------------------------------
+
+
+def _cvm_account(key, value, code, description="conta"):
+    return SimpleNamespace(
+        normalized_key=key,
+        normalized_value=Decimal(value),
+        acquisition_method="reported",
+        account_code=code,
+        account_description=description,
+        original_value=Decimal(value),
+    )
+
+
+def _cvm_document(period_end=date(2026, 6, 30)):
+    return SimpleNamespace(
+        period_end=period_end,
+        collected_at=NOW,
+        period_kind="year_to_date",
+        document_type="ITR",
+        scope="consolidated",
+    )
+
+
+def test_derived_roe_computed_when_net_income_and_equity_share_same_period():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document()
+    rows = [
+        (_cvm_account("net_income", "1000", "3.11"), document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roe"), indicator("equity")],
+        asset_id="asset-1",
+    )
+    assert result["roe"].status == IndicatorStatus.AVAILABLE
+    assert result["roe"].value == Decimal("10.00")
+    assert result["roe"].source_type == "derived"
+    assert result["roe"].provenance["formula"] == "lucro líquido / patrimônio líquido"
+    assert result["roe"].provenance["components"] == {
+        "net_income": "1000",
+        "equity": "10000",
+    }
+    # equity (componente bruto direto) também deve ficar disponível.
+    assert result["equity"].status == IndicatorStatus.AVAILABLE
+    assert result["equity"].value == Decimal("10000")
+
+
+def test_derived_indicators_never_mix_incompatible_periods():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    old_document = _cvm_document(period_end=date(2026, 3, 31))
+    new_document = _cvm_document(period_end=date(2026, 6, 30))
+    rows = [
+        (_cvm_account("net_income", "1000", "3.11"), old_document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), new_document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roe")],
+        asset_id="asset-1",
+    )
+    assert result["roe"].status == IndicatorStatus.UNAVAILABLE
+    assert result["roe"].value is None
+
+
+def test_derived_net_debt_equity_from_gross_debt_and_cash_when_net_debt_absent():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document()
+    rows = [
+        (_cvm_account("gross_debt", "5000", "2.01.04"), document, issuer),
+        (_cvm_account("cash_and_equivalents", "1200", "1.01.01"), document, issuer),
+        (_cvm_account("equity", "19000", "2.03"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("net_debt_equity")],
+        asset_id="asset-1",
+    )
+    assert result["net_debt_equity"].status == IndicatorStatus.AVAILABLE
+    assert result["net_debt_equity"].value == Decimal("0.2000")
+
+
+def test_derived_net_debt_itself_is_stored_when_pending():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document()
+    rows = [
+        (_cvm_account("gross_debt", "5000", "2.01.04"), document, issuer),
+        (_cvm_account("cash_and_equivalents", "1200", "1.01.01"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("net_debt")],
+        asset_id="asset-1",
+    )
+    assert result["net_debt"].status == IndicatorStatus.AVAILABLE
+    assert result["net_debt"].value == Decimal("3800")
+    assert result["net_debt"].source_type == "derived"
+
+
+def test_derived_liabilities_assets_and_current_liquidity():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document()
+    rows = [
+        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("assets", "100000", "1"), document, issuer),
+        (_cvm_account("current_assets", "15000", "1.01"), document, issuer),
+        (_cvm_account("current_liabilities", "10000", "2.01"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("liabilities_assets"), indicator("current_liquidity")],
+        asset_id="asset-1",
+    )
+    assert result["liabilities_assets"].value == Decimal("30.00")
+    assert result["current_liquidity"].value == Decimal("1.5000")
+
+
+def test_derived_indicator_absent_when_a_component_is_missing():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document()
+    rows = [(_cvm_account("net_income", "1000", "3.11"), document, issuer)]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roe")],
+        asset_id="asset-1",
+    )
+    assert result["roe"].status == IndicatorStatus.UNAVAILABLE
+    assert result["roe"].value is None
+    assert result["roe"].provider_failure_reason == ProviderFailureReason.NOT_REPORTED
+
+
+def test_derived_indicator_never_overrides_a_directly_resolved_value():
+    issuer = SimpleNamespace(cnpj="12345678000190", cvm_code="12345")
+    document = _cvm_document()
+    rows = [
+        (_cvm_account("roe", "999", "9.99"), document, issuer),
+        (_cvm_account("net_income", "1000", "3.11"), document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), document, issuer),
+    ]
+
+    class Cvm:
+        def linked_issuer(self, asset_id):
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return rows
+
+    result = resolve_all(
+        IndicatorResolverService(
+            market_service=FakeMarket(),
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+        ),
+        baseline=[indicator("roe")],
+        asset_id="asset-1",
+    )
+    # "roe" chega diretamente como conta CVM (caso sintético) -> a etapa
+    # derivada não deve rodar por cima de um valor já resolvido.
+    assert result["roe"].value == Decimal("999")
+    assert result["roe"].source_type == "official"
+
+
 # --- Manual: prioridade, validade, isolamento (cenarios 28-31) -----------
 
 
 def test_manual_valid_used_as_fallback():
     manual_item = SimpleNamespace(
-        indicator_key="price_to_book",
+        indicator_key="price_book",
         value=Decimal("0.95"),
         unit="ratio",
         source_description="Balanço publicado",
@@ -689,7 +1032,7 @@ def test_manual_valid_used_as_fallback():
 
 def test_manual_stale_reference_date_marks_status_stale():
     manual_item = SimpleNamespace(
-        indicator_key="price_to_book",
+        indicator_key="price_book",
         value=Decimal("0.95"),
         unit="ratio",
         source_description="Balanço antigo",
@@ -737,7 +1080,7 @@ def test_manual_absent_entry_records_not_reported_attempt():
 
 def test_valid_snapshot_priority_over_manual_value():
     manual_item = SimpleNamespace(
-        indicator_key="price_to_book",
+        indicator_key="price_book",
         value=Decimal("9.99"),
         unit="ratio",
         source_description="Manual",
@@ -894,7 +1237,7 @@ def test_cvm_unavailability_does_not_break_basic_data():
 
 def test_manual_data_is_last_resort():
     manual_item = SimpleNamespace(
-        indicator_key="price_to_book",
+        indicator_key="price_book",
         value=Decimal("0.95"),
         unit="ratio",
         source_description="Balanço publicado",
@@ -913,7 +1256,7 @@ def test_manual_data_is_last_resort():
 
 def test_manual_does_not_replace_provider_value():
     manual = SimpleNamespace(
-        indicator_key="price_to_book",
+        indicator_key="price_book",
         value=Decimal("9"),
         unit="ratio",
         source_description="Manual",
@@ -941,7 +1284,7 @@ def test_total_absence_does_not_become_zero():
 
 def test_cvm_persisted_data_fills_gap_before_manual():
     account = SimpleNamespace(
-        normalized_key="price_to_book",
+        normalized_key="price_book",
         normalized_value=Decimal("1.40"),
         acquisition_method="reported",
         account_code="2.03",
@@ -992,12 +1335,14 @@ def test_valid_until_falls_back_to_stage_default_for_unknown_key():
     # Um indicador sem política declarada em indicator_temporal_validity_days
     # continua usando o fallback conservador por estágio (1 dia oficial /
     # 30 dias provider) — nunca estende a validade por conta própria.
-    assert indicator_temporal_validity_days("price_to_book") is None
+    # Chave deliberadamente ausente do catálogo (não confundir com uma chave
+    # real do catálogo, como price_book) para testar exatamente esse fallback.
+    assert indicator_temporal_validity_days("indicador_sem_politica_declarada") is None
     valid_until_provider = IndicatorResolverService._valid_until(
-        "price_to_book", NOW, source_type="provider"
+        "indicador_sem_politica_declarada", NOW, source_type="provider"
     )
     valid_until_official = IndicatorResolverService._valid_until(
-        "price_to_book", NOW, source_type="official"
+        "indicador_sem_politica_declarada", NOW, source_type="official"
     )
     assert valid_until_provider == NOW + timedelta(days=30)
     assert valid_until_official == NOW + timedelta(days=1)
@@ -1030,11 +1375,15 @@ def test_brapi_resolved_quarterly_fundamental_gets_catalog_validity_end_to_end()
 
 
 def test_brapi_resolved_indicator_without_catalog_policy_keeps_conservative_default():
-    # price_to_book (chave de teste sem política declarada em
-    # indicator_temporal_validity_days) continua usando o fallback
-    # conservador de 30 dias — nunca estende a validade por conta própria.
-    assert indicator_temporal_validity_days("price_to_book") is None
-    result = resolve(resolver(FakeMarket({"results": [{"priceToBook": "1.10"}]})))
+    # "revenue" resolve via alias BRAPI (totalRevenue/revenue) mas não é uma
+    # chave do catálogo (é apenas componente bruto para indicadores
+    # derivados) — sem política declarada em indicator_temporal_validity_days,
+    # continua usando o fallback conservador de 30 dias.
+    assert indicator_temporal_validity_days("revenue") is None
+    result = resolve(
+        resolver(FakeMarket({"results": [{"totalRevenue": "1.10"}]})),
+        baseline=[indicator("revenue")],
+    )
     assert result.status == IndicatorStatus.AVAILABLE
     assert result.valid_until == NOW + timedelta(days=30)
 
@@ -1045,7 +1394,7 @@ def test_brapi_resolved_indicator_without_catalog_policy_keeps_conservative_defa
 def test_full_cascade_is_deterministic_across_repeated_runs():
     def run():
         account = SimpleNamespace(
-            normalized_key="price_to_book",
+            normalized_key="price_book",
             normalized_value=Decimal("1.40"),
             acquisition_method="reported",
             account_code="2.03",
