@@ -102,6 +102,7 @@ export const endpoints = {
       method: "POST",
       token,
       body: payload,
+      timeoutMs: 120_000,
     }),
   assetIntelligence: (token: string, symbol: string) =>
     apiRequest<AssetIntelligenceSnapshot>(
