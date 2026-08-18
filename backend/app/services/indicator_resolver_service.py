@@ -202,7 +202,26 @@ def _cvm_valid_until(
 FII_QUARTERLY_FILING_DEADLINE_DAYS = 45
 
 
-def _fii_quarterly_valid_until(reference_date: date) -> datetime:
+def _end_of_calendar_quarter(value: date) -> date:
+    """Último dia REAL do trimestre-calendário (31/03, 30/06, 30/09 ou
+    31/12) ao qual `value` pertence, via calendar.monthrange -- nunca por
+    soma ingênua de meses. `_add_months` (usado pela lógica CVM
+    corporativa, compartilhada e fora de escopo aqui) trava no dia
+    min(dia_original, dias_do_mês_destino): somar 3 meses a 30/09 resulta
+    em 30/12 (30 é um dia válido em dezembro), não no real fim de
+    trimestre 31/12. Esta função nunca herda esse viés porque calcula o
+    fim do trimestre diretamente pelo mês/ano de destino, não por
+    aritmética de dia."""
+    quarter_end_month = ((value.month - 1) // 3 + 1) * 3
+    last_day = calendar.monthrange(value.year, quarter_end_month)[1]
+    return date(value.year, quarter_end_month, last_day)
+
+
+def _is_calendar_quarter_end(value: date) -> bool:
+    return value == _end_of_calendar_quarter(value)
+
+
+def _fii_quarterly_valid_until(reference_date: date) -> datetime | None:
     """Validade de um indicador periódico trimestral de FII (vacância
     física, concentração de devedores) = prazo regulatório confirmado
     (Art. 36, II, ver constante acima) para o PRÓXIMO Informe Trimestral
@@ -213,8 +232,23 @@ def _fii_quarterly_valid_until(reference_date: date) -> datetime:
     métodos _apply_*_from_brapi, que usam esta função para AMBAS as
     fontes, oficial e BRAPI, já que os dois refletem o mesmo regime de
     divulgação trimestral).
+
+    O fim do PRÓXIMO trimestre é calculado diretamente por
+    _end_of_calendar_quarter sobre o dia seguinte a `reference_date`
+    (nunca por _add_months, que sofre o viés de clamping descrito ali).
+
+    Retorna None quando `reference_date` não é literalmente o último dia
+    de um trimestre-calendário real (ver _is_calendar_quarter_end) --
+    nunca assume silenciosamente que uma data qualquer representa uma
+    competência trimestral fechada. Os chamadores devem tratar None
+    aplicando um fallback técnico conservador (nunca fabricando uma
+    janela trimestral para uma data não confirmada como fim de
+    trimestre).
     """
-    next_quarter_end = _add_months(reference_date, 3)
+    if not _is_calendar_quarter_end(reference_date):
+        return None
+    next_quarter_start = reference_date + timedelta(days=1)
+    next_quarter_end = _end_of_calendar_quarter(next_quarter_start)
     deadline = _add_days(next_quarter_end, FII_QUARTERLY_FILING_DEADLINE_DAYS)
     return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
 
@@ -631,7 +665,28 @@ class IndicatorResolverService:
         except (InvalidOperation, ValueError):
             return
         value = fraction * Decimal("100")
-        reference = self._parse_brapi_date(reference_raw) or collected_at
+        # reference_date NUNCA é substituído silenciosamente por
+        # collected_at: são informações diferentes (competência
+        # econômica x instante da coleta). Se referenceDate estiver
+        # ausente/inválido, reference permanece None -- nunca finge que
+        # o momento da consulta é o trimestre a que o dado se refere.
+        reference = self._parse_brapi_date(reference_raw)
+        valid_until = (
+            _fii_quarterly_valid_until(reference.date()) if reference is not None else None
+        )
+        if valid_until is None:
+            # referenceDate ausente, inválido, ou presente mas não
+            # literalmente um fim de trimestre-calendário real (ver
+            # _fii_quarterly_valid_until) -- nunca inferimos a
+            # competência pelo dia da coleta nem concedemos uma janela
+            # trimestral fabricada para uma data não confirmada. Cai
+            # para o mesmo fallback técnico conservador genérico usado
+            # por qualquer outro indicador de provider sem política
+            # declarada no catálogo (ver _valid_until): collected_at + 30
+            # dias, nunca uma nova janela de 3 meses + 45 dias.
+            valid_until = self._valid_until(
+                "physical_vacancy", collected_at, source_type="provider"
+            )
         resolved["physical_vacancy"] = current.model_copy(
             update={
                 "value": value,
@@ -641,14 +696,7 @@ class IndicatorResolverService:
                 "source_type": "provider",
                 "reference_date": reference,
                 "collected_at": collected_at,
-                # valid_until é baseado na COMPETÊNCIA ECONÔMICA (reference,
-                # o trimestre a que o dado se refere) -- nunca em
-                # collected_at (quando foi consultado), que rejuvenesceria
-                # artificialmente um dado trimestral antigo a cada nova
-                # análise. Mesma política do caminho oficial CVM (ambos
-                # refletem o mesmo regime trimestral -- ver
-                # _fii_quarterly_valid_until).
-                "valid_until": _fii_quarterly_valid_until(reference.date()),
+                "valid_until": valid_until,
                 "freshness_status": "current",
                 "confidence": ConfidenceLevel.HIGH,
                 "period": "período informado pelo provedor",
@@ -691,7 +739,18 @@ class IndicatorResolverService:
             return
         value = fraction * Decimal("100")
         reference_raw = portfolio_payload.get("referenceDate")
-        reference = self._parse_brapi_date(reference_raw) or collected_at
+        # Mesma política de _apply_physical_vacancy_from_brapi: nunca
+        # substitui reference_date ausente/inválido por collected_at, e
+        # nunca fabrica janela trimestral para uma data que não é
+        # literalmente um fim de trimestre-calendário real.
+        reference = self._parse_brapi_date(reference_raw)
+        valid_until = (
+            _fii_quarterly_valid_until(reference.date()) if reference is not None else None
+        )
+        if valid_until is None:
+            valid_until = self._valid_until(
+                "debtor_concentration", collected_at, source_type="provider"
+            )
         resolved["debtor_concentration"] = current.model_copy(
             update={
                 "value": value,
@@ -701,10 +760,7 @@ class IndicatorResolverService:
                 "source_type": "provider",
                 "reference_date": reference,
                 "collected_at": collected_at,
-                # Mesma política de _apply_physical_vacancy_from_brapi:
-                # baseada na competência econômica (reference), nunca em
-                # collected_at.
-                "valid_until": _fii_quarterly_valid_until(reference.date()),
+                "valid_until": valid_until,
                 "freshness_status": "current",
                 "confidence": ConfidenceLevel.HIGH,
                 "period": "período informado pelo provedor",
@@ -1227,9 +1283,13 @@ class IndicatorResolverService:
             document.reference_date, time.min, tzinfo=timezone.utc
         )
         valid_until = _fii_quarterly_valid_until(document.reference_date)
-        if collected_at > valid_until:
-            # Documento oficial mais recente já expirou pela própria
-            # cadência trimestral -- não finge que ainda é atual.
+        if valid_until is None or collected_at > valid_until:
+            # valid_until is None: document.reference_date (vindo do CSV
+            # oficial DT_FIM_EXERC) não é literalmente um fim de
+            # trimestre-calendário real -- dado anômalo, nunca tratado
+            # como atual sem uma janela de validade honesta. Do
+            # contrário: documento oficial mais recente já expirou pela
+            # própria cadência trimestral -- não finge que ainda é atual.
             return
         # document.area_weighted_vacancy_rate é uma FRAÇÃO (0-1, mesma
         # escala do campo oficial Percentual_Vacancia da CVM) -- o

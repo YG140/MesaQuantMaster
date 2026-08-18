@@ -21,7 +21,10 @@ from app.schemas.market_intelligence import (
     NormalizedIndicator,
 )
 from app.services.indicator_normalization_service import IndicatorNormalizationService
-from app.services.indicator_resolver_service import IndicatorResolverService
+from app.services.indicator_resolver_service import (
+    IndicatorResolverService,
+    _fii_quarterly_valid_until,
+)
 
 
 NOW = datetime(2026, 8, 18, tzinfo=timezone.utc)
@@ -290,7 +293,7 @@ def _official_vacancy_status_at(cnpj_digits, cnpj_formatted, reference_date, col
     [
         (date(2026, 3, 31), datetime(2026, 8, 14, tzinfo=timezone.utc)),
         (date(2026, 6, 30), datetime(2026, 11, 14, tzinfo=timezone.utc)),
-        (date(2026, 9, 30), datetime(2027, 2, 13, tzinfo=timezone.utc)),
+        (date(2026, 9, 30), datetime(2027, 2, 14, tzinfo=timezone.utc)),
         (date(2026, 12, 31), datetime(2027, 5, 15, tzinfo=timezone.utc)),
     ],
 )
@@ -319,6 +322,129 @@ def test_physical_vacancy_official_document_boundaries_per_quarter(
         cnpj, formatted, reference_date, valid_until_boundary + timedelta(seconds=1)
     )
     assert after != IndicatorStatus.AVAILABLE
+
+
+def test_fii_quarterly_valid_until_uses_the_real_calendar_quarter_end_not_add_months_clamping():
+    """RESÍDUO B: 30/09 é fim de trimestre-calendário real; o PRÓXIMO
+    trimestre termina genuinamente em 31/12 -- nunca 30/12, que seria o
+    resultado de somar 3 meses ingenuamente e clampar o dia (viés de
+    _add_months, usado pela lógica CVM corporativa e deliberadamente NÃO
+    reaproveitado aqui). Expectativa conferida de forma independente
+    (sem chamar a própria função para produzi-la): 31/12/2026 + 45 dias
+    corridos -- dezembro contribui 0 dias restantes (a contagem começa
+    em 01/01), janeiro contribui seus 31 dias completos (31/45), e os 14
+    dias finais caem em fevereiro -- 14/02/2027."""
+    result = _fii_quarterly_valid_until(date(2026, 9, 30))
+    assert result == datetime(2027, 2, 14, tzinfo=timezone.utc)
+    assert result != datetime(2027, 2, 13, tzinfo=timezone.utc)  # valor do bug antigo
+
+
+def test_fii_quarterly_valid_until_returns_none_for_non_quarter_end_reference_date():
+    """RESÍDUO B: uma reference_date que não é literalmente o último dia
+    de um trimestre-calendário real (31/03, 30/06, 30/09, 31/12) nunca
+    deve gerar uma janela trimestral fabricada -- o chamador deve cair
+    para o fallback técnico conservador."""
+    assert _fii_quarterly_valid_until(date(2026, 6, 15)) is None
+    assert _fii_quarterly_valid_until(date(2026, 7, 1)) is None
+    assert _fii_quarterly_valid_until(date(2026, 12, 30)) is None
+
+
+def test_physical_vacancy_missing_reference_date_never_uses_collected_at_as_reference():
+    """RESÍDUO A: quando o provedor não informa referenceDate, o
+    indicador nunca finge que a competência econômica é o instante da
+    coleta -- reference_date permanece None mesmo entre duas coletas em
+    momentos diferentes, e a validade cai para o fallback técnico
+    conservador genérico (collected_at + 30 dias), nunca uma janela
+    trimestral fabricada."""
+    properties_payload = {
+        "fiis": [{"symbol": "TESTFII", "summary": {"vacancyRate": 0.02}}]
+    }
+    for collected_at in (
+        datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc),
+        datetime(2026, 9, 15, 18, 30, tzinfo=timezone.utc),
+    ):
+        resolver = IndicatorResolverService(
+            market_service=FakeMarket(fii_payloads={"properties": properties_payload}),
+            normalizer=IndicatorNormalizationService(),
+        )
+        resolved = resolver.resolve_asset(
+            symbol="TESTFII",
+            asset_class=InvestmentClass.FII,
+            asset_id=None,
+            user_id="user",
+            baseline=[baseline_indicator("physical_vacancy")],
+            collected_at=collected_at,
+        )
+        item = next(i for i in resolved if i.key == "physical_vacancy")
+        assert item.status == IndicatorStatus.AVAILABLE
+        assert item.value == Decimal("2")
+        assert item.reference_date is None
+        assert item.reference_date != collected_at
+        assert item.valid_until == collected_at + timedelta(days=30)
+
+
+def test_physical_vacancy_invalid_reference_date_never_grants_artificial_quarter_window():
+    """RESÍDUO A: referenceDate presente mas ilegível (formato inválido)
+    é tratado exatamente como ausente -- nunca vira collected_at, nunca
+    concede uma janela trimestral."""
+    properties_payload = {
+        "fiis": [
+            {
+                "symbol": "TESTFII",
+                "referenceDate": "not-a-date",
+                "summary": {"vacancyRate": 0.02},
+            }
+        ]
+    }
+    resolver = IndicatorResolverService(
+        market_service=FakeMarket(fii_payloads={"properties": properties_payload}),
+        normalizer=IndicatorNormalizationService(),
+    )
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=NOW,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status == IndicatorStatus.AVAILABLE
+    assert item.reference_date is None
+    assert item.valid_until == NOW + timedelta(days=30)
+
+
+def test_physical_vacancy_reference_date_not_a_real_quarter_end_never_grants_artificial_quarter_window():
+    """RESÍDUO A + B: referenceDate presente e parseável, mas não é
+    literalmente o fim de um trimestre-calendário real (15/06 é meio de
+    trimestre) -- o valor real é preservado em reference_date (não é
+    apagado), mas não gera uma janela trimestral fabricada; cai para o
+    fallback técnico conservador."""
+    properties_payload = {
+        "fiis": [
+            {
+                "symbol": "TESTFII",
+                "referenceDate": "2026-06-15",
+                "summary": {"vacancyRate": 0.02},
+            }
+        ]
+    }
+    resolver = IndicatorResolverService(
+        market_service=FakeMarket(fii_payloads={"properties": properties_payload}),
+        normalizer=IndicatorNormalizationService(),
+    )
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=NOW,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status == IndicatorStatus.AVAILABLE
+    assert item.reference_date == datetime(2026, 6, 15, tzinfo=timezone.utc)
+    assert item.valid_until == NOW + timedelta(days=30)
 
 
 def test_fii_official_risk_gracefully_degrades_when_profile_lookup_fails():
