@@ -5,7 +5,10 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 import json
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.config import settings
+from app.core.database import SessionLocal
 from app.engines.derived_indicator_engine import DerivedIndicatorEngine
 from app.engines.indicator_catalog import indicator_temporal_validity_days
 from app.providers.bcb_sgs_provider import BcbSgsProvider
@@ -210,6 +213,7 @@ class IndicatorResolverService:
         treasury_provider: TesouroTransparenteProvider | None = None,
         cvm_provider: CvmOpenDataProvider | None = None,
         cvm_repository: CvmFinancialRepository | None = None,
+        cvm_link_session_factory=None,
     ):
         self.market_service = market_service
         self.normalizer = normalizer
@@ -219,6 +223,11 @@ class IndicatorResolverService:
         self.treasury_provider = treasury_provider or self._default_treasury_provider()
         self.cvm_provider = cvm_provider or CvmOpenDataProvider()
         self.cvm_repository = cvm_repository
+        # Fábrica de sessão usada SOMENTE para persistir o vínculo automático
+        # ativo<->emissor CVM (ver _persist_cvm_link_isolated) — nunca para
+        # nada relacionado à resolução de indicadores em si, que continua
+        # usando exclusivamente self.cvm_repository/sua sessão compartilhada.
+        self.cvm_link_session_factory = cvm_link_session_factory or SessionLocal
 
     def resolve_asset(
         self,
@@ -814,8 +823,87 @@ class IndicatorResolverService:
         issuer = self.cvm_repository.find_issuer_by_cnpj(cnpj)
         if issuer is None:
             return None
-        self.cvm_repository.link_asset(asset_id, issuer.id)
-        return issuer
+        persisted = self._persist_cvm_link_isolated(asset_id, issuer.id)
+        # Nunca retorna o issuer como vínculo utilizável se a transação
+        # isolada não confirmou (nem por sucesso direto, nem por corrida
+        # concorrente idempotente) que o vínculo realmente existe no banco
+        # -- o chamador não pode acreditar em uma persistência que falhou.
+        # A cascata de resolução trata isso exatamente como "identificador
+        # ainda não resolvido" (mesmo diagnóstico conservador já usado
+        # quando não há CNPJ ou não há emissor correspondente).
+        return issuer if persisted else None
+
+    def _persist_cvm_link_isolated(self, asset_id, issuer_id) -> bool:
+        """Persiste o vínculo ativo<->emissor CVM em uma transação CURTA e
+        ISOLADA, própria — nunca na sessão compartilhada usada para resolver
+        indicadores (self.cvm_repository).
+
+        Isto evita que este pequeno fato de identidade, criado como efeito
+        colateral automático de uma resolução maior, comite (ou dependa de)
+        qualquer outro trabalho pendente e não relacionado na sessão do
+        chamador. Abre sua própria sessão via cvm_link_session_factory,
+        comita/reverte/fecha essa sessão isolada, e nunca toca na sessão de
+        resolução.
+
+        Retorna True somente se o vínculo asset_id -> issuer_id está
+        confirmadamente persistido (por esta transação ou por uma
+        concorrente equivalente -- ver _resolve_concurrent_link_race).
+        Retorna False em qualquer falha real, incluindo quando já existe
+        um vínculo (seja lido diretamente aqui, seja detectado por uma
+        corrida concorrente) apontando para um emissor DIFERENTE -- o
+        auto-link NUNCA substitui silenciosamente a identidade de um
+        emissor já vinculado; isso é uma ação exclusiva do fluxo manual
+        (CvmFinancialService.link_asset, via CvmFinancialRepository.
+        link_asset, que é create-or-update deliberado). Uma falha aqui
+        nunca lança exceção para o chamador (mesma filosofia do restante
+        de _auto_link_cvm_issuer: o pior caso é "ainda não vinculado nesta
+        tentativa", nunca uma cascata de resolução interrompida) -- mas
+        também nunca finge sucesso que não aconteceu.
+        """
+        db = self.cvm_link_session_factory()
+        try:
+            try:
+                link = CvmFinancialRepository(db).ensure_asset_link(asset_id, issuer_id)
+                if link is None:
+                    # Já existia vínculo para um issuer DIFERENTE -- nada
+                    # foi alterado (ensure_asset_link não muta neste caso).
+                    # Conflito real, nunca sobrescrito silenciosamente.
+                    db.rollback()
+                    return False
+                db.commit()
+                return True
+            except IntegrityError:
+                # asset_cvm_issuers.asset_id é unique: duas transações
+                # podem ter lido "sem vínculo" e tentado inserir ao mesmo
+                # tempo. Não é necessariamente um erro real -- relê em
+                # transação limpa antes de decidir.
+                db.rollback()
+                return self._resolve_concurrent_link_race(db, asset_id, issuer_id)
+            except Exception:
+                db.rollback()
+                return False
+        finally:
+            db.close()
+
+    def _resolve_concurrent_link_race(self, db, asset_id, issuer_id) -> bool:
+        """Decide o resultado de uma corrida concorrente em asset_cvm_issuers
+        após um IntegrityError + rollback, relendo o estado real do banco em
+        transação limpa (mesma sessão isolada, já revertida).
+
+        Se a transação concorrente vinculou o asset ao MESMO issuer que
+        esta tentativa pretendia, trata como sucesso idempotente (o efeito
+        desejado já existe, não é um erro). Se apontar para um issuer
+        DIFERENTE, é um conflito de identidade real -- nunca sobrescreve
+        silenciosamente; retorna False para que o chamador trate como
+        "ainda não vinculado por esta tentativa", preservando o vínculo já
+        existente intacto.
+
+        Compara o issuer_id BRUTO da linha (find_link), não o CvmIssuer
+        relacionado (linked_issuer) -- esta checagem não precisa carregar o
+        emissor, só confirmar a que issuer_id o vínculo aponta.
+        """
+        existing_link = CvmFinancialRepository(db).find_link(asset_id)
+        return existing_link is not None and existing_link.issuer_id == issuer_id
 
     def _apply_cvm_derived_indicators(
         self,

@@ -102,6 +102,51 @@ class CvmFinancialRepository:
         )
         return link.issuer if link else None
 
+    def find_link(self, asset_id: UUID) -> AssetCvmIssuer | None:
+        """Vínculo bruto ativo<->emissor (sem seguir o relacionamento até o
+        CvmIssuer) — usado onde só o próprio `issuer_id` da linha importa,
+        nunca os dados do emissor (ver IndicatorResolverService._resolve_
+        concurrent_link_race: comparar o FK bruto evita depender de um
+        lazy-load extra do CvmIssuer relacionado).
+        """
+        return (
+            self.db.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset_id)
+            .first()
+        )
+
+    def ensure_asset_link(self, asset_id: UUID, issuer_id: UUID) -> AssetCvmIssuer | None:
+        """Cria o vínculo SOMENTE se ainda não existir nenhum -- nunca
+        substitui um vínculo já existente para um issuer DIFERENTE (ao
+        contrário de link_asset, que é create-or-update e serve ao fluxo
+        MANUAL do superusuário, onde trocar o emissor é uma ação
+        explicitamente autorizada). Usado pelo auto-link automático, onde
+        sobrescrever silenciosamente a identidade de um emissor já
+        vinculado seria uma corrupção de dados, nunca uma correção
+        legítima.
+
+        Retorna o AssetCvmIssuer quando o resultado é COMPATÍVEL com
+        issuer_id: ou não havia vínculo nenhum e foi criado agora, ou já
+        havia vínculo para o MESMO issuer_id (nada é alterado -- sem
+        UPDATE desnecessário, idempotência real). Retorna None quando já
+        existe um vínculo para um issuer_id DIFERENTE -- um conflito real
+        que o chamador nunca deve resolver sobrescrevendo.
+        """
+        link = (
+            self.db.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset_id)
+            .first()
+        )
+        if link is None:
+            link = AssetCvmIssuer(asset_id=asset_id, issuer_id=issuer_id)
+            self.db.add(link)
+            self.db.flush()
+            self.db.refresh(link)
+            return link
+        if link.issuer_id == issuer_id:
+            return link
+        return None
+
     def find_issuer_by_cnpj(self, cnpj: str) -> CvmIssuer | None:
         """Busca um emissor CVM por CNPJ exato (somente dígitos).
 
@@ -114,6 +159,17 @@ class CvmFinancialRepository:
         return self.db.query(CvmIssuer).filter(CvmIssuer.cnpj == cnpj).first()
 
     def link_asset(self, asset_id: UUID, issuer_id: UUID) -> AssetCvmIssuer:
+        """Cria ou atualiza o vínculo ativo<->emissor CVM nesta sessão.
+
+        Nunca comita: este método é usado tanto por um fluxo de escrita
+        explícita (CvmFinancialService.link_asset, que decide seu próprio
+        limite de transação) quanto por um fluxo automático embutido em uma
+        resolução maior de indicadores (IndicatorResolverService), que usa
+        uma sessão isolada própria exatamente para nunca comitar trabalho
+        pendente alheio na sessão de resolução. Um repository não deve
+        decidir a fronteira transacional de quem o chama — apenas garante
+        que o vínculo fique visível (via flush) dentro da própria sessão.
+        """
         link = (
             self.db.query(AssetCvmIssuer)
             .filter(AssetCvmIssuer.asset_id == asset_id)
@@ -124,7 +180,7 @@ class CvmFinancialRepository:
             self.db.add(link)
         else:
             link.issuer_id = issuer_id
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(link)
         return link
 

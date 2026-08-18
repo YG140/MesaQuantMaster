@@ -157,11 +157,19 @@ class CvmFinancialService:
         return document_ids, accounts_created
 
     def link_asset(self, asset_id: UUID, issuer_id: UUID):
+        """Vínculo manual explícito (endpoint de superusuário).
+
+        O repository agora só dá flush (ver CvmFinancialRepository.link_asset)
+        — este serviço é quem decide a fronteira de commit desta operação de
+        escrita autônoma, no mesmo padrão já usado em import_archive().
+        """
         if self.asset_repository.get_by_id(asset_id) is None:
             raise ValueError("Ativo não encontrado.")
         if self.repository.get_issuer(issuer_id) is None:
             raise ValueError("Emissor CVM não encontrado.")
-        return self.repository.link_asset(asset_id, issuer_id)
+        link = self.repository.link_asset(asset_id, issuer_id)
+        self.repository.commit()
+        return link
 
     def asset_link(self, asset_id: UUID) -> dict:
         if self.asset_repository.get_by_id(asset_id) is None:
