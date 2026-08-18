@@ -347,24 +347,7 @@ class IndicatorResolverService:
             )
 
         if asset_class == InvestmentClass.TREASURY and self._has_unresolved(resolved):
-            pending = self._unresolved_keys(resolved)
-            rows, error, attempted = self._load_treasury_official(symbol)
-            if attempted:
-                self._apply_payloads(
-                    resolved,
-                    rows,
-                    collected_at,
-                    source="Tesouro Transparente",
-                    source_type="official",
-                )
-                self._record_stage_attempts(
-                    resolved,
-                    pending_before=pending,
-                    provider="Tesouro Transparente",
-                    source_type="official",
-                    dataset_outcomes=[("daily_dataset", error is None, error)],
-                    attempted_at=collected_at,
-                )
+            self._apply_treasury_official(resolved, symbol, collected_at)
 
         if asset_id is not None and self._has_unresolved(resolved):
             self._apply_cvm(resolved, asset_id, collected_at, symbol=symbol)
@@ -552,6 +535,16 @@ class IndicatorResolverService:
             # falha de plano em um deles nunca invalida os outros.
             ["indicators", "properties", "portfolio"]
             if asset_class == InvestmentClass.FII
+            # TREASURY nunca tenta "statistics"/"financial_data" -- são
+            # datasets de AÇÕES (BRAPI free tier), estruturalmente
+            # incapazes de conter título/indexador/taxa/vencimento de
+            # Tesouro Direto; chamá-los apenas gastaria uma requisição
+            # inútil antes do fallback oficial (ver _apply_treasury_official).
+            # A capacidade nativa de Tesouro da própria BRAPI
+            # (BrapiProvider.get_treasury) existe mas é paga e
+            # deliberadamente NÃO usada aqui -- decisão separada, fora do
+            # escopo desta tarefa.
+            else [] if asset_class == InvestmentClass.TREASURY
             else ["statistics", "financial_data"]
         )
         payloads = []
@@ -573,23 +566,137 @@ class IndicatorResolverService:
                 outcomes.append((dataset, False, exc))
         return payloads, outcomes, payloads_by_dataset
 
-    def _load_treasury_official(
-        self, symbol: str
-    ) -> tuple[list[dict], Exception | None, bool]:
-        if self.treasury_provider is None:
-            return [], None, False
+    # Indicadores REQUIRED de TREASURY resolvidos exclusivamente pelo
+    # caminho dedicado abaixo -- nunca por merge_provider_payloads (cujo
+    # valid_until seria ancorado em collected_at, rejuvenescendo uma
+    # observação de Data Base antiga a cada nova consulta; ver
+    # _treasury_official_valid_until).
+    _TREASURY_OFFICIAL_KEYS = frozenset(
+        {"treasury_title", "indexer", "treasury_rate", "maturity_date", "current_price"}
+    )
+
+    def _apply_treasury_official(self, resolved, symbol, collected_at) -> None:
+        """Título/indexador/taxa/vencimento/preço de TREASURY via fonte
+        oficial (Tesouro Transparente) -- só roda se ainda houver algo
+        pendente entre os 5 indicadores REQUIRED, nunca sobrescreve algo
+        já resolvido, nunca inventa dado ausente.
+
+        Identidade determinística: casa o `symbol` solicitado (normalizado
+        para minúsculas) contra o índice do provider, cuja chave já é a
+        identidade canônica oficial (Tipo Titulo + Data Vencimento) --
+        nunca fuzzy matching, nunca "título mais parecido".
+        """
+        pending = self._unresolved_keys(resolved) & self._TREASURY_OFFICIAL_KEYS
+        if not pending or self.treasury_provider is None:
+            return
         try:
-            rows = self.treasury_provider.fetch_daily_dataset()
+            index = self.treasury_provider.latest_by_identity()
+            error: Exception | None = None
         except Exception as exc:
-            return [], exc, True
-        normalized = symbol.lower().strip()
-        matched = [
-            row
-            for row in rows
-            if str(row.get("symbol", row.get("name", ""))).lower().strip()
-            == normalized
-        ][:1]
-        return matched, None, True
+            index = {}
+            error = exc
+        row = index.get(symbol.strip().lower()) if error is None else None
+        if error is None and row is not None:
+            self._fill_treasury_indicators(resolved, pending, row, collected_at)
+        # Reaproveita a MESMA trilha de diagnostics/attempts já usada por
+        # todo o resolver (sucesso/falha por indicador ainda pendente,
+        # motivo classificado a partir da exceção real) -- "título não
+        # encontrado no índice oficial" e "campo específico ausente na
+        # linha casada" caem honestamente em NOT_REPORTED (dataset
+        # respondeu com sucesso, mas nada preencheu aquele indicador),
+        # exatamente a mesma categoria já usada para o caso análogo da
+        # BRAPI, sem introduzir um enum novo só para este caminho.
+        self._record_stage_attempts(
+            resolved,
+            pending_before=pending,
+            provider="Tesouro Transparente",
+            source_type="official",
+            dataset_outcomes=[("daily_dataset", error is None, error)],
+            attempted_at=collected_at,
+        )
+
+    def _fill_treasury_indicators(self, resolved, pending, row, collected_at) -> None:
+        """Aplica os campos canônicos da linha oficial casada (já a de
+        MAIOR Data Base para esta identidade, ver
+        TesouroTransparenteProvider.latest_by_identity) aos indicadores
+        ainda pendentes.
+
+        SEMÂNTICA DE AQUISIÇÃO (fluxo de montagem/execução de carteira):
+        - treasury_rate = Taxa Compra Manha (buyRate) -- a taxa oferecida
+          ao investidor para ADQUIRIR o título agora, não a taxa de
+          revenda ao TN (sellRate, preservada só na provenance).
+        - current_price = PU Compra Manha (buyPrice) -- o preço de
+          aquisição (liquidação D+1), o mesmo conceito que
+          SmartPortfolioEngine usa como reference_price/execution_price
+          para calcular quantidade e valor executáveis de uma NOVA
+          recomendação de compra. PU Base Manha (marcação a mercado de
+          posição já existente, liquidação D0) e PU Venda Manha (resgate)
+          são conceitos diferentes -- nunca usados aqui, preservados só na
+          provenance para uso futuro (ex.: marcação a mercado de posições
+          já detidas, fora do escopo desta tarefa).
+        """
+        reference = datetime.combine(row["asOfDate"], time.min, tzinfo=timezone.utc)
+        provenance_base = {
+            "provider": "tesouro_transparente",
+            "dataset": TesouroTransparenteProvider.resource_name,
+            "bond_type": row["bondType"],
+            "as_of_date": row["asOfDate"].isoformat(),
+            "maturity_date": row["maturityDate"].isoformat(),
+            "sell_rate": str(row["sellRate"]) if row["sellRate"] is not None else None,
+            "sell_price": str(row["sellPrice"]) if row["sellPrice"] is not None else None,
+            "base_price": str(row["basePrice"]) if row["basePrice"] is not None else None,
+        }
+        fields = (
+            ("treasury_title", row["bondType"], "text"),
+            ("indexer", row["indexer"], "text"),
+            ("treasury_rate", row["buyRate"], "percent"),
+            (
+                "maturity_date",
+                row["maturityDate"].isoformat() if row["maturityDate"] else None,
+                "date",
+            ),
+            ("current_price", row["buyPrice"], "currency"),
+        )
+        for key, value, unit in fields:
+            if key not in pending or value is None:
+                continue
+            valid_until = self._treasury_official_valid_until(key, reference)
+            if collected_at > valid_until:
+                # Observação oficial mais recente já expirou pela própria
+                # política de validade do indicador -- não finge que
+                # ainda é atual.
+                continue
+            current = resolved[key]
+            resolved[key] = current.model_copy(
+                update={
+                    "value": value,
+                    "display_value": display_value(value, unit, None),
+                    "status": IndicatorStatus.AVAILABLE,
+                    "source": "Tesouro Transparente",
+                    "source_type": "official",
+                    "reference_date": reference,
+                    "collected_at": collected_at,
+                    "valid_until": valid_until,
+                    "freshness_status": "current",
+                    "confidence": ConfidenceLevel.HIGH,
+                    "period": "observação diária oficial",
+                    "unavailable_reason": None,
+                    "provider_failure_reason": None,
+                    "provenance": {**provenance_base, "field": key},
+                }
+            )
+
+    @staticmethod
+    def _treasury_official_valid_until(key: str, reference: datetime) -> datetime:
+        """Validade ancorada na COMPETÊNCIA ECONÔMICA real (Data Base do
+        CSV oficial, `reference`), nunca em collected_at -- mesma política
+        já usada para FII (ver _fii_quarterly_valid_until). Reaproveita a
+        MESMA política de dias por indicador já declarada em
+        indicator_temporal_validity_days (não duplicada, não alterada),
+        apenas ancorada num ponto de partida diferente do genérico
+        _valid_until (que ancora em collected_at)."""
+        validity_days = indicator_temporal_validity_days(key)
+        return reference + timedelta(days=validity_days if validity_days is not None else 1)
 
     def _apply_payloads(
         self, resolved, payloads, collected_at, *, source: str, source_type: str
@@ -1677,7 +1784,13 @@ class IndicatorResolverService:
     def _default_treasury_provider():
         if not settings.TESOURO_TRANSPARENTE_DATASET_URL:
             return None
-        return TesouroTransparenteProvider(settings.TESOURO_TRANSPARENTE_DATASET_URL)
+        return TesouroTransparenteProvider(
+            settings.TESOURO_TRANSPARENTE_DATASET_URL,
+            cache_dir=settings.TESOURO_TRANSPARENTE_CACHE_DIR,
+            timeout_seconds=settings.TESOURO_TRANSPARENTE_TIMEOUT_SECONDS,
+            max_download_bytes=settings.TESOURO_TRANSPARENTE_MAX_DOWNLOAD_BYTES,
+            cache_ttl_hours=settings.TESOURO_TRANSPARENTE_CACHE_TTL_HOURS,
+        )
 
 
 def build_resolution_summary(

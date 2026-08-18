@@ -48,7 +48,32 @@ class Settings(BaseSettings):
     BRAPI_QUOTE_CACHE_SECONDS: int = 60
     BRAPI_SEARCH_CACHE_SECONDS: int = 600
     BRAPI_PROFILE_CACHE_SECONDS: int = 3600
-    TESOURO_TRANSPARENTE_DATASET_URL: str = ""
+    # Recurso oficial "Taxas dos Títulos Ofertados pelo Tesouro Direto"
+    # (Tesouro Nacional / Tesouro Transparente, CKAN público, sem
+    # autenticação) -- confirmado vigente por auditoria direta (HTTP HEAD +
+    # amostra de conteúdo) antes desta implementação. Não é segredo: pode
+    # ficar como default público, permitindo que uma instalação padrão use
+    # o fallback oficial sem exigir que o usuário descubra a URL
+    # manualmente. Uma string vazia em .env continua desligando o fallback
+    # (ver IndicatorResolverService._default_treasury_provider).
+    TESOURO_TRANSPARENTE_DATASET_URL: str = (
+        "https://www.tesourotransparente.gov.br/ckan/dataset/"
+        "df56aa42-484a-4a59-8184-7676580c81e3/resource/"
+        "796d2059-14e9-44e3-80c9-2d9e30b405c1/download/"
+        "precotaxatesourodireto.csv"
+    )
+    TESOURO_TRANSPARENTE_CACHE_DIR: str = ".cache/tesouro_transparente"
+    TESOURO_TRANSPARENTE_TIMEOUT_SECONDS: float = 30
+    # ~40 MiB: o recurso vigente tem ~13,7 MiB; a margem suporta
+    # crescimento razoável do histórico diário sem permitir download
+    # ilimitado.
+    TESOURO_TRANSPARENTE_MAX_DOWNLOAD_BYTES: int = 41943040
+    # 6h: dataset publicado diariamente e treasury_rate/current_price têm
+    # só 2 dias de validade no catálogo -- 24h deixaria o cache defasado
+    # por quase um dia antes de revalidar. Revalidação é condicional
+    # (ETag/Last-Modified, 304 sem redownload), então 6h não gera tráfego
+    # desnecessário.
+    TESOURO_TRANSPARENTE_CACHE_TTL_HOURS: int = 6
     CVM_CACHE_DIR: str = ".cache/cvm"
     CVM_TIMEOUT_SECONDS: float = 60
     CVM_MAX_DOWNLOAD_BYTES: int = 83886080
