@@ -9,9 +9,14 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import httpx
 import pytest
 
+from app.core.database import SessionLocal
 from app.engines.cvm_financial_engine import CvmFinancialEngine
 from app.models.asset import Asset
-from app.models.cvm_financial import CvmFinancialAccount, CvmFinancialDocument
+from app.models.cvm_financial import (
+    AssetCvmIssuer,
+    CvmFinancialAccount,
+    CvmFinancialDocument,
+)
 from app.providers.cvm_open_data_provider import (
     CvmArchiveError,
     CvmOpenDataProvider,
@@ -408,3 +413,102 @@ def test_itr_compatible_accumulated_values_persist_calculated_quarter(
     document = db_session.get(CvmFinancialDocument, calculated.document_id)
     assert calculated.normalized_value == Decimal("15000")
     assert document.period_kind == "quarterly_calculated"
+
+
+def test_link_asset_does_not_commit_and_rollback_undoes_link_and_unrelated_change(
+    db_session,
+):
+    """Fronteira transacional de CvmFinancialRepository.link_asset(): o
+    repository nunca decide quando comitar (ver docstring de link_asset).
+    Prova por comportamento, não só por ausência de chamada: um flush
+    torna o vínculo visível NA MESMA sessão, mas um rollback desfaz tanto
+    o vínculo quanto um trabalho pendente não relacionado criado antes
+    dele -- se link_asset tivesse comitado, o rollback não teria efeito
+    algum sobre nenhum dos dois.
+    """
+    asset = Asset(ticker="LNK14", name="Vinculo Teste", asset_type="STOCK", currency="BRL")
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    issuer = repository.upsert_issuer("33444555000143", "66666", "EMISSOR VINCULO S.A.")
+    db_session.commit()
+
+    unrelated = Asset(
+        ticker="LNK24", name="Nao Relacionado", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(unrelated)
+    db_session.flush()
+
+    link = repository.link_asset(asset.id, issuer.id)
+    assert link.issuer_id == issuer.id
+    assert (
+        db_session.query(AssetCvmIssuer)
+        .filter(AssetCvmIssuer.asset_id == asset.id)
+        .first()
+        is not None
+    )
+
+    db_session.rollback()
+
+    assert (
+        db_session.query(AssetCvmIssuer)
+        .filter(AssetCvmIssuer.asset_id == asset.id)
+        .first()
+        is None
+    )
+    assert db_session.query(Asset).filter(Asset.ticker == "LNK24").first() is None
+
+
+def test_link_asset_updates_existing_link_without_committing(db_session):
+    asset = Asset(ticker="LNK34", name="Vinculo Atualiza", asset_type="STOCK", currency="BRL")
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    first_issuer = repository.upsert_issuer("55666777000105", "44444", "EMISSOR UM S.A.")
+    second_issuer = repository.upsert_issuer("66777888000186", "33333", "EMISSOR DOIS S.A.")
+    db_session.commit()
+
+    repository.link_asset(asset.id, first_issuer.id)
+    db_session.commit()
+
+    repository.link_asset(asset.id, second_issuer.id)
+    db_session.rollback()
+
+    persisted = (
+        db_session.query(AssetCvmIssuer)
+        .filter(AssetCvmIssuer.asset_id == asset.id)
+        .first()
+    )
+    assert persisted.issuer_id == first_issuer.id
+
+
+def test_service_link_asset_persists_the_link_as_an_explicit_write(db_session):
+    """Fluxo manual (endpoint de superusuário): o serviço decide sua
+    própria fronteira de commit, no mesmo padrão de import_archive().
+    """
+    asset = Asset(ticker="SVLK4", name="Vinculo Servico", asset_type="STOCK", currency="BRL")
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    issuer = repository.upsert_issuer("44555666000124", "55555", "EMISSOR SERVICO S.A.")
+    db_session.commit()
+
+    service = CvmFinancialService(
+        repository, AssetRepository(db_session), provider(Path(".pytest_cache"))
+    )
+    service.link_asset(asset.id, issuer.id)
+
+    fresh = SessionLocal()
+    try:
+        link = (
+            fresh.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .first()
+        )
+        assert link is not None
+        assert link.issuer_id == issuer.id
+    finally:
+        fresh.close()

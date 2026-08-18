@@ -1,9 +1,17 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+from app.core.database import Base
+from app.models.asset import Asset
+from app.models.cvm_financial import AssetCvmIssuer
+from app.repositories.cvm_financial_repository import CvmFinancialRepository
 from app.providers.exceptions import (
     MarketAssetNotFoundError,
     MarketAuthenticationError,
@@ -52,6 +60,25 @@ class _UnknownFiscalCalendarCvm:
 
     def fiscal_year_end(self, issuer_id):
         return None
+
+
+def _fresh_isolated_session_factory():
+    """Sessionmaker ligado a uma engine sqlite em memória PRÓPRIA -- uma
+    conexão totalmente separada de qualquer outra sessão usada no teste
+    (inclusive de `db_session`, que usa a engine principal da app). Usada
+    para provar, de forma comportamental e não só por mock, que a escrita
+    isolada do auto-link (ver IndicatorResolverService._persist_cvm_link_
+    isolated) roda em uma transação genuinamente independente da sessão
+    do resolver -- exatamente como duas conexões separadas de um pool real
+    (Postgres) se comportariam em produção.
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def indicator(key="price_book"):
@@ -698,7 +725,9 @@ def test_cvm_reference_date_collected_at_and_valid_until_preserved():
 
 
 def test_auto_links_issuer_by_exact_cnpj_when_profile_provides_one():
-    issuer = SimpleNamespace(id="issuer-1", cnpj="33000167000101", cvm_code="9512")
+    asset_id = uuid4()
+    issuer_id = uuid4()
+    issuer = SimpleNamespace(id=issuer_id, cnpj="33000167000101", cvm_code="9512")
     linked = {}
 
     class Cvm(_UnknownFiscalCalendarCvm):
@@ -709,26 +738,38 @@ def test_auto_links_issuer_by_exact_cnpj_when_profile_provides_one():
             assert cnpj == "33000167000101"
             return issuer
 
-        def link_asset(self, asset_id, issuer_id):
-            linked[asset_id] = issuer
-            return SimpleNamespace(asset_id=asset_id, issuer_id=issuer_id)
-
         def latest_normalized(self, asset_id):
             return []
 
+    link_session_factory = _fresh_isolated_session_factory()
     market = FakeMarket(profile=SimpleNamespace(cnpj="33.000.167/0001-01"))
     result = resolve(
         IndicatorResolverService(
             market_service=market,
             normalizer=IndicatorNormalizationService(),
             cvm_repository=Cvm(),
+            cvm_link_session_factory=link_session_factory,
         ),
-        asset_id="asset-1",
+        asset_id=asset_id,
     )
     # Sem dados sincronizados ainda -> NOT_SYNCED, mas a vinculação já
     # ocorreu (prova indireta: motivo deixou de ser IDENTIFIER_UNRESOLVED).
     assert result.provider_failure_reason == ProviderFailureReason.NOT_SYNCED
-    assert linked["asset-1"] is issuer
+
+    # A escrita real não passa mais pelo cvm_repository injetado (fake, só
+    # leitura) -- ela vai para a transação isolada própria do auto-link.
+    # Prova a persistência DURÁVEL consultando a sessão isolada.
+    verify = link_session_factory()
+    try:
+        persisted = (
+            verify.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset_id)
+            .first()
+        )
+        assert persisted is not None
+        assert persisted.issuer_id == issuer_id
+    finally:
+        verify.close()
 
 
 def test_auto_link_never_matches_by_name_only_exact_cnpj():
@@ -793,6 +834,155 @@ def test_auto_link_does_not_run_when_already_linked():
         asset_id="asset-1",
     )
     assert result.provider_failure_reason == ProviderFailureReason.NOT_SYNCED
+
+
+def test_auto_link_persists_via_isolated_transaction_without_committing_resolver_session(
+    db_session,
+):
+    """TESTE MAIS IMPORTANTE desta correção: prova que _auto_link_cvm_issuer
+    nunca comita a sessão do resolver (compartilhada com o resto da
+    resolução de indicadores) -- só a transação isolada própria da escrita
+    do vínculo. Um trabalho pendente e não relacionado, criado ANTES do
+    auto-link na sessão do resolver, continua só um flush (nunca comitado
+    por este caminho) e é desfeito por um rollback dessa sessão; o vínculo
+    em si permanece, porque foi persistido em uma transação totalmente
+    separada (conexão própria, não compartilhada -- ver
+    _fresh_isolated_session_factory).
+    """
+    asset = Asset(
+        ticker="ISOAL4", name="Isolamento Teste", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    issuer = repository.upsert_issuer(
+        "11222333000181", "88888", "EMISSOR ISOLADO S.A."
+    )
+    db_session.commit()
+
+    # Trabalho pendente NÃO relacionado na sessão do RESOLVER -- criado
+    # antes do auto-link, nunca comitado por este teste.
+    unrelated = Asset(
+        ticker="ISONR4", name="Nao Relacionado", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(unrelated)
+    db_session.flush()
+    assert db_session.query(Asset).filter(Asset.ticker == "ISONR4").first() is not None
+
+    isolated_factory = _fresh_isolated_session_factory()
+    market = FakeMarket(profile=SimpleNamespace(cnpj="11.222.333/0001-81"))
+    service = IndicatorResolverService(
+        market_service=market,
+        normalizer=IndicatorNormalizationService(),
+        cvm_repository=repository,
+        cvm_link_session_factory=isolated_factory,
+    )
+
+    linked_issuer = service._auto_link_cvm_issuer(asset.id, "ISOAL4")
+    assert linked_issuer is not None
+    assert linked_issuer.id == issuer.id
+
+    # A transação ISOLADA -- não a do resolver -- já persistiu o vínculo
+    # de forma durável (própria sessão, já comitada e fechada).
+    verify = isolated_factory()
+    try:
+        link = (
+            verify.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .first()
+        )
+        assert link is not None
+        assert link.issuer_id == issuer.id
+    finally:
+        verify.close()
+
+    # A sessão do RESOLVER nunca foi comitada por _auto_link_cvm_issuer:
+    # um rollback dela ainda desfaz o trabalho pendente não relacionado.
+    db_session.rollback()
+    assert db_session.query(Asset).filter(Asset.ticker == "ISONR4").first() is None
+
+    # E o vínculo persistido pela transação isolada continua existindo
+    # mesmo após o rollback da sessão do resolver -- prova de que as duas
+    # transações são genuinamente independentes.
+    verify2 = isolated_factory()
+    try:
+        assert (
+            verify2.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .first()
+            is not None
+        )
+    finally:
+        verify2.close()
+
+
+def test_isolated_auto_link_failure_only_rolls_back_isolated_session(db_session):
+    """Prova que um erro DENTRO da transação isolada do auto-link nunca
+    afeta a sessão do resolver: rollback acontece só na sessão isolada, e
+    a sessão principal continua totalmente utilizável depois.
+    """
+    asset = Asset(
+        ticker="ISOFL4", name="Isolamento Falha", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    repository.upsert_issuer("22333444000162", "77777", "EMISSOR FALHA S.A.")
+    db_session.commit()
+
+    isolated_sessionmaker = _fresh_isolated_session_factory()
+    created = {}
+
+    class FailingSession:
+        def __init__(self, real):
+            self._real = real
+            self.rolled_back = False
+            self.closed = False
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def commit(self):
+            raise RuntimeError("falha simulada na transação isolada")
+
+        def rollback(self):
+            self.rolled_back = True
+            self._real.rollback()
+
+        def close(self):
+            self.closed = True
+            self._real.close()
+
+    def failing_factory():
+        wrapper = FailingSession(isolated_sessionmaker())
+        created["session"] = wrapper
+        return wrapper
+
+    market = FakeMarket(profile=SimpleNamespace(cnpj="22.333.444/0001-62"))
+    service = IndicatorResolverService(
+        market_service=market,
+        normalizer=IndicatorNormalizationService(),
+        cvm_repository=repository,
+        cvm_link_session_factory=failing_factory,
+    )
+
+    linked_issuer = service._auto_link_cvm_issuer(asset.id, "ISOFL4")
+    # Auto-link nunca interrompe a cascata de resolução, mesmo em falha.
+    assert linked_issuer is not None
+    assert created["session"].rolled_back is True
+    assert created["session"].closed is True
+
+    # A sessão do RESOLVER continua totalmente utilizável depois da falha
+    # isolada -- nenhum efeito colateral vazou para ela.
+    still_usable = Asset(
+        ticker="ISOOK4", name="Ainda Funciona", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(still_usable)
+    db_session.commit()
+    db_session.refresh(still_usable)
+    assert still_usable.id is not None
 
 
 # --- Indicadores derivados de componentes CVM (roe, roa, net_debt_equity,

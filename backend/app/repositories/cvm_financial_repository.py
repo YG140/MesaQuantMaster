@@ -114,6 +114,17 @@ class CvmFinancialRepository:
         return self.db.query(CvmIssuer).filter(CvmIssuer.cnpj == cnpj).first()
 
     def link_asset(self, asset_id: UUID, issuer_id: UUID) -> AssetCvmIssuer:
+        """Cria ou atualiza o vínculo ativo<->emissor CVM nesta sessão.
+
+        Nunca comita: este método é usado tanto por um fluxo de escrita
+        explícita (CvmFinancialService.link_asset, que decide seu próprio
+        limite de transação) quanto por um fluxo automático embutido em uma
+        resolução maior de indicadores (IndicatorResolverService), que usa
+        uma sessão isolada própria exatamente para nunca comitar trabalho
+        pendente alheio na sessão de resolução. Um repository não deve
+        decidir a fronteira transacional de quem o chama — apenas garante
+        que o vínculo fique visível (via flush) dentro da própria sessão.
+        """
         link = (
             self.db.query(AssetCvmIssuer)
             .filter(AssetCvmIssuer.asset_id == asset_id)
@@ -124,7 +135,7 @@ class CvmFinancialRepository:
             self.db.add(link)
         else:
             link.issuer_id = issuer_id
-        self.db.commit()
+        self.db.flush()
         self.db.refresh(link)
         return link
 

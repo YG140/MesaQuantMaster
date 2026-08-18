@@ -6,6 +6,7 @@ from decimal import Decimal
 import json
 
 from app.core.config import settings
+from app.core.database import SessionLocal
 from app.engines.derived_indicator_engine import DerivedIndicatorEngine
 from app.engines.indicator_catalog import indicator_temporal_validity_days
 from app.providers.bcb_sgs_provider import BcbSgsProvider
@@ -210,6 +211,7 @@ class IndicatorResolverService:
         treasury_provider: TesouroTransparenteProvider | None = None,
         cvm_provider: CvmOpenDataProvider | None = None,
         cvm_repository: CvmFinancialRepository | None = None,
+        cvm_link_session_factory=None,
     ):
         self.market_service = market_service
         self.normalizer = normalizer
@@ -219,6 +221,11 @@ class IndicatorResolverService:
         self.treasury_provider = treasury_provider or self._default_treasury_provider()
         self.cvm_provider = cvm_provider or CvmOpenDataProvider()
         self.cvm_repository = cvm_repository
+        # Fábrica de sessão usada SOMENTE para persistir o vínculo automático
+        # ativo<->emissor CVM (ver _persist_cvm_link_isolated) — nunca para
+        # nada relacionado à resolução de indicadores em si, que continua
+        # usando exclusivamente self.cvm_repository/sua sessão compartilhada.
+        self.cvm_link_session_factory = cvm_link_session_factory or SessionLocal
 
     def resolve_asset(
         self,
@@ -814,8 +821,32 @@ class IndicatorResolverService:
         issuer = self.cvm_repository.find_issuer_by_cnpj(cnpj)
         if issuer is None:
             return None
-        self.cvm_repository.link_asset(asset_id, issuer.id)
+        self._persist_cvm_link_isolated(asset_id, issuer.id)
         return issuer
+
+    def _persist_cvm_link_isolated(self, asset_id, issuer_id) -> None:
+        """Persiste o vínculo ativo<->emissor CVM em uma transação CURTA e
+        ISOLADA, própria — nunca na sessão compartilhada usada para resolver
+        indicadores (self.cvm_repository).
+
+        Isto evita que este pequeno fato de identidade, criado como efeito
+        colateral automático de uma resolução maior, comite (ou dependa de)
+        qualquer outro trabalho pendente e não relacionado na sessão do
+        chamador. Abre sua própria sessão via cvm_link_session_factory,
+        comita/reverte/fecha essa sessão isolada, e nunca toca na sessão de
+        resolução. Qualquer falha aqui é absorvida (mesma filosofia do
+        restante de _auto_link_cvm_issuer): o pior caso é "ainda não
+        vinculado nesta tentativa", nunca uma cascata de resolução
+        interrompida.
+        """
+        db = self.cvm_link_session_factory()
+        try:
+            CvmFinancialRepository(db).link_asset(asset_id, issuer_id)
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
 
     def _apply_cvm_derived_indicators(
         self,
