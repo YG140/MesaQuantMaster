@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import Enum
 from unicodedata import normalize
 
 from app.engines.indicator_catalog import (
@@ -27,6 +28,7 @@ class IndicatorValidationService:
     ) -> tuple[list[NormalizedIndicator], DataQualityReport]:
         now = collected_at or datetime.now(timezone.utc)
         sector_profile = profile_for_sector(sector)
+        fii_nature = classify_fii_nature(segment, sector)
         validated = []
         anomaly_flags = []
         indicator_map = {item.key: item for item in indicators}
@@ -55,7 +57,7 @@ class IndicatorValidationService:
                         "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
-            elif indicator.key in _FII_BRICK_ONLY_INDICATORS and is_fii_paper(segment or sector):
+            elif indicator.key in _FII_BRICK_ONLY_INDICATORS and fii_nature == FiiNature.PAPER:
                 item = indicator.model_copy(
                     update={
                         "status": IndicatorStatus.NOT_APPLICABLE,
@@ -66,7 +68,7 @@ class IndicatorValidationService:
                         "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
-            elif indicator.key in _FII_PAPER_ONLY_INDICATORS and is_fii_brick(segment or sector):
+            elif indicator.key in _FII_PAPER_ONLY_INDICATORS and fii_nature == FiiNature.BRICK:
                 item = indicator.model_copy(
                     update={
                         "status": IndicatorStatus.NOT_APPLICABLE,
@@ -232,7 +234,7 @@ def _negative_earnings_context(indicators: dict[str, NormalizedIndicator]) -> bo
 
 # Indicadores que só fazem sentido para FII com imóveis físicos (tijolo) --
 # NOT_APPLICABLE quando o fundo é comprovadamente de papel/recebíveis (ver
-# is_fii_paper). Nunca NOT_APPLICABLE para tijolo/híbrido/desconhecido.
+# classify_fii_nature). Nunca NOT_APPLICABLE para tijolo/híbrido/desconhecido.
 _FII_BRICK_ONLY_INDICATORS = frozenset(
     {
         "physical_vacancy",
@@ -246,7 +248,7 @@ _FII_BRICK_ONLY_INDICATORS = frozenset(
 
 # Indicadores que só fazem sentido para FII de recebíveis/papel --
 # NOT_APPLICABLE quando o fundo é comprovadamente de tijolo (ver
-# is_fii_brick). Nunca NOT_APPLICABLE para papel/híbrido/desconhecido.
+# classify_fii_nature). Nunca NOT_APPLICABLE para papel/híbrido/desconhecido.
 _FII_PAPER_ONLY_INDICATORS = frozenset(
     {
         "receivable_quality",
@@ -256,14 +258,51 @@ _FII_PAPER_ONLY_INDICATORS = frozenset(
 )
 
 
-def is_fii_paper(segment: str | None) -> bool:
-    text = ascii_key(segment)
-    return "papel" in text or "paper" in text
+class FiiNature(str, Enum):
+    PAPER = "paper"
+    BRICK = "brick"
+    HYBRID = "hybrid"
+    UNKNOWN = "unknown"
 
 
-def is_fii_brick(segment: str | None) -> bool:
-    text = ascii_key(segment)
-    return "tijolo" in text or "brick" in text or "imobili" in text or "real_estate" in text
+def classify_fii_nature(segment: str | None, sector: str | None = None) -> FiiNature:
+    """Classifica a natureza real de um FII de forma determinística e
+    MUTUAMENTE EXCLUSIVA -- nunca por ticker, nunca combinando papel e
+    tijolo ao mesmo tempo por acidente de substring.
+
+    Prioridade: `segment` explícito e resolvido (ex.: segmentType real da
+    BRAPI, "papel"/"tijolo") sempre prevalece sobre `sector`. Só na
+    ausência de segment, cai para `sector` -- mas usando o MESMO
+    vocabulário estrito (papel/recebível vs. tijolo/brick explícitos).
+    "Fundo Imobiliário"/"real estate" sozinho NUNCA é evidência de tijolo
+    -- é apenas a categoria regulatória de TODO FII (inclusive os de
+    papel), então por si só produz UNKNOWN, nunca BRICK.
+    """
+    explicit = _classify_fii_text(segment)
+    if explicit != FiiNature.UNKNOWN:
+        return explicit
+    return _classify_fii_text(sector)
+
+
+def _classify_fii_text(value: str | None) -> FiiNature:
+    text = ascii_key(value)
+    if not text:
+        return FiiNature.UNKNOWN
+    is_hybrid = "hibrid" in text or "hybrid" in text
+    if is_hybrid:
+        return FiiNature.HYBRID
+    is_paper = "papel" in text or "paper" in text or "recebivel" in text or "receivable" in text
+    is_brick = "tijolo" in text or "brick" in text
+    if is_paper and is_brick:
+        # Evidência textual contraditória -- nunca decide por um lado sem
+        # comprovação clara; conservador (mesmo tratamento de híbrido sem
+        # rótulo explícito: não elimina nenhum lado).
+        return FiiNature.UNKNOWN
+    if is_paper:
+        return FiiNature.PAPER
+    if is_brick:
+        return FiiNature.BRICK
+    return FiiNature.UNKNOWN
 
 
 def profile_for_sector(sector: str | None) -> dict | None:

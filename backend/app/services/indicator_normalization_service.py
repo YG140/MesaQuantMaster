@@ -68,13 +68,14 @@ class IndicatorNormalizationService:
         "shares_count": ("sharesOutstanding",),
         "monthly_return": ("monthlyReturn",),
         "segment": ("segmentType", "segmentoAtuacao"),
-        # "vacancyRate" aparece tanto em properties.summary (agregado do
-        # fundo) quanto em properties.properties[N] (por imóvel) -- o
-        # achatamento (_flatten) preserva a PRIMEIRA ocorrência de cada
-        # chave na ordem de iteração do JSON, e "summary" sempre vem antes
-        # de "properties" no payload da BRAPI, então este alias resolve
-        # corretamente para o agregado do fundo, nunca um imóvel isolado.
-        "physical_vacancy": ("vacancyRate",),
+        # physical_vacancy NÃO usa alias genérico: a BRAPI expõe
+        # vacancyRate como FRAÇÃO (0-1), mas o contrato interno de
+        # indicadores "percent" espera pontos percentuais (ver
+        # display_value) -- merge_provider_payloads não teria como aplicar
+        # essa conversão só para este campo sem afetar todos os outros
+        # "percent" do sistema. Resolvido em
+        # IndicatorResolverService._apply_physical_vacancy_from_brapi, que
+        # converte explicitamente (fração * 100) no boundary certo.
         "treasury_title": ("bondType", "name"),
         "indexer": ("indexer",),
         "treasury_rate": ("buyRate", "sellRate"),

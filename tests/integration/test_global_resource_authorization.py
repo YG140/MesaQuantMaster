@@ -42,3 +42,21 @@ def test_superuser_can_mutate(client, active_user, db_session):
 
 def test_unauthenticated_mutation_is_401(unauthenticated_client):
     assert unauthenticated_client.post("/assets", json=ASSET_PAYLOAD).status_code == 401
+
+
+def test_common_user_cannot_start_fii_sync(client):
+    # 403 na dependência de autorização -- nunca chega a agendar a tarefa
+    # de sincronização real (nenhum download é disparado por este teste).
+    assert (
+        client.post("/intelligence/cvm-fii/sync", json={"year": 2026}).status_code
+        == 403
+    )
+
+
+def test_unauthenticated_fii_sync_is_401(unauthenticated_client):
+    assert (
+        unauthenticated_client.post(
+            "/intelligence/cvm-fii/sync", json={"year": 2026}
+        ).status_code
+        == 401
+    )

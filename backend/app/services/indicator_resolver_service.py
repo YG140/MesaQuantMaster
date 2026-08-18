@@ -179,21 +179,34 @@ def _cvm_valid_until(
     return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
 
 
-# Prazo de entrega do Informe Trimestral de FII (ANEXO 39-II da Instrução
-# CVM 571/2015) após o encerramento do trimestre de referência. NÃO foi
-# possível confirmar o texto exato desse prazo regulatório dentro do escopo
-# desta correção -- reaproveita, de forma conservadora e explicitamente
-# documentada, o mesmo prazo já confirmado para o ITR de companhias abertas
-# (CVM_QUARTERLY_FILING_DEADLINE_DAYS = 45), erra sempre para o lado de
-# marcar STALE mais cedo, nunca para estender validade além do comprovado.
+# A CADÊNCIA trimestral do Informe Trimestral de FII é um fato comprovado
+# (é o próprio nome do dataset oficial da CVM -- fii-doc-inf_trimestral --
+# e todos os Data_Referencia observados nos dados reais sincronizados
+# correspondem a fins de trimestre). O PRAZO REGULATÓRIO exato de entrega
+# deste informe específico à CVM (ANEXO 39-II da Instrução CVM 571/2015),
+# porém, NÃO PÔDE ser confirmado no texto oficial dentro do escopo desta
+# correção (as páginas de legislação consultadas em conteudo.cvm.gov.br
+# não expuseram o texto do anexo em HTML plano acessível a este agente).
+#
+# Por isso, o valor abaixo NUNCA deve ser apresentado como uma obrigação
+# da CVM -- é uma POLÍTICA TÉCNICA CONSERVADORA PRÓPRIA DO MESAQUANTMASTER
+# para decidir quando um dado trimestral já sincronizado deixa de ser
+# tratado como "atual" na ausência de um trimestre mais recente. Escolhida
+# deliberadamente MENOR que o prazo de 45 dias do ITR corporativo (esse
+# sim uma regra regulatória já confirmada -- ver CVM_QUARTERLY_FILING_
+# DEADLINE_DAYS) para nunca ser confundida com ele, e para errar sempre
+# no sentido de marcar STALE mais cedo, nunca de estender validade além
+# do comprovado.
+FII_QUARTERLY_TECHNICAL_FRESHNESS_WINDOW_DAYS = 30
+
+
 def _fii_vacancy_valid_until(reference_date: date) -> datetime:
-    """Validade do dado oficial de vacância de FII = prazo esperado para o
-    PRÓXIMO Informe Trimestral que o substituiria economicamente (mesmo
-    princípio de _next_cvm_report_deadline: nunca reutiliza cegamente a
-    política DFP/ITR anual, usa a cadência trimestral real do documento).
+    """Validade TÉCNICA (não regulatória -- ver constante acima) do dado
+    oficial de vacância de FII: cadência trimestral real do documento +
+    janela de segurança própria do MesaQuantMaster.
     """
     next_quarter_end = _add_months(reference_date, 3)
-    deadline = _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+    deadline = _add_days(next_quarter_end, FII_QUARTERLY_TECHNICAL_FRESHNESS_WINDOW_DAYS)
     return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
 
 
@@ -551,16 +564,82 @@ class IndicatorResolverService:
                 )
 
     def _apply_fii_brapi_derived(self, resolved, payloads, collected_at) -> None:
-        """Indicadores de FII que exigem agregação sobre uma LISTA bruta da
-        BRAPI (não um único campo escalar, por isso merge_provider_payloads
-        via alias não os alcança): debtor_concentration, a partir da lista
-        financialAssets do dataset fii/portfolio.
+        """Indicadores de FII resolvidos a partir de estruturas brutas da
+        BRAPI (listas/objetos aninhados, não um único campo escalar --
+        merge_provider_payloads via alias não alcança nem escala esses
+        casos corretamente).
 
-        Concentração = participação do MAIOR emissor único sobre o total de
-        ativos financeiros do fundo -- só calculado quando a lista real tem
-        pelo menos um item com valor informado; nunca inventa 0% quando a
-        lista está ausente/vazia (fundo de tijolo sem carteira de papel
-        simplesmente não tem este dado, o que é diferente de "0% concentrado").
+        CONTRATO INTERNO de indicadores unit="percent" (ver display_value):
+        o `value` armazenado é em PONTOS PERCENTUAIS (70 para 70%, 2.4133
+        para 2,4133%) -- nunca uma fração (0.70, 0.024133). A BRAPI expõe
+        vacancyRate e a participação de devedores como FRAÇÃO (0-1); a
+        conversão para pontos percentuais acontece exatamente aqui, no
+        boundary de construção do indicador, nunca dentro de
+        merge_provider_payloads (que é genérico para todo o sistema e não
+        deve ganhar uma multiplicação global por campo "percent").
+        """
+        self._apply_physical_vacancy_from_brapi(resolved, payloads, collected_at)
+        self._apply_debtor_concentration_from_brapi(resolved, payloads, collected_at)
+
+    def _apply_physical_vacancy_from_brapi(self, resolved, payloads, collected_at) -> None:
+        """physical_vacancy a partir do resumo agregado de vacância da
+        BRAPI -- fii/properties.summary.vacancyRate (direto) ou
+        fii/portfolio.summary.properties.vacancyRate (mesmo dado, um nível
+        a mais de aninhamento). Nunca usa o valor por imóvel individual.
+        """
+        current = resolved.get("physical_vacancy")
+        if current is None or current.status in self._RESOLVED_STATUSES:
+            return
+        found = self._find_fii_vacancy_summary(payloads)
+        if found is None:
+            return
+        summary, dataset, reference_raw = found
+        raw = summary.get("vacancyRate")
+        if raw is None:
+            return
+        try:
+            fraction = Decimal(str(raw))
+        except (InvalidOperation, ValueError):
+            return
+        value = fraction * Decimal("100")
+        reference = self._parse_brapi_date(reference_raw) or collected_at
+        resolved["physical_vacancy"] = current.model_copy(
+            update={
+                "value": value,
+                "display_value": display_value(value, "percent", None),
+                "status": IndicatorStatus.AVAILABLE,
+                "source": "BRAPI",
+                "source_type": "provider",
+                "reference_date": reference,
+                "collected_at": collected_at,
+                "valid_until": self._valid_until(
+                    "physical_vacancy", collected_at, source_type="provider"
+                ),
+                "freshness_status": "current",
+                "confidence": ConfidenceLevel.HIGH,
+                "period": "período informado pelo provedor",
+                "unavailable_reason": None,
+                "provider_failure_reason": None,
+                "provenance": {
+                    "provider": "brapi",
+                    "dataset": dataset,
+                    "field": "summary.vacancyRate",
+                    "method": "fração da BRAPI convertida para pontos percentuais (fração * 100)",
+                    "reference_date": str(reference_raw) if reference_raw else None,
+                },
+            }
+        )
+
+    def _apply_debtor_concentration_from_brapi(self, resolved, payloads, collected_at) -> None:
+        """debtor_concentration a partir da lista financialAssets do
+        dataset fii/portfolio.
+
+        Concentração = participação do MAIOR emissor único sobre o total
+        de ativos financeiros do fundo -- só calculado quando a lista real
+        tem pelo menos um item com valor informado; nunca inventa 0%
+        quando a lista está ausente/vazia (fundo de tijolo sem carteira de
+        papel simplesmente não tem este dado, o que é diferente de "0%
+        concentrado").
         """
         current = resolved.get("debtor_concentration")
         if current is None or current.status in self._RESOLVED_STATUSES:
@@ -569,15 +648,16 @@ class IndicatorResolverService:
         if portfolio_payload is None:
             return
         financial_assets = portfolio_payload.get("financialAssets") or []
-        concentration = self._largest_issuer_share(financial_assets)
-        if concentration is None:
+        fraction = self._largest_issuer_share(financial_assets)
+        if fraction is None:
             return
+        value = fraction * Decimal("100")
         reference_raw = portfolio_payload.get("referenceDate")
         reference = self._parse_brapi_date(reference_raw) or collected_at
         resolved["debtor_concentration"] = current.model_copy(
             update={
-                "value": concentration,
-                "display_value": display_value(concentration, "percent", None),
+                "value": value,
+                "display_value": display_value(value, "percent", None),
                 "status": IndicatorStatus.AVAILABLE,
                 "source": "BRAPI",
                 "source_type": "provider",
@@ -596,8 +676,9 @@ class IndicatorResolverService:
                     "dataset": "fii/portfolio",
                     "field": "financialAssets",
                     "method": (
-                        "maior valor de um único emissor (issuerCnpj) "
-                        "dividido pelo total de financialAssets"
+                        "maior valor de um único emissor (issuerCnpj) dividido "
+                        "pelo total de financialAssets, convertido para pontos "
+                        "percentuais (fração * 100)"
                     ),
                     "reference_date": str(reference_raw) if reference_raw else None,
                 },
@@ -615,6 +696,36 @@ class IndicatorResolverService:
             first = fiis[0]
             if isinstance(first, dict) and first.get(required_key):
                 return first
+        return None
+
+    @staticmethod
+    def _find_fii_vacancy_summary(payloads: list[dict]) -> tuple[dict, str, str | None] | None:
+        """Localiza o resumo agregado de vacância em qualquer payload FII
+        já obtido -- fii/properties.summary (direto) ou
+        fii/portfolio.summary.properties (mesmo dado, aninhado um nível a
+        mais). `payloads` é uma lista simples (sem o nome do dataset
+        anexado -- ver _load_brapi_free), então o dataset de origem é
+        inferido pela FORMA estrutural encontrada, não por um rótulo
+        recebido de fora. Retorna (summary_dict, dataset_label, referenceDate).
+        """
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            fiis = payload.get("fiis")
+            if not isinstance(fiis, list) or not fiis:
+                continue
+            first = fiis[0]
+            if not isinstance(first, dict):
+                continue
+            summary = first.get("summary")
+            if not isinstance(summary, dict):
+                continue
+            reference = first.get("referenceDate")
+            if "vacancyRate" in summary:
+                return summary, "fii/properties", reference
+            nested = summary.get("properties")
+            if isinstance(nested, dict) and "vacancyRate" in nested:
+                return nested, "fii/portfolio", reference
         return None
 
     @staticmethod
@@ -1072,7 +1183,11 @@ class IndicatorResolverService:
             # Documento oficial mais recente já expirou pela própria
             # cadência trimestral -- não finge que ainda é atual.
             return
-        value = Decimal(document.area_weighted_vacancy_rate)
+        # document.area_weighted_vacancy_rate é uma FRAÇÃO (0-1, mesma
+        # escala do campo oficial Percentual_Vacancia da CVM) -- o
+        # contrato interno de indicadores "percent" espera pontos
+        # percentuais (ver display_value), conversão explícita aqui.
+        value = Decimal(document.area_weighted_vacancy_rate) * Decimal("100")
         resolved["physical_vacancy"] = current.model_copy(
             update={
                 "value": value,
@@ -1082,7 +1197,12 @@ class IndicatorResolverService:
                 "source": "CVM Dados Abertos (FII)",
                 "source_type": "official",
                 "reference_date": reference,
-                "collected_at": collected_at,
+                # collected_at é quando o documento oficial foi de fato
+                # coletado/sincronizado (FiiPropertyVacancyDocument.
+                # collected_at) -- nunca o horário desta análise, que é
+                # uma informação totalmente diferente (ver _aware, mesmo
+                # padrão já usado por _apply_cvm para CvmFinancialDocument).
+                "collected_at": self._aware(document.collected_at) or collected_at,
                 "valid_until": valid_until,
                 "freshness_status": "current",
                 "confidence": ConfidenceLevel.HIGH,

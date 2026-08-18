@@ -161,5 +161,13 @@ class CvmFiiRepository:
         run.completed_at = datetime.now(timezone.utc)
         self.db.commit()
 
+    def list_runs(self, limit: int = 20) -> list[FiiSyncRun]:
+        return (
+            self.db.query(FiiSyncRun)
+            .order_by(FiiSyncRun.started_at.desc())
+            .limit(limit)
+            .all()
+        )
+
     def commit(self) -> None:
         self.db.commit()

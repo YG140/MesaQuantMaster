@@ -115,6 +115,11 @@ def _make_resolver(*, cnpj=None, session_factory=None, fii_payloads=None):
 
 
 def test_physical_vacancy_resolves_via_cvm_official_when_linked_by_exact_cnpj():
+    """CONTRATO DE ESCALA: o campo oficial Percentual_Vacancia (e a
+    coluna agregada area_weighted_vacancy_rate, na mesma escala) é uma
+    FRAÇÃO (0-1) -- 0,0512 = 5,12%. O indicador resolvido deve estar em
+    PONTOS PERCENTUAIS (contrato interno de unit="percent", ver
+    display_value): 5.12, nunca 0.0512."""
     session_factory = _fresh_session_factory()
     cnpj = "11222333000181"
     _seed_fii_repository(
@@ -137,11 +142,57 @@ def test_physical_vacancy_resolves_via_cvm_official_when_linked_by_exact_cnpj():
     )
     item = next(i for i in resolved if i.key == "physical_vacancy")
     assert item.status == IndicatorStatus.AVAILABLE
-    assert item.value == Decimal("0.0512")
+    assert item.value == Decimal("5.12")
+    assert item.display_value == "5.12%"
     assert item.source == "CVM Dados Abertos (FII)"
     assert item.source_type == "official"
     assert item.provenance["cnpj_fundo_classe"] == cnpj
     db.close()
+
+
+def test_physical_vacancy_collected_at_is_the_documents_own_collection_time():
+    """BLOQUEADOR 4: collected_at do indicador deve vir do documento
+    oficial (quando ele foi de fato coletado/sincronizado), nunca do
+    horário desta análise -- são informações diferentes."""
+    session_factory = _fresh_session_factory()
+    cnpj = "44555666000124"
+    document_collected_at = datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc)
+    analysis_collected_at = datetime(2026, 8, 18, 15, 30, tzinfo=timezone.utc)
+
+    db = session_factory()
+    repo = CvmFiiRepository(db)
+    issuer = repo.upsert_issuer(cnpj, "FUNDO TESTE FII")
+    db.commit()
+    issuer_id = issuer.id
+    repo.upsert_vacancy_document(
+        issuer_id,
+        reference_date=date(2026, 6, 30),
+        version=1,
+        property_count=5,
+        area_weighted_vacancy_rate=Decimal("0.03"),
+        aggregation_method="média ponderada pela área (teste)",
+        source_resource="inf_trimestral_fii_imovel_2026.csv",
+        collected_at=document_collected_at,
+    )
+    db.commit()
+    db.close()
+
+    resolver, _, db2 = _make_resolver(
+        cnpj="44.555.666/0001-24", session_factory=session_factory
+    )
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=uuid4(),
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=analysis_collected_at,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status == IndicatorStatus.AVAILABLE
+    assert item.collected_at == document_collected_at
+    assert item.collected_at != analysis_collected_at
+    db2.close()
 
 
 def test_physical_vacancy_never_overwrites_value_already_resolved_by_brapi():
@@ -206,6 +257,62 @@ def test_physical_vacancy_expired_official_document_is_never_used_as_current():
     db.close()
 
 
+def test_physical_vacancy_official_document_is_current_within_the_freshness_window():
+    """Borda da política técnica de freshness (não regulatória -- ver
+    FII_QUARTERLY_TECHNICAL_FRESHNESS_WINDOW_DAYS): documento do trimestre
+    encerrado em 2026-06-30 ainda deve ser tratado como atual pouco antes
+    do fim da janela técnica (2026-10-30)."""
+    session_factory = _fresh_session_factory()
+    cnpj = "66777888000186"
+    _seed_fii_repository(
+        session_factory,
+        cnpj=cnpj,
+        reference_date=date(2026, 6, 30),
+        vacancy_rate=Decimal("0.02"),
+    )
+    resolver, _, db = _make_resolver(
+        cnpj="66.777.888/0001-86", session_factory=session_factory
+    )
+    just_before_window_end = datetime(2026, 10, 29, tzinfo=timezone.utc)
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=uuid4(),
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=just_before_window_end,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status == IndicatorStatus.AVAILABLE
+    db.close()
+
+
+def test_physical_vacancy_official_document_is_stale_just_past_the_freshness_window():
+    session_factory = _fresh_session_factory()
+    cnpj = "77888999000167"
+    _seed_fii_repository(
+        session_factory,
+        cnpj=cnpj,
+        reference_date=date(2026, 6, 30),
+        vacancy_rate=Decimal("0.02"),
+    )
+    resolver, _, db = _make_resolver(
+        cnpj="77.888.999/0001-67", session_factory=session_factory
+    )
+    just_after_window_end = datetime(2026, 10, 31, tzinfo=timezone.utc)
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=uuid4(),
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=just_after_window_end,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status != IndicatorStatus.AVAILABLE
+    db.close()
+
+
 def test_fii_official_risk_gracefully_degrades_when_profile_lookup_fails():
     session_factory = _fresh_session_factory()
     db = session_factory()
@@ -259,6 +366,10 @@ def test_fii_auto_link_never_overwrites_link_to_a_different_fund():
 
 
 def test_debtor_concentration_computed_from_real_financial_assets_list():
+    """CONTRATO DE ESCALA: _largest_issuer_share() calcula uma FRAÇÃO
+    (700000/1000000 = 0.70); o indicador resolvido deve estar em PONTOS
+    PERCENTUAIS -- 70.00, nunca 0.70 (0.70% seria uma ordem de grandeza
+    errada)."""
     portfolio_payload = {
         "fiis": [
             {
@@ -285,8 +396,119 @@ def test_debtor_concentration_computed_from_real_financial_assets_list():
     )
     item = next(i for i in resolved if i.key == "debtor_concentration")
     assert item.status == IndicatorStatus.AVAILABLE
-    assert item.value == Decimal("700000") / Decimal("1000000")
+    assert item.value == Decimal("70")
+    assert item.display_value == "70.00%"
     assert item.source == "BRAPI"
+
+
+def test_physical_vacancy_from_brapi_properties_dataset_is_in_percentage_points():
+    """Mesmo contrato de escala, agora pela via BRAPI direta
+    (fii/properties.summary.vacancyRate): fração 0.024133 -> 2.4133 pontos
+    percentuais, nunca 0.024133%."""
+    properties_payload = {
+        "fiis": [
+            {
+                "symbol": "TESTFII",
+                "referenceDate": "2026-06-30",
+                "summary": {
+                    "count": 37,
+                    "vacancyRate": 0.024133196979528197,
+                },
+            }
+        ]
+    }
+    resolver = IndicatorResolverService(
+        market_service=FakeMarket(fii_payloads={"properties": properties_payload}),
+        normalizer=IndicatorNormalizationService(),
+    )
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=NOW,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status == IndicatorStatus.AVAILABLE
+    assert item.value == Decimal("0.024133196979528197") * Decimal("100")
+    assert str(item.value).startswith("2.4133")
+    assert item.source == "BRAPI"
+
+
+def test_physical_vacancy_from_brapi_portfolio_nested_summary_is_in_percentage_points():
+    """Mesmo campo, mas vindo do dataset fii/portfolio (aninhado um nível
+    a mais: summary.properties.vacancyRate) -- mesmo contrato de escala."""
+    portfolio_payload = {
+        "fiis": [
+            {
+                "symbol": "TESTFII",
+                "referenceDate": "2026-06-30",
+                "summary": {"properties": {"vacancyRate": 0.05}},
+            }
+        ]
+    }
+    resolver = IndicatorResolverService(
+        market_service=FakeMarket(fii_payloads={"portfolio": portfolio_payload}),
+        normalizer=IndicatorNormalizationService(),
+    )
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=NOW,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status == IndicatorStatus.AVAILABLE
+    assert item.value == Decimal("5")
+    assert item.display_value == "5.00%"
+
+
+def test_physical_vacancy_zero_explicit_is_preserved_never_becomes_none():
+    properties_payload = {
+        "fiis": [
+            {"symbol": "TESTFII", "referenceDate": "2026-06-30", "summary": {"vacancyRate": 0}}
+        ]
+    }
+    resolver = IndicatorResolverService(
+        market_service=FakeMarket(fii_payloads={"properties": properties_payload}),
+        normalizer=IndicatorNormalizationService(),
+    )
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=NOW,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status == IndicatorStatus.AVAILABLE
+    assert item.value == Decimal("0")
+    assert item.display_value == "0.00%"
+
+
+def test_physical_vacancy_missing_from_brapi_never_becomes_zero():
+    properties_payload = {
+        "fiis": [{"symbol": "TESTFII", "referenceDate": "2026-06-30", "summary": {"count": 2}}]
+    }
+    resolver = IndicatorResolverService(
+        market_service=FakeMarket(fii_payloads={"properties": properties_payload}),
+        normalizer=IndicatorNormalizationService(),
+    )
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=NOW,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.status != IndicatorStatus.AVAILABLE
+    assert item.value is None
 
 
 def test_debtor_concentration_never_fabricates_a_value_when_financial_assets_missing():
@@ -305,3 +527,51 @@ def test_debtor_concentration_never_fabricates_a_value_when_financial_assets_mis
     item = next(i for i in resolved if i.key == "debtor_concentration")
     assert item.status != IndicatorStatus.AVAILABLE
     assert item.value is None
+
+
+# --- Caminho operacional: resolver nunca baixa o ZIP da CVM -----------------
+
+
+def test_resolve_asset_never_touches_the_cvm_fii_download_provider():
+    """BLOQUEADOR 3: o resolver só LÊ dados já sincronizados via
+    CvmFiiRepository -- nunca instancia nem chama
+    CvmFiiOpenDataProvider.download_year durante analyze/resolve. Isso é
+    garantido estruturalmente (IndicatorResolverService nunca recebe uma
+    referência ao provider), mas este teste prova isso em tempo de
+    execução: qualquer tentativa de baixar o ZIP levantaria imediatamente.
+    """
+    from app.providers.cvm_fii_open_data_provider import CvmFiiOpenDataProvider
+
+    original_download = CvmFiiOpenDataProvider.download_year
+
+    def poison(self, year):
+        raise AssertionError(
+            "resolve_asset nunca deveria chamar CvmFiiOpenDataProvider.download_year"
+        )
+
+    CvmFiiOpenDataProvider.download_year = poison
+    try:
+        session_factory = _fresh_session_factory()
+        cnpj = "55666777000105"
+        _seed_fii_repository(
+            session_factory,
+            cnpj=cnpj,
+            reference_date=date(2026, 6, 30),
+            vacancy_rate=Decimal("0.02"),
+        )
+        resolver, _, db = _make_resolver(
+            cnpj="55.666.777/0001-05", session_factory=session_factory
+        )
+        resolved = resolver.resolve_asset(
+            symbol="TESTFII",
+            asset_class=InvestmentClass.FII,
+            asset_id=uuid4(),
+            user_id="user",
+            baseline=[baseline_indicator("physical_vacancy")],
+            collected_at=NOW,
+        )
+        item = next(i for i in resolved if i.key == "physical_vacancy")
+        assert item.status == IndicatorStatus.AVAILABLE
+        db.close()
+    finally:
+        CvmFiiOpenDataProvider.download_year = original_download

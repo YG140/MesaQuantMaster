@@ -9,9 +9,9 @@ from app.schemas.market_intelligence import (
     NormalizedIndicator,
 )
 from app.services.indicator_validation_service import (
+    FiiNature,
     IndicatorValidationService,
-    is_fii_brick,
-    is_fii_paper,
+    classify_fii_nature,
 )
 
 
@@ -32,13 +32,48 @@ def indicator(key: str, status=IndicatorStatus.AVAILABLE) -> NormalizedIndicator
     )
 
 
-def test_is_fii_paper_and_brick_are_evidence_based_not_ticker_based():
-    assert is_fii_paper("papel") is True
-    assert is_fii_paper("Papel") is True
-    assert is_fii_paper("tijolo") is False
-    assert is_fii_brick("tijolo") is True
-    assert is_fii_brick(None) is False
-    assert is_fii_paper(None) is False
+# --- classify_fii_nature: canônica e mutuamente exclusiva -------------------
+
+
+def test_classify_fii_nature_from_explicit_segment():
+    assert classify_fii_nature("papel", None) == FiiNature.PAPER
+    assert classify_fii_nature("Papel", None) == FiiNature.PAPER
+    assert classify_fii_nature("tijolo", None) == FiiNature.BRICK
+    assert classify_fii_nature("híbrido", None) == FiiNature.HYBRID
+    assert classify_fii_nature(None, None) == FiiNature.UNKNOWN
+
+
+def test_classify_fii_nature_generic_real_estate_sector_alone_is_unknown_not_brick():
+    """'Fundo Imobiliário' sozinho é só a categoria regulatória de TODO
+    FII (inclusive os de papel) -- nunca evidência de tijolo por si só."""
+    assert classify_fii_nature(None, "Fundos Imobiliários") == FiiNature.UNKNOWN
+
+
+def test_classify_fii_nature_paper_suffix_in_generic_sector_is_paper_not_brick():
+    """'Fundos Imobiliários - papel' contém 'imobili' (que antes causava
+    falso-positivo de tijolo) E 'papel' -- deve resolver como PAPER,
+    nunca simultaneamente BRICK."""
+    result = classify_fii_nature(None, "Fundos Imobiliários - papel")
+    assert result == FiiNature.PAPER
+    assert result != FiiNature.BRICK
+
+
+def test_classify_fii_nature_explicit_segment_prevails_over_contradictory_sector():
+    result = classify_fii_nature("papel", "Fundos Imobiliários - tijolo")
+    assert result == FiiNature.PAPER
+
+
+def test_classify_fii_nature_hybrid_segment_with_generic_sector():
+    assert (
+        classify_fii_nature("híbrido", "Fundos Imobiliários") == FiiNature.HYBRID
+    )
+
+
+def test_classify_fii_nature_contradictory_text_is_conservatively_unknown():
+    assert classify_fii_nature(None, "papel e tijolo") == FiiNature.UNKNOWN
+
+
+# --- Aplicabilidade dinâmica a partir da classificação -----------------------
 
 
 def test_brick_only_indicators_are_not_applicable_for_paper_fund():
@@ -105,6 +140,18 @@ def test_unknown_segment_never_marks_anything_not_applicable():
         assert item.status == IndicatorStatus.AVAILABLE, item.key
 
 
+def test_generic_real_estate_sector_alone_never_excludes_paper_side():
+    """segment=None, sector='Fundos Imobiliários' (sem 'papel'/'tijolo')
+    => UNKNOWN => nenhum dos dois lados é eliminado."""
+    keys = ["physical_vacancy", "debtor_concentration"]
+    baseline = [indicator(key) for key in keys]
+    validated, _ = IndicatorValidationService().validate(
+        baseline, segment=None, sector="Fundos Imobiliários", collected_at=NOW
+    )
+    for item in validated:
+        assert item.status == IndicatorStatus.AVAILABLE, item.key
+
+
 def test_hybrid_segment_does_not_exclude_either_side():
     """Fundo híbrido: nem 'papel' nem 'tijolo' aparecem no texto do
     segmento -- nenhum lado deve ser eliminado sem evidência."""
@@ -118,8 +165,16 @@ def test_hybrid_segment_does_not_exclude_either_side():
 
 
 def test_segment_falls_back_to_sector_when_segment_is_none():
-    baseline = [indicator("physical_vacancy")]
+    """segment=None, sector='Fundos Imobiliários - papel' => PAPER (nunca
+    BRICK, apesar de 'imobili' aparecer no texto) => physical_vacancy
+    NOT_APPLICABLE, debtor_concentration continua disponível."""
+    baseline = [
+        indicator("physical_vacancy"),
+        indicator("debtor_concentration"),
+    ]
     validated, _ = IndicatorValidationService().validate(
         baseline, segment=None, sector="Fundos Imobiliários - papel", collected_at=NOW
     )
-    assert validated[0].status == IndicatorStatus.NOT_APPLICABLE
+    by_key = {item.key: item for item in validated}
+    assert by_key["physical_vacancy"].status == IndicatorStatus.NOT_APPLICABLE
+    assert by_key["debtor_concentration"].status == IndicatorStatus.AVAILABLE
