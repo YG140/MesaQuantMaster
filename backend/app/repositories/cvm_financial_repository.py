@@ -102,6 +102,19 @@ class CvmFinancialRepository:
         )
         return link.issuer if link else None
 
+    def find_link(self, asset_id: UUID) -> AssetCvmIssuer | None:
+        """Vínculo bruto ativo<->emissor (sem seguir o relacionamento até o
+        CvmIssuer) — usado onde só o próprio `issuer_id` da linha importa,
+        nunca os dados do emissor (ver IndicatorResolverService._resolve_
+        concurrent_link_race: comparar o FK bruto evita depender de um
+        lazy-load extra do CvmIssuer relacionado).
+        """
+        return (
+            self.db.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset_id)
+            .first()
+        )
+
     def find_issuer_by_cnpj(self, cnpj: str) -> CvmIssuer | None:
         """Busca um emissor CVM por CNPJ exato (somente dígitos).
 

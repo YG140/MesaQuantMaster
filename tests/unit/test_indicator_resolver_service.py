@@ -1,16 +1,19 @@
+import tempfile
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base
 from app.models.asset import Asset
-from app.models.cvm_financial import AssetCvmIssuer
+from app.models.cvm_financial import AssetCvmIssuer, CvmIssuer
 from app.repositories.cvm_financial_repository import CvmFinancialRepository
 from app.providers.exceptions import (
     MarketAssetNotFoundError,
@@ -79,6 +82,55 @@ def _fresh_isolated_session_factory():
     )
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+def _shared_file_sqlite_factories():
+    """Duas fábricas de sessão com engines/pools totalmente independentes,
+    mas apontando para o MESMO arquivo sqlite físico -- ao contrário de
+    `_fresh_isolated_session_factory` (duas engines `sqlite:///:memory:`
+    nunca compartilham banco nenhum), isto prova isolamento de transação
+    sobre um banco genuinamente COMPARTILHADO: duas conexões físicas
+    diferentes contra o mesmo arquivo, análogo a duas conexões de um pool
+    real (Postgres) em produção.
+
+    Evita a fixture `tmp_path` do pytest por causa do PermissionError
+    conhecido no Windows (ver memória do projeto sobre isso) -- usa um
+    arquivo próprio sob o diretório temporário do sistema, nome UUID,
+    limpo explicitamente pelo chamador via cleanup() (engines descartadas
+    ANTES do unlink, para liberar o handle do arquivo no Windows).
+
+    Foreign keys são ativadas (PRAGMA foreign_keys=ON) para que o teste
+    também comprove que asset_id/issuer_id em AssetCvmIssuer correspondem
+    a registros reais já existentes no mesmo banco.
+    """
+    db_path = Path(tempfile.gettempdir()) / f"mesaqm_isolation_test_{uuid4().hex}.sqlite3"
+
+    def _make_engine():
+        engine = create_engine(
+            f"sqlite:///{db_path}", connect_args={"check_same_thread": False}
+        )
+
+        @event.listens_for(engine, "connect")
+        def _enable_foreign_keys(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        return engine
+
+    engine_a = _make_engine()
+    Base.metadata.create_all(bind=engine_a)
+    engine_b = _make_engine()
+
+    factory_a = sessionmaker(bind=engine_a, autoflush=False, autocommit=False)
+    factory_b = sessionmaker(bind=engine_b, autoflush=False, autocommit=False)
+
+    def cleanup():
+        engine_a.dispose()
+        engine_b.dispose()
+        db_path.unlink(missing_ok=True)
+
+    return factory_a, factory_b, cleanup
 
 
 def indicator(key="price_book"):
@@ -836,91 +888,134 @@ def test_auto_link_does_not_run_when_already_linked():
     assert result.provider_failure_reason == ProviderFailureReason.NOT_SYNCED
 
 
-def test_auto_link_persists_via_isolated_transaction_without_committing_resolver_session(
-    db_session,
-):
-    """TESTE MAIS IMPORTANTE desta correção: prova que _auto_link_cvm_issuer
-    nunca comita a sessão do resolver (compartilhada com o resto da
-    resolução de indicadores) -- só a transação isolada própria da escrita
-    do vínculo. Um trabalho pendente e não relacionado, criado ANTES do
-    auto-link na sessão do resolver, continua só um flush (nunca comitado
-    por este caminho) e é desfeito por um rollback dessa sessão; o vínculo
-    em si permanece, porque foi persistido em uma transação totalmente
-    separada (conexão própria, não compartilhada -- ver
-    _fresh_isolated_session_factory).
+def test_auto_link_persists_via_isolated_transaction_over_a_shared_database():
+    """TESTE MAIS IMPORTANTE desta correção: prova isolamento de transação
+    sobre um banco FISICAMENTE COMPARTILHADO -- duas conexões
+    independentes (engines/pools separados, ver
+    _shared_file_sqlite_factories) contra o MESMO arquivo sqlite, análogo
+    a duas conexões de um pool real (Postgres) em produção. Não usa
+    StaticPool sobre `:memory:` compartilhado (que colapsaria as duas
+    "conexões" em uma só transação, mascarando o problema original) nem a
+    fixture `tmp_path` (PermissionError conhecido no Windows).
+
+    Prova: (1) asset/issuer comitados no banco compartilhado; (2) sessão B
+    (auto-link) persiste o vínculo via o código de produção real e comita
+    SOMENTE sua própria transação; (3) sessão A (resolver) cria uma
+    alteração não relacionada e só dá flush -- continua vendo essa
+    alteração; (4) rollback da sessão A desfaz SOMENTE essa alteração,
+    nunca o vínculo (que vive em outra transação/conexão); (5)+(6) uma
+    sessão C nova enxerga o vínculo mas NÃO a alteração não relacionada;
+    (7) as FKs do vínculo correspondem a registros reais do mesmo banco
+    (com PRAGMA foreign_keys=ON ativo).
+
+    Nota sobre a ordem: SQLite (ao contrário do Postgres em produção) usa
+    uma trava de escrita única por banco -- uma escrita não comitada em
+    QUALQUER tabela bloqueia qualquer outra conexão que tente escrever,
+    mesmo em tabela totalmente diferente (verificado empiricamente: uma
+    sessão B tentando comitar enquanto a sessão A tem um flush pendente
+    trava até "database is locked"). Por isso o auto-link roda ANTES da
+    alteração não relacionada da sessão A começar -- isso não enfraquece a
+    prova: o que importa é que as duas transações nunca dependem uma da
+    outra para seu próprio commit/rollback, não a ordem cronológica exata.
     """
-    asset = Asset(
-        ticker="ISOAL4", name="Isolamento Teste", asset_type="STOCK", currency="BRL"
-    )
-    db_session.add(asset)
-    db_session.commit()
-
-    repository = CvmFinancialRepository(db_session)
-    issuer = repository.upsert_issuer(
-        "11222333000181", "88888", "EMISSOR ISOLADO S.A."
-    )
-    db_session.commit()
-
-    # Trabalho pendente NÃO relacionado na sessão do RESOLVER -- criado
-    # antes do auto-link, nunca comitado por este teste.
-    unrelated = Asset(
-        ticker="ISONR4", name="Nao Relacionado", asset_type="STOCK", currency="BRL"
-    )
-    db_session.add(unrelated)
-    db_session.flush()
-    assert db_session.query(Asset).filter(Asset.ticker == "ISONR4").first() is not None
-
-    isolated_factory = _fresh_isolated_session_factory()
-    market = FakeMarket(profile=SimpleNamespace(cnpj="11.222.333/0001-81"))
-    service = IndicatorResolverService(
-        market_service=market,
-        normalizer=IndicatorNormalizationService(),
-        cvm_repository=repository,
-        cvm_link_session_factory=isolated_factory,
-    )
-
-    linked_issuer = service._auto_link_cvm_issuer(asset.id, "ISOAL4")
-    assert linked_issuer is not None
-    assert linked_issuer.id == issuer.id
-
-    # A transação ISOLADA -- não a do resolver -- já persistiu o vínculo
-    # de forma durável (própria sessão, já comitada e fechada).
-    verify = isolated_factory()
+    factory_a, factory_b, cleanup = _shared_file_sqlite_factories()
     try:
-        link = (
-            verify.query(AssetCvmIssuer)
-            .filter(AssetCvmIssuer.asset_id == asset.id)
-            .first()
-        )
-        assert link is not None
-        assert link.issuer_id == issuer.id
-    finally:
-        verify.close()
+        session_a = factory_a()
+        try:
+            asset = Asset(
+                ticker="ISOAL4", name="Isolamento Teste", asset_type="STOCK", currency="BRL"
+            )
+            session_a.add(asset)
+            session_a.commit()
 
-    # A sessão do RESOLVER nunca foi comitada por _auto_link_cvm_issuer:
-    # um rollback dela ainda desfaz o trabalho pendente não relacionado.
-    db_session.rollback()
-    assert db_session.query(Asset).filter(Asset.ticker == "ISONR4").first() is None
+            repository_a = CvmFinancialRepository(session_a)
+            issuer = repository_a.upsert_issuer(
+                "11222333000181", "88888", "EMISSOR ISOLADO S.A."
+            )
+            session_a.commit()
+            asset_id, issuer_id = asset.id, issuer.id
 
-    # E o vínculo persistido pela transação isolada continua existindo
-    # mesmo após o rollback da sessão do resolver -- prova de que as duas
-    # transações são genuinamente independentes.
-    verify2 = isolated_factory()
-    try:
-        assert (
-            verify2.query(AssetCvmIssuer)
-            .filter(AssetCvmIssuer.asset_id == asset.id)
-            .first()
-            is not None
-        )
+            # (1) asset e issuer estão comitados no banco compartilhado --
+            # confirmado por uma conexão totalmente independente.
+            check = factory_b()
+            try:
+                assert check.query(Asset).filter(Asset.ticker == "ISOAL4").first() is not None
+                assert check.get(CvmIssuer, issuer_id) is not None
+            finally:
+                check.close()
+
+            # (2) sessão B (auto-link): persiste AssetCvmIssuer via o
+            # código de produção real (_auto_link_cvm_issuer) e comita
+            # SOMENTE sua própria transação isolada -- e a fecha (nenhuma
+            # trava de escrita fica retida) antes de qualquer outra coisa.
+            market = FakeMarket(profile=SimpleNamespace(cnpj="11.222.333/0001-81"))
+            service = IndicatorResolverService(
+                market_service=market,
+                normalizer=IndicatorNormalizationService(),
+                cvm_repository=repository_a,
+                cvm_link_session_factory=factory_b,
+            )
+            linked_issuer = service._auto_link_cvm_issuer(asset_id, "ISOAL4")
+            assert linked_issuer is not None
+            assert linked_issuer.id == issuer_id
+
+            # (3) sessão A (resolver): SÓ AGORA cria uma alteração não
+            # relacionada e dá flush SEM commit -- continua vendo essa
+            # alteração dentro da própria sessão.
+            unrelated = Asset(
+                ticker="ISONR4", name="Nao Relacionado", asset_type="STOCK", currency="BRL"
+            )
+            session_a.add(unrelated)
+            session_a.flush()
+            assert (
+                session_a.query(Asset).filter(Asset.ticker == "ISONR4").first()
+                is not None
+            )
+
+            # (4) rollback da sessão A desfaz SOMENTE a alteração não
+            # relacionada -- nunca tocou no vínculo, que já foi persistido
+            # e comitado por outra transação/conexão antes disso.
+            session_a.rollback()
+            assert (
+                session_a.query(Asset).filter(Asset.ticker == "ISONR4").first() is None
+            )
+
+            # (5)+(6) uma sessão C nova enxerga o vínculo (durável) mas NÃO
+            # a alteração não relacionada (nunca chegou a ser comitada).
+            session_c = factory_b()
+            try:
+                link = (
+                    session_c.query(AssetCvmIssuer)
+                    .filter(AssetCvmIssuer.asset_id == asset_id)
+                    .first()
+                )
+                assert link is not None
+                assert link.issuer_id == issuer_id
+                assert (
+                    session_c.query(Asset).filter(Asset.ticker == "ISONR4").first()
+                    is None
+                )
+
+                # (7) FK: com PRAGMA foreign_keys=ON ativo neste banco, o
+                # INSERT de AssetCvmIssuer só teve sucesso porque asset_id
+                # e issuer_id já existiam como linhas reais -- confirma
+                # explicitamente que continuam resolvendo para elas.
+                assert session_c.get(Asset, link.asset_id) is not None
+                assert session_c.get(CvmIssuer, link.issuer_id) is not None
+            finally:
+                session_c.close()
+        finally:
+            session_a.close()
     finally:
-        verify2.close()
+        cleanup()
 
 
 def test_isolated_auto_link_failure_only_rolls_back_isolated_session(db_session):
-    """Prova que um erro DENTRO da transação isolada do auto-link nunca
-    afeta a sessão do resolver: rollback acontece só na sessão isolada, e
-    a sessão principal continua totalmente utilizável depois.
+    """Prova que um erro REAL (não uma corrida concorrente) dentro da
+    transação isolada do auto-link nunca é reportado como sucesso: o
+    vínculo não é tratado como utilizável, o rollback acontece só na
+    sessão isolada, ela é fechada, a sessão principal continua totalmente
+    utilizável, e nenhum vínculo fantasma aparece no banco.
     """
     asset = Asset(
         ticker="ISOFL4", name="Isolamento Falha", asset_type="STOCK", currency="BRL"
@@ -945,7 +1040,7 @@ def test_isolated_auto_link_failure_only_rolls_back_isolated_session(db_session)
             return getattr(self._real, name)
 
         def commit(self):
-            raise RuntimeError("falha simulada na transação isolada")
+            raise RuntimeError("falha real simulada na transação isolada")
 
         def rollback(self):
             self.rolled_back = True
@@ -969,10 +1064,23 @@ def test_isolated_auto_link_failure_only_rolls_back_isolated_session(db_session)
     )
 
     linked_issuer = service._auto_link_cvm_issuer(asset.id, "ISOFL4")
-    # Auto-link nunca interrompe a cascata de resolução, mesmo em falha.
-    assert linked_issuer is not None
+    # Falha real (não é uma corrida) nunca é reportada como sucesso: o
+    # chamador não pode acreditar em um vínculo que não foi persistido.
+    assert linked_issuer is None
     assert created["session"].rolled_back is True
     assert created["session"].closed is True
+
+    # Nenhum vínculo fantasma foi criado no banco isolado.
+    verify = isolated_sessionmaker()
+    try:
+        assert (
+            verify.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .first()
+            is None
+        )
+    finally:
+        verify.close()
 
     # A sessão do RESOLVER continua totalmente utilizável depois da falha
     # isolada -- nenhum efeito colateral vazou para ela.
@@ -983,6 +1091,151 @@ def test_isolated_auto_link_failure_only_rolls_back_isolated_session(db_session)
     db_session.commit()
     db_session.refresh(still_usable)
     assert still_usable.id is not None
+
+
+def test_auto_link_race_is_idempotent_when_concurrent_winner_links_same_issuer(
+    db_session,
+):
+    """Corrida concorrente legítima: duas tentativas tentam vincular o
+    MESMO asset ao MESMO emissor ao mesmo tempo. asset_cvm_issuers.asset_id
+    é unique -- a perdedora recebe IntegrityError ao comitar. Se, após
+    reler em transação limpa, o vínculo já existente apontar para o MESMO
+    emissor pretendido, isso é sucesso idempotente, nunca um falso erro.
+    """
+    asset = Asset(
+        ticker="RACE14", name="Corrida Mesmo Emissor", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    issuer = repository.upsert_issuer("77888999000105", "22222", "EMISSOR CORRIDA S.A.")
+    db_session.commit()
+
+    isolated_sessionmaker = _fresh_isolated_session_factory()
+
+    # Simula o vencedor da corrida: já vinculou o MESMO emissor antes da
+    # nossa tentativa isolada conseguir comitar.
+    winner = isolated_sessionmaker()
+    CvmFinancialRepository(winner).link_asset(asset.id, issuer.id)
+    winner.commit()
+    winner.close()
+
+    class RacingSession:
+        """Simula a transação PERDEDORA de uma corrida real: o efeito
+        observável de "minha SELECT não viu o vencedor, mas meu COMMIT
+        chega depois do dele" é, de fora, exatamente um IntegrityError no
+        commit -- é isso que se força aqui, de forma determinística, para
+        exercitar o mesmo caminho de código que uma corrida real trilha.
+        """
+
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def commit(self):
+            raise IntegrityError(
+                "INSERT INTO asset_cvm_issuers ...",
+                {},
+                Exception("UNIQUE constraint failed: asset_cvm_issuers.asset_id"),
+            )
+
+    def racing_factory():
+        return RacingSession(isolated_sessionmaker())
+
+    service = IndicatorResolverService(
+        market_service=FakeMarket(),
+        normalizer=IndicatorNormalizationService(),
+        cvm_repository=repository,
+        cvm_link_session_factory=racing_factory,
+    )
+
+    result = service._persist_cvm_link_isolated(asset.id, issuer.id)
+    assert result is True
+
+    verify = isolated_sessionmaker()
+    try:
+        links = (
+            verify.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .all()
+        )
+        assert len(links) == 1
+        assert links[0].issuer_id == issuer.id
+    finally:
+        verify.close()
+
+
+def test_auto_link_race_is_a_conflict_when_concurrent_winner_links_different_issuer(
+    db_session,
+):
+    """Mesma corrida, mas o vencedor vinculou um emissor DIFERENTE do
+    pretendido por esta tentativa -- isso é um conflito de identidade
+    real, nunca deve sobrescrever silenciosamente o vínculo já existente.
+    """
+    asset = Asset(
+        ticker="RACE24", name="Corrida Emissor Diferente", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    winning_issuer = repository.upsert_issuer(
+        "88999000000186", "33333", "EMISSOR VENCEDOR S.A."
+    )
+    our_issuer = repository.upsert_issuer(
+        "99000111000167", "44444", "EMISSOR PRETENDIDO S.A."
+    )
+    db_session.commit()
+
+    isolated_sessionmaker = _fresh_isolated_session_factory()
+
+    winner = isolated_sessionmaker()
+    CvmFinancialRepository(winner).link_asset(asset.id, winning_issuer.id)
+    winner.commit()
+    winner.close()
+
+    class RacingSession:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def commit(self):
+            raise IntegrityError(
+                "INSERT INTO asset_cvm_issuers ...",
+                {},
+                Exception("UNIQUE constraint failed: asset_cvm_issuers.asset_id"),
+            )
+
+    def racing_factory():
+        return RacingSession(isolated_sessionmaker())
+
+    service = IndicatorResolverService(
+        market_service=FakeMarket(),
+        normalizer=IndicatorNormalizationService(),
+        cvm_repository=repository,
+        cvm_link_session_factory=racing_factory,
+    )
+
+    result = service._persist_cvm_link_isolated(asset.id, our_issuer.id)
+    assert result is False
+
+    # O vínculo do vencedor permanece intacto -- nunca sobrescrito.
+    verify = isolated_sessionmaker()
+    try:
+        links = (
+            verify.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .all()
+        )
+        assert len(links) == 1
+        assert links[0].issuer_id == winning_issuer.id
+    finally:
+        verify.close()
 
 
 # --- Indicadores derivados de componentes CVM (roe, roa, net_debt_equity,
