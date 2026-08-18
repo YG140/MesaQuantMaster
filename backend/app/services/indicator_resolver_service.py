@@ -179,34 +179,43 @@ def _cvm_valid_until(
     return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
 
 
-# A CADÊNCIA trimestral do Informe Trimestral de FII é um fato comprovado
-# (é o próprio nome do dataset oficial da CVM -- fii-doc-inf_trimestral --
-# e todos os Data_Referencia observados nos dados reais sincronizados
-# correspondem a fins de trimestre). O PRAZO REGULATÓRIO exato de entrega
-# deste informe específico à CVM (ANEXO 39-II da Instrução CVM 571/2015),
-# porém, NÃO PÔDE ser confirmado no texto oficial dentro do escopo desta
-# correção (as páginas de legislação consultadas em conteudo.cvm.gov.br
-# não expuseram o texto do anexo em HTML plano acessível a este agente).
+# PRAZO REGULATÓRIO CONFIRMADO (texto oficial, verificado diretamente
+# nesta correção -- não reaproveitado por analogia): Art. 36, II, do ANEXO
+# NORMATIVO III DA RESOLUÇÃO CVM Nº 175, DE 23 DE DEZEMBRO DE 2022 (a
+# norma vigente para FII, que sucedeu a Instrução CVM 571/2015):
 #
-# Por isso, o valor abaixo NUNCA deve ser apresentado como uma obrigação
-# da CVM -- é uma POLÍTICA TÉCNICA CONSERVADORA PRÓPRIA DO MESAQUANTMASTER
-# para decidir quando um dado trimestral já sincronizado deixa de ser
-# tratado como "atual" na ausência de um trimestre mais recente. Escolhida
-# deliberadamente MENOR que o prazo de 45 dias do ITR corporativo (esse
-# sim uma regra regulatória já confirmada -- ver CVM_QUARTERLY_FILING_
-# DEADLINE_DAYS) para nunca ser confundida com ele, e para errar sempre
-# no sentido de marcar STALE mais cedo, nunca de estender validade além
-# do comprovado.
-FII_QUARTERLY_TECHNICAL_FRESHNESS_WINDOW_DAYS = 30
+#   "Art. 36. O administrador deve divulgar as seguintes informações
+#   periódicas: [...] II – trimestralmente, até 45 (quarenta e cinco)
+#   dias após o encerramento do trimestre a que se referir, o formulário
+#   eletrônico cujo conteúdo reflita o Suplemento J;"
+#
+# Texto extraído de
+# conteudo.cvm.gov.br/export/sites/cvm/legislacao/resolucoes/anexos/100/
+# resol175consolid_Anexo03.pdf (página 183 do PDF consolidado), baixado e
+# lido integralmente por este agente -- não é uma suposição nem uma
+# reutilização por analogia do prazo do ITR corporativo (que é uma norma
+# diferente, ainda que coincida numericamente em 45 dias).
+#
+# A CADÊNCIA trimestral do dataset (fii-doc-inf_trimestral) e o próprio
+# formulário "Suplemento J" citado acima são o mesmo Informe Trimestral
+# cuja tabela `imovel` este código consome.
+FII_QUARTERLY_FILING_DEADLINE_DAYS = 45
 
 
-def _fii_vacancy_valid_until(reference_date: date) -> datetime:
-    """Validade TÉCNICA (não regulatória -- ver constante acima) do dado
-    oficial de vacância de FII: cadência trimestral real do documento +
-    janela de segurança própria do MesaQuantMaster.
+def _fii_quarterly_valid_until(reference_date: date) -> datetime:
+    """Validade de um indicador periódico trimestral de FII (vacância
+    física, concentração de devedores) = prazo regulatório confirmado
+    (Art. 36, II, ver constante acima) para o PRÓXIMO Informe Trimestral
+    que o substituiria economicamente -- baseada na competência
+    econômica real (`reference_date`, o trimestre a que o dado se
+    refere), nunca em quando foi consultado/coletado (`collected_at` é
+    uma informação diferente -- ver _apply_fii_official_risk e os
+    métodos _apply_*_from_brapi, que usam esta função para AMBAS as
+    fontes, oficial e BRAPI, já que os dois refletem o mesmo regime de
+    divulgação trimestral).
     """
     next_quarter_end = _add_months(reference_date, 3)
-    deadline = _add_days(next_quarter_end, FII_QUARTERLY_TECHNICAL_FRESHNESS_WINDOW_DAYS)
+    deadline = _add_days(next_quarter_end, FII_QUARTERLY_FILING_DEADLINE_DAYS)
     return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
 
 
@@ -282,7 +291,9 @@ class IndicatorResolverService:
 
         if self._has_unresolved(resolved):
             pending = self._unresolved_keys(resolved)
-            payloads, dataset_outcomes = self._load_brapi_free(symbol, asset_class)
+            payloads, dataset_outcomes, payloads_by_dataset = self._load_brapi_free(
+                symbol, asset_class
+            )
             self._apply_payloads(
                 resolved,
                 payloads,
@@ -291,7 +302,7 @@ class IndicatorResolverService:
                 source_type="provider",
             )
             if asset_class == InvestmentClass.FII:
-                self._apply_fii_brapi_derived(resolved, payloads, collected_at)
+                self._apply_fii_brapi_derived(resolved, payloads_by_dataset, collected_at)
             self._record_stage_attempts(
                 resolved,
                 pending_before=pending,
@@ -489,7 +500,15 @@ class IndicatorResolverService:
 
     def _load_brapi_free(
         self, symbol: str, asset_class: InvestmentClass
-    ) -> tuple[list[dict], list[tuple[str, bool, Exception | None]]]:
+    ) -> tuple[list[dict], list[tuple[str, bool, Exception | None]], dict[str, dict]]:
+        """Retorna (payloads, dataset_outcomes, payloads_by_dataset).
+
+        `payloads_by_dataset` associa explicitamente cada payload ao
+        dataset REAL que o resolver acabou de chamar (indicators/
+        properties/portfolio) -- usado pelos métodos FII dedicados
+        (_apply_*_from_brapi) para preencher provenance com o dataset
+        verdadeiro, nunca inferido pela forma do JSON.
+        """
         datasets = (
             # "indicators" traz o segmentType real (papel/tijolo) e dados
             # financeiros; "properties"/"portfolio" trazem vacância física
@@ -503,6 +522,7 @@ class IndicatorResolverService:
         )
         payloads = []
         outcomes: list[tuple[str, bool, Exception | None]] = []
+        payloads_by_dataset: dict[str, dict] = {}
         for dataset in datasets:
             try:
                 payload = (
@@ -513,10 +533,11 @@ class IndicatorResolverService:
                     )
                 )
                 payloads.append(payload)
+                payloads_by_dataset[dataset] = payload
                 outcomes.append((dataset, True, None))
             except Exception as exc:
                 outcomes.append((dataset, False, exc))
-        return payloads, outcomes
+        return payloads, outcomes, payloads_by_dataset
 
     def _load_treasury_official(
         self, symbol: str
@@ -563,11 +584,16 @@ class IndicatorResolverService:
                     }
                 )
 
-    def _apply_fii_brapi_derived(self, resolved, payloads, collected_at) -> None:
+    def _apply_fii_brapi_derived(self, resolved, payloads_by_dataset, collected_at) -> None:
         """Indicadores de FII resolvidos a partir de estruturas brutas da
         BRAPI (listas/objetos aninhados, não um único campo escalar --
         merge_provider_payloads via alias não alcança nem escala esses
         casos corretamente).
+
+        `payloads_by_dataset` associa cada payload ao dataset REAL que
+        produziu (ver _load_brapi_free) -- a provenance de cada indicador
+        usa esse rótulo diretamente, nunca infere a origem pela forma do
+        JSON.
 
         CONTRATO INTERNO de indicadores unit="percent" (ver display_value):
         o `value` armazenado é em PONTOS PERCENTUAIS (70 para 70%, 2.4133
@@ -578,19 +604,22 @@ class IndicatorResolverService:
         merge_provider_payloads (que é genérico para todo o sistema e não
         deve ganhar uma multiplicação global por campo "percent").
         """
-        self._apply_physical_vacancy_from_brapi(resolved, payloads, collected_at)
-        self._apply_debtor_concentration_from_brapi(resolved, payloads, collected_at)
+        self._apply_physical_vacancy_from_brapi(resolved, payloads_by_dataset, collected_at)
+        self._apply_debtor_concentration_from_brapi(resolved, payloads_by_dataset, collected_at)
 
-    def _apply_physical_vacancy_from_brapi(self, resolved, payloads, collected_at) -> None:
+    def _apply_physical_vacancy_from_brapi(
+        self, resolved, payloads_by_dataset, collected_at
+    ) -> None:
         """physical_vacancy a partir do resumo agregado de vacância da
-        BRAPI -- fii/properties.summary.vacancyRate (direto) ou
+        BRAPI -- fii/properties.summary.vacancyRate (preferido, direto) ou
         fii/portfolio.summary.properties.vacancyRate (mesmo dado, um nível
-        a mais de aninhamento). Nunca usa o valor por imóvel individual.
+        a mais de aninhamento, usado só se properties não trouxe o campo).
+        Nunca usa o valor por imóvel individual.
         """
         current = resolved.get("physical_vacancy")
         if current is None or current.status in self._RESOLVED_STATUSES:
             return
-        found = self._find_fii_vacancy_summary(payloads)
+        found = self._find_fii_vacancy_summary(payloads_by_dataset)
         if found is None:
             return
         summary, dataset, reference_raw = found
@@ -612,9 +641,14 @@ class IndicatorResolverService:
                 "source_type": "provider",
                 "reference_date": reference,
                 "collected_at": collected_at,
-                "valid_until": self._valid_until(
-                    "physical_vacancy", collected_at, source_type="provider"
-                ),
+                # valid_until é baseado na COMPETÊNCIA ECONÔMICA (reference,
+                # o trimestre a que o dado se refere) -- nunca em
+                # collected_at (quando foi consultado), que rejuvenesceria
+                # artificialmente um dado trimestral antigo a cada nova
+                # análise. Mesma política do caminho oficial CVM (ambos
+                # refletem o mesmo regime trimestral -- ver
+                # _fii_quarterly_valid_until).
+                "valid_until": _fii_quarterly_valid_until(reference.date()),
                 "freshness_status": "current",
                 "confidence": ConfidenceLevel.HIGH,
                 "period": "período informado pelo provedor",
@@ -630,7 +664,9 @@ class IndicatorResolverService:
             }
         )
 
-    def _apply_debtor_concentration_from_brapi(self, resolved, payloads, collected_at) -> None:
+    def _apply_debtor_concentration_from_brapi(
+        self, resolved, payloads_by_dataset, collected_at
+    ) -> None:
         """debtor_concentration a partir da lista financialAssets do
         dataset fii/portfolio.
 
@@ -644,7 +680,9 @@ class IndicatorResolverService:
         current = resolved.get("debtor_concentration")
         if current is None or current.status in self._RESOLVED_STATUSES:
             return
-        portfolio_payload = self._find_fii_payload(payloads, "financialAssets")
+        portfolio_payload = self._find_fii_payload(
+            payloads_by_dataset, "portfolio", "financialAssets"
+        )
         if portfolio_payload is None:
             return
         financial_assets = portfolio_payload.get("financialAssets") or []
@@ -663,9 +701,10 @@ class IndicatorResolverService:
                 "source_type": "provider",
                 "reference_date": reference,
                 "collected_at": collected_at,
-                "valid_until": self._valid_until(
-                    "debtor_concentration", collected_at, source_type="provider"
-                ),
+                # Mesma política de _apply_physical_vacancy_from_brapi:
+                # baseada na competência econômica (reference), nunca em
+                # collected_at.
+                "valid_until": _fii_quarterly_valid_until(reference.date()),
                 "freshness_status": "current",
                 "confidence": ConfidenceLevel.HIGH,
                 "period": "período informado pelo provedor",
@@ -686,46 +725,55 @@ class IndicatorResolverService:
         )
 
     @staticmethod
-    def _find_fii_payload(payloads: list[dict], required_key: str) -> dict | None:
-        for payload in payloads:
-            if not isinstance(payload, dict):
-                continue
-            fiis = payload.get("fiis")
-            if not isinstance(fiis, list) or not fiis:
-                continue
-            first = fiis[0]
-            if isinstance(first, dict) and first.get(required_key):
-                return first
+    def _find_fii_payload(
+        payloads_by_dataset: dict[str, dict], dataset: str, required_key: str
+    ) -> dict | None:
+        """Retorna o primeiro item `fiis[0]` do payload do dataset REAL
+        indicado (nunca inferido por forma), se ele existir e trouxer o
+        campo esperado.
+        """
+        payload = payloads_by_dataset.get(dataset)
+        if not isinstance(payload, dict):
+            return None
+        fiis = payload.get("fiis")
+        if not isinstance(fiis, list) or not fiis:
+            return None
+        first = fiis[0]
+        if isinstance(first, dict) and first.get(required_key):
+            return first
         return None
 
     @staticmethod
-    def _find_fii_vacancy_summary(payloads: list[dict]) -> tuple[dict, str, str | None] | None:
-        """Localiza o resumo agregado de vacância em qualquer payload FII
-        já obtido -- fii/properties.summary (direto) ou
-        fii/portfolio.summary.properties (mesmo dado, aninhado um nível a
-        mais). `payloads` é uma lista simples (sem o nome do dataset
-        anexado -- ver _load_brapi_free), então o dataset de origem é
-        inferido pela FORMA estrutural encontrada, não por um rótulo
-        recebido de fora. Retorna (summary_dict, dataset_label, referenceDate).
+    def _find_fii_vacancy_summary(
+        payloads_by_dataset: dict[str, dict]
+    ) -> tuple[dict, str, str | None] | None:
+        """Localiza o resumo agregado de vacância, verificando
+        EXPLICITAMENTE os datasets reais em que ele pode aparecer --
+        fii/properties.summary.vacancyRate primeiro (o mais direto);
+        fii/portfolio.summary.properties.vacancyRate como alternativa
+        (mesmo dado, um nível a mais de aninhamento) só se properties não
+        tiver sido obtido ou não trouxer o campo. Nunca infere a origem
+        pela forma do JSON -- o dataset retornado é sempre o que
+        efetivamente produziu o valor. Retorna (summary_dict,
+        dataset_label, referenceDate).
         """
-        for payload in payloads:
-            if not isinstance(payload, dict):
-                continue
-            fiis = payload.get("fiis")
-            if not isinstance(fiis, list) or not fiis:
-                continue
-            first = fiis[0]
-            if not isinstance(first, dict):
-                continue
-            summary = first.get("summary")
-            if not isinstance(summary, dict):
-                continue
-            reference = first.get("referenceDate")
-            if "vacancyRate" in summary:
-                return summary, "fii/properties", reference
-            nested = summary.get("properties")
-            if isinstance(nested, dict) and "vacancyRate" in nested:
-                return nested, "fii/portfolio", reference
+        properties_payload = payloads_by_dataset.get("properties")
+        if isinstance(properties_payload, dict):
+            fiis = properties_payload.get("fiis")
+            if isinstance(fiis, list) and fiis and isinstance(fiis[0], dict):
+                summary = fiis[0].get("summary")
+                if isinstance(summary, dict) and "vacancyRate" in summary:
+                    return summary, "fii/properties", fiis[0].get("referenceDate")
+
+        portfolio_payload = payloads_by_dataset.get("portfolio")
+        if isinstance(portfolio_payload, dict):
+            fiis = portfolio_payload.get("fiis")
+            if isinstance(fiis, list) and fiis and isinstance(fiis[0], dict):
+                summary = fiis[0].get("summary")
+                if isinstance(summary, dict):
+                    nested = summary.get("properties")
+                    if isinstance(nested, dict) and "vacancyRate" in nested:
+                        return nested, "fii/portfolio", fiis[0].get("referenceDate")
         return None
 
     @staticmethod
@@ -1178,7 +1226,7 @@ class IndicatorResolverService:
         reference = datetime.combine(
             document.reference_date, time.min, tzinfo=timezone.utc
         )
-        valid_until = _fii_vacancy_valid_until(document.reference_date)
+        valid_until = _fii_quarterly_valid_until(document.reference_date)
         if collected_at > valid_until:
             # Documento oficial mais recente já expirou pela própria
             # cadência trimestral -- não finge que ainda é atual.

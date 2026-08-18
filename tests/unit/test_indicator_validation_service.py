@@ -63,6 +63,22 @@ def test_classify_fii_nature_explicit_segment_prevails_over_contradictory_sector
     assert result == FiiNature.PAPER
 
 
+def test_classify_fii_nature_unrecognized_segment_never_falls_back_to_sector():
+    """Precedência ESTRITA: segment presente mas não reconhecido
+    ('Logística' não é papel/tijolo/híbrido) -- NUNCA cai para sector,
+    mesmo que sector tenha evidência clara de papel. Um segmento real e
+    específico não deve ser 'corrigido' por um campo genérico."""
+    result = classify_fii_nature("Logística", "Fundos Imobiliários - papel")
+    assert result == FiiNature.UNKNOWN
+    assert result != FiiNature.PAPER
+
+
+def test_classify_fii_nature_empty_string_segment_falls_back_to_sector():
+    """String vazia conta como ausente -- cai para sector normalmente."""
+    result = classify_fii_nature("", "Fundos Imobiliários - papel")
+    assert result == FiiNature.PAPER
+
+
 def test_classify_fii_nature_hybrid_segment_with_generic_sector():
     assert (
         classify_fii_nature("híbrido", "Fundos Imobiliários") == FiiNature.HYBRID

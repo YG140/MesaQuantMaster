@@ -270,17 +270,22 @@ def classify_fii_nature(segment: str | None, sector: str | None = None) -> FiiNa
     MUTUAMENTE EXCLUSIVA -- nunca por ticker, nunca combinando papel e
     tijolo ao mesmo tempo por acidente de substring.
 
-    Prioridade: `segment` explícito e resolvido (ex.: segmentType real da
-    BRAPI, "papel"/"tijolo") sempre prevalece sobre `sector`. Só na
-    ausência de segment, cai para `sector` -- mas usando o MESMO
-    vocabulário estrito (papel/recebível vs. tijolo/brick explícitos).
-    "Fundo Imobiliário"/"real estate" sozinho NUNCA é evidência de tijolo
-    -- é apenas a categoria regulatória de TODO FII (inclusive os de
-    papel), então por si só produz UNKNOWN, nunca BRICK.
+    Precedência ESTRITA: se `segment` tem valor não vazio, a classificação
+    vem SOMENTE dele -- mesmo que o texto não seja reconhecido (ex.:
+    segment="Logística" -> UNKNOWN), NUNCA cai para `sector` nesse caso
+    (um segmento real e específico, mesmo que não mapeado pelo
+    vocabulário conhecido, não deve ser "corrigido" por um campo genérico
+    e menos confiável). `sector` só é consultado quando `segment` está
+    genuinamente ausente/vazio.
+
+    Mesmo vocabulário estrito nas duas fontes (papel/recebível vs.
+    tijolo/brick explícitos). "Fundo Imobiliário"/"real estate" sozinho
+    NUNCA é evidência de tijolo -- é apenas a categoria regulatória de
+    TODO FII (inclusive os de papel), então por si só produz UNKNOWN,
+    nunca BRICK.
     """
-    explicit = _classify_fii_text(segment)
-    if explicit != FiiNature.UNKNOWN:
-        return explicit
+    if segment is not None and ascii_key(segment):
+        return _classify_fii_text(segment)
     return _classify_fii_text(sector)
 
 

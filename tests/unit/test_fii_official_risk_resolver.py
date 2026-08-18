@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -257,60 +258,67 @@ def test_physical_vacancy_expired_official_document_is_never_used_as_current():
     db.close()
 
 
-def test_physical_vacancy_official_document_is_current_within_the_freshness_window():
-    """Borda da política técnica de freshness (não regulatória -- ver
-    FII_QUARTERLY_TECHNICAL_FRESHNESS_WINDOW_DAYS): documento do trimestre
-    encerrado em 2026-06-30 ainda deve ser tratado como atual pouco antes
-    do fim da janela técnica (2026-10-30)."""
+def _official_vacancy_status_at(cnpj_digits, cnpj_formatted, reference_date, collected_at):
     session_factory = _fresh_session_factory()
-    cnpj = "66777888000186"
     _seed_fii_repository(
         session_factory,
-        cnpj=cnpj,
-        reference_date=date(2026, 6, 30),
+        cnpj=cnpj_digits,
+        reference_date=reference_date,
         vacancy_rate=Decimal("0.02"),
     )
-    resolver, _, db = _make_resolver(
-        cnpj="66.777.888/0001-86", session_factory=session_factory
-    )
-    just_before_window_end = datetime(2026, 10, 29, tzinfo=timezone.utc)
+    resolver, _, db = _make_resolver(cnpj=cnpj_formatted, session_factory=session_factory)
     resolved = resolver.resolve_asset(
         symbol="TESTFII",
         asset_class=InvestmentClass.FII,
         asset_id=uuid4(),
         user_id="user",
         baseline=[baseline_indicator("physical_vacancy")],
-        collected_at=just_before_window_end,
+        collected_at=collected_at,
     )
     item = next(i for i in resolved if i.key == "physical_vacancy")
-    assert item.status == IndicatorStatus.AVAILABLE
     db.close()
+    return item.status
 
 
-def test_physical_vacancy_official_document_is_stale_just_past_the_freshness_window():
-    session_factory = _fresh_session_factory()
-    cnpj = "77888999000167"
-    _seed_fii_repository(
-        session_factory,
-        cnpj=cnpj,
-        reference_date=date(2026, 6, 30),
-        vacancy_rate=Decimal("0.02"),
+# Prazo REGULATÓRIO CONFIRMADO (ver FII_QUARTERLY_FILING_DEADLINE_DAYS,
+# Art. 36, II, Anexo Normativo III da Resolução CVM 175/2022): trimestralmente,
+# até 45 dias após o encerramento do trimestre a que se referir. Valores de
+# valid_until abaixo calculados diretamente por _fii_quarterly_valid_until
+# (nunca transcritos manualmente), cobrindo os 4 fins de trimestre do ano.
+@pytest.mark.parametrize(
+    "reference_date,valid_until_boundary",
+    [
+        (date(2026, 3, 31), datetime(2026, 8, 14, tzinfo=timezone.utc)),
+        (date(2026, 6, 30), datetime(2026, 11, 14, tzinfo=timezone.utc)),
+        (date(2026, 9, 30), datetime(2027, 2, 13, tzinfo=timezone.utc)),
+        (date(2026, 12, 31), datetime(2027, 5, 15, tzinfo=timezone.utc)),
+    ],
+)
+def test_physical_vacancy_official_document_boundaries_per_quarter(
+    reference_date, valid_until_boundary
+):
+    cnpj = f"{reference_date.month:02d}{reference_date.day:02d}0000000181"
+    assert len(cnpj) == 14
+    formatted = f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
+
+    # Imediatamente ANTES do vencimento -- ainda atual.
+    before = _official_vacancy_status_at(
+        cnpj, formatted, reference_date, valid_until_boundary - timedelta(seconds=1)
     )
-    resolver, _, db = _make_resolver(
-        cnpj="77.888.999/0001-67", session_factory=session_factory
+    assert before == IndicatorStatus.AVAILABLE
+
+    # NO instante exato do vencimento -- ainda atual (limite inclusivo:
+    # _apply_fii_official_risk só recusa quando collected_at > valid_until).
+    at_deadline = _official_vacancy_status_at(
+        cnpj, formatted, reference_date, valid_until_boundary
     )
-    just_after_window_end = datetime(2026, 10, 31, tzinfo=timezone.utc)
-    resolved = resolver.resolve_asset(
-        symbol="TESTFII",
-        asset_class=InvestmentClass.FII,
-        asset_id=uuid4(),
-        user_id="user",
-        baseline=[baseline_indicator("physical_vacancy")],
-        collected_at=just_after_window_end,
+    assert at_deadline == IndicatorStatus.AVAILABLE
+
+    # Imediatamente DEPOIS do vencimento -- já stale/não usado como atual.
+    after = _official_vacancy_status_at(
+        cnpj, formatted, reference_date, valid_until_boundary + timedelta(seconds=1)
     )
-    item = next(i for i in resolved if i.key == "physical_vacancy")
-    assert item.status != IndicatorStatus.AVAILABLE
-    db.close()
+    assert after != IndicatorStatus.AVAILABLE
 
 
 def test_fii_official_risk_gracefully_degrades_when_profile_lookup_fails():
@@ -434,6 +442,123 @@ def test_physical_vacancy_from_brapi_properties_dataset_is_in_percentage_points(
     assert item.value == Decimal("0.024133196979528197") * Decimal("100")
     assert str(item.value).startswith("2.4133")
     assert item.source == "BRAPI"
+    assert item.provenance["dataset"] == "fii/properties"
+
+
+def test_physical_vacancy_provenance_points_to_the_dataset_that_actually_answered():
+    """BLOQUEADOR 5: provenance.dataset deve ser o dataset REAL que o
+    resolver efetivamente chamou e que respondeu com o campo -- nunca
+    inferido pela forma do JSON. Aqui `properties` e `portfolio` têm
+    estruturas parecidas (ambos têm summary com vacancyRate em algum
+    nível) mas só um dos dois é o dataset verdadeiro em cada cenário.
+    """
+    # Cenário 1: só properties tem o campo -- provenance deve apontar
+    # para fii/properties, mesmo que portfolio também tenha sido chamado
+    # (sem o campo).
+    resolver = IndicatorResolverService(
+        market_service=FakeMarket(
+            fii_payloads={
+                "properties": {
+                    "fiis": [
+                        {
+                            "symbol": "TESTFII",
+                            "referenceDate": "2026-06-30",
+                            "summary": {"vacancyRate": 0.03},
+                        }
+                    ]
+                },
+                "portfolio": {
+                    "fiis": [
+                        {"symbol": "TESTFII", "referenceDate": "2026-06-30", "summary": {}}
+                    ]
+                },
+            }
+        ),
+        normalizer=IndicatorNormalizationService(),
+    )
+    resolved = resolver.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=NOW,
+    )
+    item = next(i for i in resolved if i.key == "physical_vacancy")
+    assert item.provenance["dataset"] == "fii/properties"
+
+    # Cenário 2: properties não trouxe o campo (payload existe mas sem
+    # vacancyRate), só portfolio tem -- provenance deve apontar para
+    # fii/portfolio, o dataset que realmente respondeu.
+    resolver2 = IndicatorResolverService(
+        market_service=FakeMarket(
+            fii_payloads={
+                "properties": {
+                    "fiis": [
+                        {"symbol": "TESTFII", "referenceDate": "2026-06-30", "summary": {}}
+                    ]
+                },
+                "portfolio": {
+                    "fiis": [
+                        {
+                            "symbol": "TESTFII",
+                            "referenceDate": "2026-06-30",
+                            "summary": {"properties": {"vacancyRate": 0.04}},
+                        }
+                    ]
+                },
+            }
+        ),
+        normalizer=IndicatorNormalizationService(),
+    )
+    resolved2 = resolver2.resolve_asset(
+        symbol="TESTFII",
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+        user_id="user",
+        baseline=[baseline_indicator("physical_vacancy")],
+        collected_at=NOW,
+    )
+    item2 = next(i for i in resolved2 if i.key == "physical_vacancy")
+    assert item2.provenance["dataset"] == "fii/portfolio"
+
+
+def test_physical_vacancy_valid_until_is_stable_across_different_collection_times():
+    """BLOQUEADOR 3: o mesmo referenceDate econômico (2026-06-30),
+    consultado em dois momentos de coleta diferentes, deve produzir o
+    MESMO valid_until -- nunca duas janelas de validade diferentes só
+    porque a consulta aconteceu em horários distintos."""
+    properties_payload = {
+        "fiis": [
+            {
+                "symbol": "TESTFII",
+                "referenceDate": "2026-06-30",
+                "summary": {"vacancyRate": 0.02},
+            }
+        ]
+    }
+    collected_at_1 = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
+    collected_at_2 = datetime(2026, 9, 15, 18, 30, tzinfo=timezone.utc)
+
+    valid_untils = []
+    for collected_at in (collected_at_1, collected_at_2):
+        resolver = IndicatorResolverService(
+            market_service=FakeMarket(fii_payloads={"properties": properties_payload}),
+            normalizer=IndicatorNormalizationService(),
+        )
+        resolved = resolver.resolve_asset(
+            symbol="TESTFII",
+            asset_class=InvestmentClass.FII,
+            asset_id=None,
+            user_id="user",
+            baseline=[baseline_indicator("physical_vacancy")],
+            collected_at=collected_at,
+        )
+        item = next(i for i in resolved if i.key == "physical_vacancy")
+        valid_untils.append(item.valid_until)
+
+    assert valid_untils[0] == valid_untils[1]
+    assert valid_untils[0] == datetime(2026, 11, 14, tzinfo=timezone.utc)
 
 
 def test_physical_vacancy_from_brapi_portfolio_nested_summary_is_in_percentage_points():
