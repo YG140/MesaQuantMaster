@@ -512,3 +512,43 @@ def test_service_link_asset_persists_the_link_as_an_explicit_write(db_session):
         assert link.issuer_id == issuer.id
     finally:
         fresh.close()
+
+
+def test_service_link_asset_can_change_an_existing_link_to_a_different_issuer(
+    db_session,
+):
+    """Fluxo manual (endpoint de superusuário): pode trocar explicitamente
+    o emissor de um vínculo já existente -- ao contrário do auto-link
+    automático (IndicatorResolverService, via CvmFinancialRepository.
+    ensure_asset_link), que nunca substitui silenciosamente um vínculo
+    para um emissor diferente. Essa capacidade de troca deliberada
+    continua exclusiva do fluxo manual.
+    """
+    asset = Asset(
+        ticker="SVLK5", name="Vinculo Troca Manual", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    issuer_a = repository.upsert_issuer("12312312000100", "10001", "EMISSOR A S.A.")
+    issuer_b = repository.upsert_issuer("32132132000100", "10002", "EMISSOR B S.A.")
+    db_session.commit()
+
+    service = CvmFinancialService(
+        repository, AssetRepository(db_session), provider(Path(".pytest_cache"))
+    )
+    service.link_asset(asset.id, issuer_a.id)
+    service.link_asset(asset.id, issuer_b.id)
+
+    fresh = SessionLocal()
+    try:
+        link = (
+            fresh.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .first()
+        )
+        assert link is not None
+        assert link.issuer_id == issuer_b.id
+    finally:
+        fresh.close()

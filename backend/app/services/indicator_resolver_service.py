@@ -848,8 +848,13 @@ class IndicatorResolverService:
         Retorna True somente se o vínculo asset_id -> issuer_id está
         confirmadamente persistido (por esta transação ou por uma
         concorrente equivalente -- ver _resolve_concurrent_link_race).
-        Retorna False em qualquer falha real, incluindo uma corrida cujo
-        vencedor vinculou o asset a um emissor DIFERENTE. Uma falha aqui
+        Retorna False em qualquer falha real, incluindo quando já existe
+        um vínculo (seja lido diretamente aqui, seja detectado por uma
+        corrida concorrente) apontando para um emissor DIFERENTE -- o
+        auto-link NUNCA substitui silenciosamente a identidade de um
+        emissor já vinculado; isso é uma ação exclusiva do fluxo manual
+        (CvmFinancialService.link_asset, via CvmFinancialRepository.
+        link_asset, que é create-or-update deliberado). Uma falha aqui
         nunca lança exceção para o chamador (mesma filosofia do restante
         de _auto_link_cvm_issuer: o pior caso é "ainda não vinculado nesta
         tentativa", nunca uma cascata de resolução interrompida) -- mas
@@ -858,14 +863,20 @@ class IndicatorResolverService:
         db = self.cvm_link_session_factory()
         try:
             try:
-                CvmFinancialRepository(db).link_asset(asset_id, issuer_id)
+                link = CvmFinancialRepository(db).ensure_asset_link(asset_id, issuer_id)
+                if link is None:
+                    # Já existia vínculo para um issuer DIFERENTE -- nada
+                    # foi alterado (ensure_asset_link não muta neste caso).
+                    # Conflito real, nunca sobrescrito silenciosamente.
+                    db.rollback()
+                    return False
                 db.commit()
                 return True
             except IntegrityError:
-                # asset_cvm_issuers.asset_id é unique: outra transação pode
-                # ter vinculado este mesmo asset concorrentemente entre a
-                # leitura e o commit desta. Não é necessariamente um erro
-                # real -- relê em transação limpa antes de decidir.
+                # asset_cvm_issuers.asset_id é unique: duas transações
+                # podem ter lido "sem vínculo" e tentado inserir ao mesmo
+                # tempo. Não é necessariamente um erro real -- relê em
+                # transação limpa antes de decidir.
                 db.rollback()
                 return self._resolve_concurrent_link_race(db, asset_id, issuer_id)
             except Exception:

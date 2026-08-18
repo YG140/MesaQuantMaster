@@ -1238,6 +1238,112 @@ def test_auto_link_race_is_a_conflict_when_concurrent_winner_links_different_iss
         verify.close()
 
 
+def test_auto_link_never_overwrites_a_pre_existing_link_to_a_different_issuer(
+    db_session,
+):
+    """Corrida do TIPO 2 (sem IntegrityError): outra transação já
+    vinculou asset_id -> issuer B e comitou ANTES desta tentativa isolada
+    sequer começar -- não é um INSERT concorrente, é uma leitura que já
+    encontra o vínculo existente. CvmFinancialRepository.link_asset()
+    (create-or-update) sobrescreveria silenciosamente para issuer A; o
+    auto-link usa ensure_asset_link (create-if-absent / verify-same) e
+    precisa recusar, preservando o vínculo já existente intacto.
+
+    Este teste falha contra o código anterior a esta correção (que usava
+    link_asset diretamente em _persist_cvm_link_isolated) e passa depois.
+    """
+    asset = Asset(
+        ticker="RACE34", name="Vinculo Preexistente Diferente", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    issuer_b = repository.upsert_issuer("11444777000103", "55501", "EMISSOR B S.A.")
+    issuer_a = repository.upsert_issuer("22555888000184", "55502", "EMISSOR A S.A.")
+    db_session.commit()
+
+    isolated_sessionmaker = _fresh_isolated_session_factory()
+
+    # Vínculo já existe e já foi comitado ANTES de qualquer tentativa de
+    # auto-link rodar -- simula a request concorrente que já terminou.
+    already_there = isolated_sessionmaker()
+    CvmFinancialRepository(already_there).link_asset(asset.id, issuer_b.id)
+    already_there.commit()
+    already_there.close()
+
+    service = IndicatorResolverService(
+        market_service=FakeMarket(),
+        normalizer=IndicatorNormalizationService(),
+        cvm_repository=repository,
+        cvm_link_session_factory=isolated_sessionmaker,
+    )
+
+    # Auto-link, sem saber do vínculo já existente, tenta persistir para
+    # issuer A -- deve ser recusado, nunca sobrescrever.
+    result = service._persist_cvm_link_isolated(asset.id, issuer_a.id)
+    assert result is False
+
+    verify = isolated_sessionmaker()
+    try:
+        links = (
+            verify.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .all()
+        )
+        assert len(links) == 1
+        assert links[0].issuer_id == issuer_b.id
+    finally:
+        verify.close()
+
+
+def test_auto_link_is_idempotent_when_pre_existing_link_matches_the_same_issuer(
+    db_session,
+):
+    """Se já existe vínculo asset_id -> issuer A (comitado antes desta
+    tentativa) e o auto-link também pretende issuer A, isso é sucesso
+    idempotente -- sem UPDATE desnecessário, sem erro.
+    """
+    asset = Asset(
+        ticker="RACE44", name="Vinculo Preexistente Mesmo", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    repository = CvmFinancialRepository(db_session)
+    issuer = repository.upsert_issuer("33666999000165", "55503", "EMISSOR MESMO S.A.")
+    db_session.commit()
+
+    isolated_sessionmaker = _fresh_isolated_session_factory()
+
+    already_there = isolated_sessionmaker()
+    CvmFinancialRepository(already_there).link_asset(asset.id, issuer.id)
+    already_there.commit()
+    already_there.close()
+
+    service = IndicatorResolverService(
+        market_service=FakeMarket(),
+        normalizer=IndicatorNormalizationService(),
+        cvm_repository=repository,
+        cvm_link_session_factory=isolated_sessionmaker,
+    )
+
+    result = service._persist_cvm_link_isolated(asset.id, issuer.id)
+    assert result is True
+
+    verify = isolated_sessionmaker()
+    try:
+        links = (
+            verify.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset.id)
+            .all()
+        )
+        assert len(links) == 1
+        assert links[0].issuer_id == issuer.id
+    finally:
+        verify.close()
+
+
 # --- Indicadores derivados de componentes CVM (roe, roa, net_debt_equity,
 # liabilities_assets, current_liquidity) -------------------------------------
 

@@ -115,6 +115,38 @@ class CvmFinancialRepository:
             .first()
         )
 
+    def ensure_asset_link(self, asset_id: UUID, issuer_id: UUID) -> AssetCvmIssuer | None:
+        """Cria o vínculo SOMENTE se ainda não existir nenhum -- nunca
+        substitui um vínculo já existente para um issuer DIFERENTE (ao
+        contrário de link_asset, que é create-or-update e serve ao fluxo
+        MANUAL do superusuário, onde trocar o emissor é uma ação
+        explicitamente autorizada). Usado pelo auto-link automático, onde
+        sobrescrever silenciosamente a identidade de um emissor já
+        vinculado seria uma corrupção de dados, nunca uma correção
+        legítima.
+
+        Retorna o AssetCvmIssuer quando o resultado é COMPATÍVEL com
+        issuer_id: ou não havia vínculo nenhum e foi criado agora, ou já
+        havia vínculo para o MESMO issuer_id (nada é alterado -- sem
+        UPDATE desnecessário, idempotência real). Retorna None quando já
+        existe um vínculo para um issuer_id DIFERENTE -- um conflito real
+        que o chamador nunca deve resolver sobrescrevendo.
+        """
+        link = (
+            self.db.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset_id)
+            .first()
+        )
+        if link is None:
+            link = AssetCvmIssuer(asset_id=asset_id, issuer_id=issuer_id)
+            self.db.add(link)
+            self.db.flush()
+            self.db.refresh(link)
+            return link
+        if link.issuer_id == issuer_id:
+            return link
+        return None
+
     def find_issuer_by_cnpj(self, cnpj: str) -> CvmIssuer | None:
         """Busca um emissor CVM por CNPJ exato (somente dígitos).
 
