@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
+from uuid import UUID
 
 from app.schemas.intelligence import (
     BuildPortfolioAsset,
@@ -15,6 +16,7 @@ from app.schemas.intelligence import (
     BuildPortfolioResponse,
     BuildPortfolioSelection,
     ContributionPriority,
+    PortfolioPolicyRead,
 )
 from app.engines.financial_planning_engine import (
     FinancialDiagnosisEngine,
@@ -71,6 +73,134 @@ class PortfolioCandidate:
     issuer: str | None = None
 
 
+# Classe do envelope da PortfolioPolicy que não corresponde a nenhum ativo
+# de mercado selecionável pelo SmartPortfolio (reserva de emergência é
+# tratada pelo FinancialDiagnosisEngine/fase "protection" e pelo
+# contribution_plan, nunca por um PortfolioCandidate) -- nunca incluída em
+# PortfolioStrategy.class_targets.
+RESERVE_CLASS_LABEL = "Reserva de emergência"
+
+POLICY_SOURCE = "investor_profile_policy"
+LEGACY_SOURCE = "request_legacy"
+
+
+@dataclass(frozen=True)
+class ClassTarget:
+    target_percentage: Decimal
+    minimum_percentage: Decimal
+    maximum_percentage: Decimal
+
+
+@dataclass(frozen=True)
+class PortfolioStrategy:
+    """Envelope estratégico EFETIVO para uma execução de build_portfolio.
+
+    Fonte de verdade (ver AGENTS.md/auditoria): quando existe uma
+    PortfolioPolicy confirmada/persistida para o usuário (`source ==
+    POLICY_SOURCE`), todo campo estratégico vem dela -- nunca do corpo da
+    requisição, que não pode sobrescrever silenciosamente uma política já
+    confirmada. Um override operacional do request só pode ser MAIS
+    restritivo que a política, nunca mais permissivo (ver from_policy).
+
+    Quando não existe política (`source == LEGACY_SOURCE`), o
+    comportamento anterior a esta mudança é preservado integralmente:
+    todo campo estratégico vem do próprio BuildPortfolioRequest,
+    class_targets fica vazio (aciona a alocação legada por classes
+    iguais em allocate()) e max_percentage_per_issuer fica None (sem
+    limite de emissor, igual ao comportamento anterior).
+    """
+
+    source: str
+    policy_id: UUID | None
+    risk_profile: str
+    objective: str
+    horizon: str
+    monthly_contribution: Decimal
+    needs_income: bool
+    needs_liquidity: bool
+    max_percentage_per_asset: Decimal
+    max_percentage_per_sector: Decimal
+    max_percentage_per_issuer: Decimal | None
+    allowed_classes: frozenset[str]
+    prohibited_classes: frozenset[str]
+    class_targets: dict[str, ClassTarget] = field(default_factory=dict)
+
+    @classmethod
+    def from_request(cls, request: BuildPortfolioRequest) -> "PortfolioStrategy":
+        return cls(
+            source=LEGACY_SOURCE,
+            policy_id=None,
+            risk_profile=request.risk_profile,
+            objective=request.objective,
+            horizon=request.horizon,
+            monthly_contribution=request.monthly_contribution,
+            needs_income=request.needs_income,
+            needs_liquidity=request.needs_liquidity,
+            max_percentage_per_asset=request.max_percentage_per_asset,
+            max_percentage_per_sector=request.max_percentage_per_sector,
+            max_percentage_per_issuer=None,
+            allowed_classes=frozenset(request.allowed_classes),
+            prohibited_classes=frozenset(request.prohibited_classes),
+            class_targets={},
+        )
+
+    @classmethod
+    def from_policy(
+        cls, policy: PortfolioPolicyRead, request: BuildPortfolioRequest
+    ) -> "PortfolioStrategy":
+        enabled = [
+            item
+            for item in policy.allocations
+            if item.enabled and item.asset_class != RESERVE_CLASS_LABEL
+        ]
+        class_targets = {
+            item.asset_class: ClassTarget(
+                target_percentage=item.target_percentage,
+                minimum_percentage=item.minimum_percentage,
+                maximum_percentage=item.maximum_percentage,
+            )
+            for item in enabled
+        }
+        # Classe proibida pelo perfil nunca pode ser reativada pelo
+        # request (seção 14): o efetivo é a interseção com allowed_classes
+        # do request quando informado, nunca a união. prohibited_classes
+        # do request é sempre aditivo (só pode restringir mais).
+        effective_allowed = set(class_targets.keys())
+        if request.allowed_classes:
+            effective_allowed &= set(request.allowed_classes)
+        return cls(
+            source=POLICY_SOURCE,
+            policy_id=policy.id,
+            risk_profile=policy.risk_profile,
+            objective=policy.objective,
+            horizon=policy.investment_horizon,
+            monthly_contribution=policy.monthly_contribution,
+            needs_income=policy.income_need,
+            # liquidity_need é textual na política ("baixa"/"moderada"/
+            # "alta"); needs_liquidity no scoring é binário -- "moderada"
+            # e "alta" mapeiam para necessidade real de liquidez, só
+            # "baixa" mapeia para False (ver auditoria, seção 16).
+            needs_liquidity=policy.liquidity_need in {"moderada", "alta"},
+            # Override operacional só pode ser MAIS restritivo que a
+            # política, nunca mais permissivo (seção 11) -- min(), nunca
+            # max().
+            max_percentage_per_asset=min(
+                policy.maximum_weight_per_asset, request.max_percentage_per_asset
+            ),
+            max_percentage_per_sector=min(
+                policy.maximum_weight_per_sector, request.max_percentage_per_sector
+            ),
+            max_percentage_per_issuer=policy.maximum_weight_per_issuer,
+            allowed_classes=frozenset(effective_allowed),
+            prohibited_classes=frozenset(request.prohibited_classes),
+            class_targets={
+                asset_class: target
+                for asset_class, target in class_targets.items()
+                if asset_class in effective_allowed
+            },
+        )
+
+
 class SmartPortfolioEngine:
     """Regras puras de elegibilidade, pontuação e alocação da carteira V1."""
 
@@ -80,6 +210,7 @@ class SmartPortfolioEngine:
         request: BuildPortfolioRequest,
         candidates: list[PortfolioCandidate],
         *,
+        policy: PortfolioPolicyRead | None = None,
         provider_errors: list[str] | None = None,
         universe_total: int | None = None,
         universe_considered: int | None = None,
@@ -88,11 +219,16 @@ class SmartPortfolioEngine:
         batch_count: int = 0,
     ) -> BuildPortfolioResponse:
         now = datetime.now(timezone.utc)
+        strategy = (
+            PortfolioStrategy.from_policy(policy, request)
+            if policy is not None
+            else PortfolioStrategy.from_request(request)
+        )
         diagnosis = FinancialDiagnosisEngine.diagnose(request)
         projections = FinancialProjectionEngine.project(request)
-        eligible, exclusions = cls.eligibility(request, candidates)
-        ranked = cls.score(request, eligible)[: request.max_assets]
-        percentages = cls.allocate(request, ranked)
+        eligible, exclusions = cls.eligibility(strategy, candidates)
+        ranked = cls.score(strategy, eligible)[: request.max_assets]
+        percentages = cls.allocate(request, ranked, strategy)
 
         assets = []
         for candidate, score in ranked:
@@ -113,15 +249,7 @@ class SmartPortfolioEngine:
         class_totals: dict[str, Decimal] = defaultdict(Decimal)
         for asset in assets:
             class_totals[asset.asset_class] += asset.recommended_percentage
-        class_allocations = [
-            BuildPortfolioClassAllocation(
-                asset_class=asset_class,
-                percentage=percentage.quantize(CENT),
-                amount=(request.available_amount * percentage / HUNDRED).quantize(CENT),
-                explanation="Soma das alocações elegíveis da classe, limitada pelas restrições informadas.",
-            )
-            for asset_class, percentage in sorted(class_totals.items())
-        ]
+        class_allocations = cls._class_allocations(request, strategy, class_totals)
         allocated_amount = sum(
             (item.executable_amount for item in assets), Decimal("0")
         ).quantize(CENT)
@@ -175,18 +303,74 @@ class SmartPortfolioEngine:
             missing_data=missing,
             preflight=preflight,
             strategy_summary=(
-                f"Objetivo {request.objective}; perfil {request.risk_profile}; "
-                f"horizonte {request.horizon}; até {request.max_assets} ativos."
+                f"Objetivo {strategy.objective}; perfil {strategy.risk_profile}; "
+                f"horizonte {strategy.horizon}; até {request.max_assets} ativos."
+                + (
+                    " Estratégia definida pelo Perfil do Investidor confirmado."
+                    if strategy.source == POLICY_SOURCE
+                    else ""
+                )
             ),
+            policy_source=strategy.source,
+            policy_id=strategy.policy_id,
             diagnosis=diagnosis,
-            contribution_plan=cls.contribution_plan(request, assets, diagnosis.phase),
+            contribution_plan=cls.contribution_plan(request, strategy, assets, diagnosis.phase),
             projections=projections,
             freedom_goal=FinancialProjectionEngine.freedom_goal(request, projections),
             generated_at=now,
         )
 
     @classmethod
-    def eligibility(cls, request, candidates):
+    def _class_allocations(
+        cls,
+        request: BuildPortfolioRequest,
+        strategy: "PortfolioStrategy",
+        class_totals: dict[str, Decimal],
+    ) -> list[BuildPortfolioClassAllocation]:
+        """Uma linha por classe com alocação efetiva OU meta da política --
+        classes com meta na política mas sem nenhum candidato elegível
+        aparecem com percentage=0 e gap_percentage=target_percentage
+        (nunca omitidas silenciosamente: seção 24, transparência do gap)."""
+        all_classes = set(class_totals) | set(strategy.class_targets)
+        result = []
+        for asset_class in sorted(all_classes):
+            percentage = class_totals.get(asset_class, Decimal("0"))
+            target = strategy.class_targets.get(asset_class)
+            gap_percentage = None
+            gap_reason = None
+            if target is not None:
+                gap_percentage = max(Decimal("0"), target.target_percentage - percentage)
+                if gap_percentage > 0:
+                    gap_reason = (
+                        "Nenhum candidato elegível suficiente para atingir a meta "
+                        "da política nesta classe."
+                        if asset_class not in class_totals
+                        else "Meta da política não totalmente atingida pelos candidatos "
+                        "elegíveis disponíveis."
+                    )
+            result.append(
+                BuildPortfolioClassAllocation(
+                    asset_class=asset_class,
+                    percentage=percentage.quantize(CENT),
+                    amount=(request.available_amount * percentage / HUNDRED).quantize(CENT),
+                    explanation=(
+                        "Soma das alocações elegíveis da classe, dentro da meta definida "
+                        "pela política do Perfil do Investidor."
+                        if target is not None
+                        else "Soma das alocações elegíveis da classe, limitada pelas "
+                        "restrições informadas."
+                    ),
+                    target_percentage=target.target_percentage if target else None,
+                    minimum_percentage=target.minimum_percentage if target else None,
+                    maximum_percentage=target.maximum_percentage if target else None,
+                    gap_percentage=gap_percentage,
+                    gap_reason=gap_reason,
+                )
+            )
+        return result
+
+    @classmethod
+    def eligibility(cls, strategy, candidates):
         """Elegibilidade estrutural (P2): usa o confidence já resolvido pelo P1
         (required completo + scoring real suficiente + sem anomalia crítica) em
         vez de reimplementar esses gates aqui. NÃO usa mais coverage_percentage
@@ -196,14 +380,30 @@ class SmartPortfolioEngine:
         """
         eligible = []
         exclusions = []
-        allowed = set(request.allowed_classes)
-        prohibited = set(request.prohibited_classes)
-        conservative = request.risk_profile.strip().lower() == "conservador"
+        allowed = strategy.allowed_classes
+        prohibited = strategy.prohibited_classes
+        conservative = strategy.risk_profile.strip().lower() == "conservador"
+        # Em modo de política, o envelope efetivo é sempre imposto --
+        # inclusive quando a interseção política x request resultar
+        # vazia (nenhuma classe efetivamente permitida), o que precisa
+        # excluir TUDO, nunca ser tratado como "sem restrição" (bug real
+        # encontrado nos testes: um frozenset() vazio é falsy em Python,
+        # então `if allowed` sozinho tornaria essa borda equivalente a
+        # "nenhuma restrição", quando na verdade a política + request
+        # não deixaram nenhuma classe elegível). Em modo legado, mantém
+        # exatamente o comportamento anterior: allowed_classes vazio
+        # sempre significou "sem restrição".
+        policy_mode = strategy.source == POLICY_SOURCE
         for candidate in sorted(candidates, key=lambda item: item.snapshot.symbol):
             snapshot = candidate.snapshot
             asset_class = cls.class_label(snapshot.asset_class)
             reasons = []
-            if allowed and asset_class not in allowed:
+            if policy_mode:
+                if asset_class not in allowed:
+                    reasons.append(
+                        "Classe fora do envelope da política do Perfil do Investidor."
+                    )
+            elif allowed and asset_class not in allowed:
                 reasons.append("Classe fora da lista permitida.")
             if asset_class in prohibited:
                 reasons.append("Classe explicitamente proibida.")
@@ -246,7 +446,7 @@ class SmartPortfolioEngine:
         return "Categorias reais de scoring insuficientes para uma análise confiável."
 
     @classmethod
-    def score(cls, request, candidates):
+    def score(cls, strategy, candidates):
         ranked = []
         for candidate in candidates:
             snapshot = candidate.snapshot
@@ -262,9 +462,9 @@ class SmartPortfolioEngine:
                 score = score * Decimal("0.8") + snapshot.strategy_fit_score * Decimal(
                     "0.2"
                 )
-            if request.needs_income and snapshot.income_score is not None:
+            if strategy.needs_income and snapshot.income_score is not None:
                 score = score * Decimal("0.8") + snapshot.income_score * Decimal("0.2")
-            if request.needs_liquidity and snapshot.liquidity_score is not None:
+            if strategy.needs_liquidity and snapshot.liquidity_score is not None:
                 score = score * Decimal("0.8") + snapshot.liquidity_score * Decimal(
                     "0.2"
                 )
@@ -295,7 +495,7 @@ class SmartPortfolioEngine:
         return (sum(components, Decimal("0")) / Decimal(len(components))).quantize(CENT)
 
     @classmethod
-    def allocate(cls, request, ranked):
+    def allocate(cls, request, ranked, strategy=None):
         if not ranked:
             return {}
         class_members: dict[str, list[PortfolioCandidate]] = defaultdict(list)
@@ -303,6 +503,15 @@ class SmartPortfolioEngine:
             class_members[cls.class_label(candidate.snapshot.asset_class)].append(
                 candidate
             )
+        if strategy is not None and strategy.class_targets:
+            return cls._allocate_with_policy_targets(class_members, strategy)
+        return cls._allocate_equal_class_legacy(request, class_members)
+
+    @staticmethod
+    def _allocate_equal_class_legacy(request, class_members):
+        """Comportamento ANTERIOR a esta mudança, preservado byte a byte:
+        meta igualitária entre as classes que aparecem entre os elegíveis
+        -- usado sempre que não há PortfolioPolicy (modo legado)."""
         class_count = Decimal(len(class_members))
         equal_class_target = HUNDRED / class_count
         allocations = {}
@@ -323,6 +532,50 @@ class SmartPortfolioEngine:
                     allocations[candidate.snapshot.symbol] = share
                     remaining_class -= share
                     sector_totals[sector] += share
+        return allocations
+
+    @staticmethod
+    def _allocate_with_policy_targets(class_members, strategy):
+        """Cada classe habilitada da política tenta atingir seu próprio
+        target_percentage (nunca excede maximum_percentage, pois
+        target <= maximum por construção em InvestorProfileEngine) --
+        nunca a meta igualitária legada. Dentro da classe, distribui pelo
+        ranking real já calculado, respeitando limite por ativo, por
+        setor e por emissor (maximum_weight_per_issuer, seção 13 --
+        emissor ausente usa identidade isolada por símbolo, nunca
+        agrupado com outros emissores ausentes). Classe sem nenhum
+        candidato elegível fica com gap explícito (ver _class_allocations)
+        -- nunca transfere a meta não preenchida para outra classe."""
+        allocations: dict[str, Decimal] = {}
+        sector_totals: dict[str, Decimal] = defaultdict(Decimal)
+        issuer_totals: dict[str, Decimal] = defaultdict(Decimal)
+        for asset_class in sorted(strategy.class_targets):
+            members = class_members.get(asset_class)
+            if not members:
+                continue
+            target = strategy.class_targets[asset_class]
+            remaining_class = target.target_percentage
+            for index, candidate in enumerate(members):
+                if remaining_class <= 0:
+                    break
+                slots = Decimal(len(members) - index)
+                share = min(strategy.max_percentage_per_asset, remaining_class / slots)
+                sector = candidate.sector or f"sem-setor:{candidate.snapshot.symbol}"
+                sector_room = strategy.max_percentage_per_sector - sector_totals[sector]
+                share = min(share, max(Decimal("0"), sector_room))
+                if strategy.max_percentage_per_issuer is not None:
+                    issuer_key = candidate.issuer or f"sem-emissor:{candidate.snapshot.symbol}"
+                    issuer_room = strategy.max_percentage_per_issuer - issuer_totals[issuer_key]
+                    share = min(share, max(Decimal("0"), issuer_room))
+                else:
+                    issuer_key = None
+                share = max(Decimal("0"), share).quantize(CENT, rounding=ROUND_DOWN)
+                if share > 0:
+                    allocations[candidate.snapshot.symbol] = share
+                    remaining_class -= share
+                    sector_totals[sector] += share
+                    if issuer_key is not None:
+                        issuer_totals[issuer_key] += share
         return allocations
 
     @classmethod
@@ -408,8 +661,13 @@ class SmartPortfolioEngine:
         )
 
     @staticmethod
-    def contribution_plan(request, assets, phase):
-        if request.monthly_contribution <= 0:
+    def contribution_plan(request, strategy, assets, phase):
+        # monthly_contribution é estratégico (vem da política quando
+        # existir, ver PortfolioStrategy); reinvest_income é puramente
+        # operacional (não existe em PortfolioPolicy) e continua vindo do
+        # request.
+        monthly_contribution = strategy.monthly_contribution
+        if monthly_contribution <= 0:
             return []
         if phase == "protection":
             return [
@@ -417,11 +675,11 @@ class SmartPortfolioEngine:
                     priority=1,
                     symbol="RESERVA",
                     asset_class="Proteção financeira",
-                    suggested_amount=request.monthly_contribution.quantize(CENT),
+                    suggested_amount=monthly_contribution.quantize(CENT),
                     reason="Priorizar reserva de emergência e dívidas de alto custo antes de elevar o risco.",
                 )
             ]
-        remaining = request.monthly_contribution
+        remaining = monthly_contribution
         result = []
         for index, asset in enumerate(
             sorted(assets, key=lambda item: (-item.target_gap, item.symbol)), 1

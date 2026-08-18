@@ -169,6 +169,15 @@ class BuildPortfolioClassAllocation(BaseModel):
     percentage: Decimal
     amount: Decimal
     explanation: str
+    # Aditivos, opcionais: só preenchidos quando a carteira foi montada sob
+    # uma PortfolioPolicy confirmada (ver SmartPortfolioEngine.build/
+    # PortfolioStrategy) -- None no modo legado (sem policy), nunca quebra
+    # clientes existentes que não conhecem esses campos.
+    target_percentage: Decimal | None = None
+    minimum_percentage: Decimal | None = None
+    maximum_percentage: Decimal | None = None
+    gap_percentage: Decimal | None = None
+    gap_reason: str | None = None
 
 
 class BuildPortfolioSelection(BaseModel):
@@ -306,6 +315,13 @@ class BuildPortfolioResponse(BaseModel):
     missing_data: list[str] = Field(default_factory=list)
     preflight: BuildPortfolioPreflight = Field(default_factory=BuildPortfolioPreflight)
     strategy_summary: str = ""
+    # Aditivos: transparência sobre a origem do envelope estratégico
+    # efetivamente usado (ver SmartPortfolioEngine.build/PortfolioStrategy).
+    # "request_legacy" preserva o comportamento anterior a esta mudança
+    # (nenhuma PortfolioPolicy encontrada para o usuário) -- nunca quebra
+    # clientes que ainda não conhecem "investor_profile_policy".
+    policy_source: str = "request_legacy"
+    policy_id: UUID | None = None
     diagnosis: FinancialDiagnosis
     contribution_plan: list[ContributionPriority] = Field(default_factory=list)
     projections: list[ProjectionScenario] = Field(default_factory=list)

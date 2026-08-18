@@ -107,8 +107,21 @@ class PortfolioIntelligenceService:
     def build_portfolio(
         self, user_id, data: BuildPortfolioRequest
     ) -> BuildPortfolioResponse:
+        # user_id vem exclusivamente do usuário autenticado (ver
+        # app/api/intelligence.py, current_user.id) -- nunca do corpo da
+        # requisição. Uma PortfolioPolicy confirmada/persistida (via
+        # onboarding do Perfil do Investidor OU via PUT/POST /policy
+        # diretos -- ambos igualmente autoritativos, não há campo que
+        # distinga a origem) passa a ser a fonte estratégica de verdade
+        # de build_portfolio() (ver SmartPortfolioEngine.build/
+        # PortfolioStrategy). Ausência de política preserva o
+        # comportamento legado integralmente (policy=None) -- inclusive
+        # quando policy_repository não foi injetado (mesmo padrão
+        # defensivo já usado para asset_repository/
+        # market_intelligence_service abaixo).
+        policy = self.get_policy(user_id) if self.policy_repository is not None else None
         if self.asset_repository is None or self.market_intelligence_service is None:
-            return SmartPortfolioEngine.build(data, [])
+            return SmartPortfolioEngine.build(data, [], policy=policy)
 
         # Ordenamos explicitamente por ticker (chave estável) em vez de
         # confiar na ordem implícita do repositório, para que o universo e o
@@ -134,7 +147,7 @@ class PortfolioIntelligenceService:
         universe_considered = len(considered_assets)
 
         if not considered_assets:
-            legacy = PortfolioBuilderEngine.build(data, self.get_policy(user_id))
+            legacy = PortfolioBuilderEngine.build(data, policy)
             return legacy.model_copy(
                 update={
                     "unallocated_amount": data.available_amount.quantize(
@@ -180,6 +193,7 @@ class PortfolioIntelligenceService:
         return SmartPortfolioEngine.build(
             data,
             candidates,
+            policy=policy,
             provider_errors=[item.message for item in errors],
             universe_total=universe_total,
             universe_considered=universe_considered,
