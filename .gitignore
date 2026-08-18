@@ -18,7 +18,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-.cache/cvm/
+**/.cache/cvm/
+**/.cache/cvm_fii/
 .coverage
 htmlcov/
 test_mesa_quant_master.db

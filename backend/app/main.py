@@ -22,6 +22,7 @@ from app.api.strategy import router as strategy_router
 from app.api.intelligence import router as intelligence_router
 from app.api.investor_profile import router as investor_profile_router
 from app.api.cvm import router as cvm_router
+from app.api.cvm_fii import router as cvm_fii_router
 from app.api.ai_agent import router as ai_agent_router
 
 from app.core.config import settings
@@ -137,4 +138,5 @@ app.include_router(backtesting_router)
 app.include_router(intelligence_router)
 app.include_router(investor_profile_router)
 app.include_router(cvm_router)
+app.include_router(cvm_fii_router)
 app.include_router(ai_agent_router)

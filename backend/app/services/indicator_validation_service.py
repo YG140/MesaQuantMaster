@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import Enum
 from unicodedata import normalize
 
 from app.engines.indicator_catalog import (
@@ -27,6 +28,7 @@ class IndicatorValidationService:
     ) -> tuple[list[NormalizedIndicator], DataQualityReport]:
         now = collected_at or datetime.now(timezone.utc)
         sector_profile = profile_for_sector(sector)
+        fii_nature = classify_fii_nature(segment, sector)
         validated = []
         anomaly_flags = []
         indicator_map = {item.key: item for item in indicators}
@@ -55,18 +57,18 @@ class IndicatorValidationService:
                         "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
-            elif indicator.key == "physical_vacancy" and is_fii_paper(segment or sector):
+            elif indicator.key in _FII_BRICK_ONLY_INDICATORS and fii_nature == FiiNature.PAPER:
                 item = indicator.model_copy(
                     update={
                         "status": IndicatorStatus.NOT_APPLICABLE,
                         "value": None,
                         "display_value": None,
-                        "unavailable_reason": "Vacância física não se aplica a FII de papel.",
-                        "explanation": "Vacância física não se aplica a FII de papel.",
+                        "unavailable_reason": "Indicador de imóvel físico não se aplica a FII de papel.",
+                        "explanation": "Indicador de imóvel físico não se aplica a FII de papel.",
                         "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
-            elif indicator.key in {"receivable_quality", "debtor_concentration", "tenant_concentration", "contract_average_term"} and is_fii_brick(segment or sector):
+            elif indicator.key in _FII_PAPER_ONLY_INDICATORS and fii_nature == FiiNature.BRICK:
                 item = indicator.model_copy(
                     update={
                         "status": IndicatorStatus.NOT_APPLICABLE,
@@ -230,14 +232,82 @@ def _negative_earnings_context(indicators: dict[str, NormalizedIndicator]) -> bo
     return False
 
 
-def is_fii_paper(segment: str | None) -> bool:
-    text = ascii_key(segment)
-    return "papel" in text or "paper" in text
+# Indicadores que só fazem sentido para FII com imóveis físicos (tijolo) --
+# NOT_APPLICABLE quando o fundo é comprovadamente de papel/recebíveis (ver
+# classify_fii_nature). Nunca NOT_APPLICABLE para tijolo/híbrido/desconhecido.
+_FII_BRICK_ONLY_INDICATORS = frozenset(
+    {
+        "physical_vacancy",
+        "financial_vacancy",
+        "property_concentration",
+        "tenant_concentration",
+        "contract_average_term",
+        "property_quality",
+    }
+)
+
+# Indicadores que só fazem sentido para FII de recebíveis/papel --
+# NOT_APPLICABLE quando o fundo é comprovadamente de tijolo (ver
+# classify_fii_nature). Nunca NOT_APPLICABLE para papel/híbrido/desconhecido.
+_FII_PAPER_ONLY_INDICATORS = frozenset(
+    {
+        "receivable_quality",
+        "debtor_concentration",
+        "delinquency",
+    }
+)
 
 
-def is_fii_brick(segment: str | None) -> bool:
-    text = ascii_key(segment)
-    return "tijolo" in text or "brick" in text or "imobili" in text or "real_estate" in text
+class FiiNature(str, Enum):
+    PAPER = "paper"
+    BRICK = "brick"
+    HYBRID = "hybrid"
+    UNKNOWN = "unknown"
+
+
+def classify_fii_nature(segment: str | None, sector: str | None = None) -> FiiNature:
+    """Classifica a natureza real de um FII de forma determinística e
+    MUTUAMENTE EXCLUSIVA -- nunca por ticker, nunca combinando papel e
+    tijolo ao mesmo tempo por acidente de substring.
+
+    Precedência ESTRITA: se `segment` tem valor não vazio, a classificação
+    vem SOMENTE dele -- mesmo que o texto não seja reconhecido (ex.:
+    segment="Logística" -> UNKNOWN), NUNCA cai para `sector` nesse caso
+    (um segmento real e específico, mesmo que não mapeado pelo
+    vocabulário conhecido, não deve ser "corrigido" por um campo genérico
+    e menos confiável). `sector` só é consultado quando `segment` está
+    genuinamente ausente/vazio.
+
+    Mesmo vocabulário estrito nas duas fontes (papel/recebível vs.
+    tijolo/brick explícitos). "Fundo Imobiliário"/"real estate" sozinho
+    NUNCA é evidência de tijolo -- é apenas a categoria regulatória de
+    TODO FII (inclusive os de papel), então por si só produz UNKNOWN,
+    nunca BRICK.
+    """
+    if segment is not None and ascii_key(segment):
+        return _classify_fii_text(segment)
+    return _classify_fii_text(sector)
+
+
+def _classify_fii_text(value: str | None) -> FiiNature:
+    text = ascii_key(value)
+    if not text:
+        return FiiNature.UNKNOWN
+    is_hybrid = "hibrid" in text or "hybrid" in text
+    if is_hybrid:
+        return FiiNature.HYBRID
+    is_paper = "papel" in text or "paper" in text or "recebivel" in text or "receivable" in text
+    is_brick = "tijolo" in text or "brick" in text
+    if is_paper and is_brick:
+        # Evidência textual contraditória -- nunca decide por um lado sem
+        # comprovação clara; conservador (mesmo tratamento de híbrido sem
+        # rótulo explícito: não elimina nenhum lado).
+        return FiiNature.UNKNOWN
+    if is_paper:
+        return FiiNature.PAPER
+    if is_brick:
+        return FiiNature.BRICK
+    return FiiNature.UNKNOWN
 
 
 def profile_for_sector(sector: str | None) -> dict | None:

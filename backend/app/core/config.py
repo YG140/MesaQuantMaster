@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     CVM_MAX_DOWNLOAD_BYTES: int = 83886080
     CVM_MAX_UNCOMPRESSED_BYTES: int = 1073741824
     CVM_CACHE_TTL_HOURS: int = 24
+    CVM_FII_CACHE_DIR: str = ".cache/cvm_fii"
+    CVM_FII_TIMEOUT_SECONDS: float = 60
+    CVM_FII_MAX_DOWNLOAD_BYTES: int = 41943040
+    CVM_FII_MAX_UNCOMPRESSED_BYTES: int = 536870912
+    CVM_FII_CACHE_TTL_HOURS: int = 24
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-5-mini"
     AI_AGENT_ENABLED: bool = False

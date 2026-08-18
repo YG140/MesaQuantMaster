@@ -17,6 +17,7 @@ from app.repositories.manual_indicator_repository import ManualIndicatorReposito
 from app.repositories.indicator_snapshot_repository import IndicatorSnapshotRepository
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
 from app.repositories.cvm_financial_repository import CvmFinancialRepository
+from app.repositories.cvm_fii_repository import CvmFiiRepository
 from app.schemas.intelligence import (
     BuildPortfolioRequest,
     BuildPortfolioResponse,
@@ -65,6 +66,7 @@ def get_service(db: Session) -> PortfolioIntelligenceService:
         snapshot_repository=IndicatorSnapshotRepository(db),
         manual_repository=ManualIndicatorRepository(db),
         cvm_repository=CvmFinancialRepository(db),
+        cvm_fii_repository=CvmFiiRepository(db),
     )
     return PortfolioIntelligenceService(
         portfolio_service=portfolio_service,
@@ -89,6 +91,7 @@ def get_market_intelligence_service(db: Session) -> MarketIntelligenceService:
         snapshot_repository=IndicatorSnapshotRepository(db),
         manual_repository=ManualIndicatorRepository(db),
         cvm_repository=CvmFinancialRepository(db),
+        cvm_fii_repository=CvmFiiRepository(db),
     )
 
 

@@ -17,6 +17,12 @@ from app.models.cvm_financial import (
     CvmIssuer,
     CvmSyncRun,
 )
+from app.models.cvm_fii import (
+    AssetFiiIssuer,
+    FiiIssuer,
+    FiiPropertyVacancyDocument,
+    FiiSyncRun,
+)
 
 __all__ = [
     "User",
@@ -37,4 +43,8 @@ __all__ = [
     "CvmFinancialDocument",
     "CvmFinancialAccount",
     "CvmSyncRun",
+    "FiiIssuer",
+    "AssetFiiIssuer",
+    "FiiPropertyVacancyDocument",
+    "FiiSyncRun",
 ]
