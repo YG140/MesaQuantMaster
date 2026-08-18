@@ -230,6 +230,68 @@ def resolve_all(service, baseline, asset_class=InvestmentClass.STOCK, asset_id=N
     }
 
 
+def resolve_symbol(
+    service, symbol, baseline, asset_class=InvestmentClass.STOCK, asset_id=None
+):
+    """Igual a `resolve`, mas com símbolo explícito -- necessário para
+    TREASURY, cuja identidade oficial (Tipo Titulo + Data Vencimento) não
+    casa com o símbolo fixo "TEST3" usado pelo resto deste arquivo."""
+    return service.resolve_asset(
+        symbol=symbol,
+        asset_class=asset_class,
+        asset_id=asset_id,
+        user_id="user",
+        baseline=baseline,
+        collected_at=NOW,
+    )[0]
+
+
+def treasury_row(
+    *,
+    bond_type="Tesouro Selic",
+    indexer="SELIC",
+    maturity=date(2031, 3, 1),
+    as_of=date(2026, 7, 18),
+    buy_rate="6.25",
+    sell_rate="6.30",
+    buy_price="18700.00",
+    sell_price="18690.00",
+    base_price="18695.00",
+):
+    """Linha canônica sintética no MESMO formato que
+    TesouroTransparenteProvider.latest_by_identity() produz -- nunca o
+    formato bruto do CSV (colunas em português), que é responsabilidade
+    exclusiva do provider adaptar."""
+    return {
+        "symbol": f"tesouro-{bond_type.lower()}",  # sobrescrito nos usos reais
+        "bondType": bond_type,
+        "indexer": indexer,
+        "maturityDate": maturity,
+        "asOfDate": as_of,
+        "buyRate": Decimal(buy_rate) if buy_rate is not None else None,
+        "sellRate": Decimal(sell_rate) if sell_rate is not None else None,
+        "buyPrice": Decimal(buy_price) if buy_price is not None else None,
+        "sellPrice": Decimal(sell_price) if sell_price is not None else None,
+        "basePrice": Decimal(base_price) if base_price is not None else None,
+    }
+
+
+class FakeTreasuryProvider:
+    """Fake do NOVO contrato do provider (latest_by_identity), nunca o
+    antigo fetch_daily_dataset -- ver TesouroTransparenteProvider."""
+
+    def __init__(self, index=None, error=None):
+        self.index = index or {}
+        self.error = error
+        self.calls = 0
+
+    def latest_by_identity(self):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.index
+
+
 def available_indicator(key="current_price", value="10.00"):
     return NormalizedIndicator(
         key=key,
@@ -457,29 +519,34 @@ def test_already_available_indicator_is_never_degraded():
     assert market.calls == 0
 
 
-def test_rate_limited_on_one_source_and_success_on_official_fallback_end_to_end():
+def test_brapi_free_never_attempted_for_treasury_official_resolves_directly():
+    """BLOQUEADOR (seção 38): "statistics"/"financial_data" são datasets de
+    AÇÕES, estruturalmente incapazes de conter dado de Tesouro -- o
+    resolver nunca os tenta para TREASURY (ver _load_brapi_free), indo
+    direto para a fonte oficial. market.calls == 0 prova isso
+    comportamentalmente, não só por inspeção de código."""
+    market = FakeMarket(MarketRateLimitError("429"))
+    treasury = FakeTreasuryProvider(
+        {"tesouro-selic-01032031": treasury_row(buy_rate="6.25")}
+    )
     baseline = indicator("treasury_rate")
-    result = resolve(
-        resolver(
-            FakeMarket(MarketRateLimitError("429")),
-            treasury_provider=SimpleNamespace(
-                fetch_daily_dataset=lambda: [
-                    {"symbol": "test3", "buyRate": "6.25"}
-                ]
-            ),
-        ),
+    result = resolve_symbol(
+        resolver(market, treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
         baseline=[baseline],
         asset_class=InvestmentClass.TREASURY,
     )
+    assert market.calls == 0
     assert result.status == IndicatorStatus.AVAILABLE
     assert result.value == Decimal("6.25")
-    reasons = [a.provider_failure_reason for a in result.resolution_attempts]
-    assert ProviderFailureReason.RATE_LIMITED in reasons
-    outcomes = [a.outcome for a in result.resolution_attempts]
-    assert outcomes[-1] == ResolutionOutcome.SUCCESS
+    assert result.source == "Tesouro Transparente"
+    assert result.source_type == "official"
+    assert len(result.resolution_attempts) == 1
+    assert result.resolution_attempts[0].outcome == ResolutionOutcome.SUCCESS
+    assert result.resolution_attempts[0].provider == "Tesouro Transparente"
 
 
-def test_two_sources_fail_third_succeeds_full_trail_preserved():
+def test_official_fails_manual_still_resolves_trail_preserved():
     manual_item = SimpleNamespace(
         indicator_key="treasury_rate",
         value=Decimal("6.25"),
@@ -493,33 +560,32 @@ def test_two_sources_fail_third_succeeds_full_trail_preserved():
         def list_for_asset(self, user_id, asset_id):
             return [manual_item]
 
-    class FailingTreasury:
-        def fetch_daily_dataset(self):
-            raise MarketProviderUnavailableError("indisponivel")
+    failing_treasury = FakeTreasuryProvider(
+        error=MarketProviderUnavailableError("indisponivel")
+    )
 
-    result = resolve(
+    result = resolve_symbol(
         IndicatorResolverService(
             market_service=FakeMarket(MarketRateLimitError("429")),
             normalizer=IndicatorNormalizationService(),
-            treasury_provider=FailingTreasury(),
+            treasury_provider=failing_treasury,
             manual_repository=ManualRepo(),
         ),
+        symbol="TESOURO-SELIC-01032031",
         baseline=[indicator("treasury_rate")],
         asset_class=InvestmentClass.TREASURY,
         asset_id="asset",
     )
     assert result.status == IndicatorStatus.AVAILABLE
     assert result.value == Decimal("6.25")
-    assert len(result.resolution_attempts) == 3
+    # BRAPI nunca é tentado para TREASURY (ver teste acima) -- só a fonte
+    # oficial (falha) e o manual (sucesso) aparecem na trilha.
+    assert len(result.resolution_attempts) == 2
     assert [a.outcome for a in result.resolution_attempts] == [
-        ResolutionOutcome.FAILURE,
         ResolutionOutcome.FAILURE,
         ResolutionOutcome.SUCCESS,
     ]
     assert result.resolution_attempts[0].provider_failure_reason == (
-        ProviderFailureReason.RATE_LIMITED
-    )
-    assert result.resolution_attempts[1].provider_failure_reason == (
         ProviderFailureReason.PROVIDER_UNAVAILABLE
     )
 
@@ -2285,21 +2351,6 @@ def test_bcb_fallback_resolves_configured_macro_series():
     assert result.source.startswith("Banco Central")
 
 
-def test_treasury_official_fallback():
-    class Treasury:
-        def fetch_daily_dataset(self):
-            return [{"symbol": "test3", "buyRate": "6.25"}]
-
-    baseline = indicator("treasury_rate")
-    result = resolve(
-        resolver(treasury_provider=Treasury()),
-        baseline=[baseline],
-        asset_class=InvestmentClass.TREASURY,
-    )
-    assert result.value == Decimal("6.25")
-    assert result.source == "Tesouro Transparente"
-
-
 def test_cvm_unavailability_does_not_break_basic_data():
     class Cvm(_UnknownFiscalCalendarCvm):
         def synchronization_metadata(self):
@@ -2509,3 +2560,241 @@ def test_full_cascade_is_deterministic_across_repeated_runs():
     assert [a.provider_failure_reason for a in first.resolution_attempts] == [
         a.provider_failure_reason for a in second.resolution_attempts
     ]
+
+
+# --- Fallback oficial de Tesouro Direto (Tesouro Transparente) ---------------
+
+
+def resolve_treasury_all(service, symbol, baseline, asset_id=None):
+    return {
+        item.key: item
+        for item in service.resolve_asset(
+            symbol=symbol,
+            asset_class=InvestmentClass.TREASURY,
+            asset_id=asset_id,
+            user_id="user",
+            baseline=baseline,
+            collected_at=NOW,
+        )
+    }
+
+
+TREASURY_REQUIRED_KEYS = (
+    "treasury_title",
+    "indexer",
+    "treasury_rate",
+    "maturity_date",
+    "current_price",
+)
+
+
+def treasury_baseline():
+    return [indicator(key) for key in TREASURY_REQUIRED_KEYS]
+
+
+def test_treasury_all_five_required_pillars_resolve_from_official_source():
+    row = treasury_row(
+        bond_type="Tesouro Selic",
+        indexer="SELIC",
+        maturity=date(2031, 3, 1),
+        as_of=date(2026, 7, 18),
+        buy_rate="0.09",
+        sell_rate="0.10",
+        buy_price="18737.11",
+        sell_price="18717.77",
+        base_price="18717.77",
+    )
+    treasury = FakeTreasuryProvider({"tesouro-selic-01032031": row})
+    resolved = resolve_treasury_all(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
+        baseline=treasury_baseline(),
+    )
+    assert resolved["treasury_title"].status == IndicatorStatus.AVAILABLE
+    assert resolved["treasury_title"].value == "Tesouro Selic"
+    assert resolved["indexer"].value == "SELIC"
+    assert resolved["treasury_rate"].value == Decimal("0.09")
+    assert resolved["maturity_date"].value == "2031-03-01"
+    assert resolved["current_price"].value == Decimal("18737.11")
+    for key in TREASURY_REQUIRED_KEYS:
+        assert resolved[key].source == "Tesouro Transparente"
+        assert resolved[key].source_type == "official"
+
+
+def test_treasury_rate_uses_buy_rate_not_sell_rate():
+    """Seção 17: o pipeline monta uma CARTEIRA/RECOMENDAÇÃO DE AQUISIÇÃO --
+    treasury_rate deve ser a taxa de COMPRA, nunca a de venda/resgate."""
+    row = treasury_row(buy_rate="6.25", sell_rate="6.40")
+    treasury = FakeTreasuryProvider({"tesouro-selic-01032031": row})
+    result = resolve_symbol(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
+        baseline=[indicator("treasury_rate")],
+        asset_class=InvestmentClass.TREASURY,
+    )
+    assert result.value == Decimal("6.25")
+    assert result.value != Decimal("6.40")
+    assert result.provenance["sell_rate"] == "6.40"
+
+
+def test_current_price_uses_pu_compra_not_base_or_venda():
+    """Seção 18/35: SmartPortfolioEngine usa snapshot.current_price como
+    reference_price para calcular quantidade/valor executáveis de uma NOVA
+    recomendação -- precisa ser o PU de COMPRA (aquisição), nunca o PU Base
+    (marcação a mercado de posição já detida) nem o PU Venda (resgate)."""
+    row = treasury_row(buy_price="900.00", sell_price="890.00", base_price="891.00")
+    treasury = FakeTreasuryProvider({"tesouro-selic-01032031": row})
+    result = resolve_symbol(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
+        baseline=[indicator("current_price")],
+        asset_class=InvestmentClass.TREASURY,
+    )
+    assert result.value == Decimal("900.00")
+    assert result.value != Decimal("890.00")
+    assert result.value != Decimal("891.00")
+    assert result.provenance["sell_price"] == "890.00"
+    assert result.provenance["base_price"] == "891.00"
+
+
+def test_treasury_reference_date_is_data_base_never_collected_at():
+    # treasury_title é dado cadastral (3650 dias de validade no catálogo) --
+    # uma Data Base de semanas atrás continua honestamente AVAILABLE,
+    # permitindo provar reference_date != collected_at sem o indicador
+    # expirar por política de validade (o que aconteceria com um indicador
+    # de mercado como treasury_rate, cuja janela é de só 2 dias).
+    old_data_base = date(2026, 6, 30)
+    much_later_collected_at = NOW  # NOW = 2026-07-20, semanas depois
+    row = treasury_row(as_of=old_data_base, bond_type="Tesouro Selic")
+    treasury = FakeTreasuryProvider({"tesouro-selic-01032031": row})
+    result = resolve_symbol(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
+        baseline=[indicator("treasury_title")],
+        asset_class=InvestmentClass.TREASURY,
+    )
+    expected_reference = datetime(2026, 6, 30, tzinfo=timezone.utc)
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.reference_date == expected_reference
+    assert result.reference_date != much_later_collected_at
+    assert result.collected_at == much_later_collected_at
+
+
+def test_treasury_valid_until_anchored_on_reference_date_not_collected_at():
+    # treasury_rate está em treasury_market_rate -> 2 dias de política no
+    # catálogo (ver indicator_temporal_validity_days) -- ancorado na Data
+    # Base (reference), nunca em collected_at.
+    assert indicator_temporal_validity_days("treasury_rate") == 2
+    data_base = date(2026, 7, 19)  # véspera de NOW -- ainda dentro da janela
+    row = treasury_row(as_of=data_base, buy_rate="6.25")
+    treasury = FakeTreasuryProvider({"tesouro-selic-01032031": row})
+    result = resolve_symbol(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
+        baseline=[indicator("treasury_rate")],
+        asset_class=InvestmentClass.TREASURY,
+    )
+    expected_valid_until = datetime(2026, 7, 21, tzinfo=timezone.utc)
+    assert result.valid_until == expected_valid_until
+    assert result.valid_until != NOW + timedelta(days=2)  # nao ancorado em collected_at
+
+
+def test_treasury_registration_field_keeps_long_catalog_validity_from_official():
+    assert indicator_temporal_validity_days("treasury_title") == 3650
+    data_base = date(2026, 7, 18)
+    row = treasury_row(as_of=data_base, bond_type="Tesouro Selic")
+    treasury = FakeTreasuryProvider({"tesouro-selic-01032031": row})
+    result = resolve_symbol(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
+        baseline=[indicator("treasury_title")],
+        asset_class=InvestmentClass.TREASURY,
+    )
+    assert result.valid_until == datetime(2026, 7, 18, tzinfo=timezone.utc) + timedelta(
+        days=3650
+    )
+
+
+def test_treasury_expired_official_observation_is_never_used_as_current():
+    # Data Base muito antiga -- mesmo com política de 2 dias (treasury_rate),
+    # a validade expirou muito antes de NOW; nunca finge que ainda é atual.
+    ancient_data_base = date(2020, 1, 1)
+    row = treasury_row(as_of=ancient_data_base, buy_rate="6.25")
+    treasury = FakeTreasuryProvider({"tesouro-selic-01032031": row})
+    result = resolve_symbol(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
+        baseline=[indicator("treasury_rate")],
+        asset_class=InvestmentClass.TREASURY,
+    )
+    assert result.status != IndicatorStatus.AVAILABLE
+    assert result.value is None
+
+
+def test_treasury_official_never_overwrites_already_resolved_indicator():
+    already_resolved = available_indicator("treasury_rate", "9.99")
+    treasury = FakeTreasuryProvider(
+        {"tesouro-selic-01032031": treasury_row(buy_rate="1.11")}
+    )
+    result = resolve_symbol(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-01032031",
+        baseline=[already_resolved],
+        asset_class=InvestmentClass.TREASURY,
+    )
+    assert result.value == Decimal("9.99")
+    assert treasury.calls == 0
+
+
+def test_treasury_unmatched_symbol_never_fabricates_value_stale_and_manual_still_work():
+    manual_item = SimpleNamespace(
+        indicator_key="treasury_rate",
+        value=Decimal("6.25"),
+        unit="percent",
+        source_description="Extrato do Tesouro Direto",
+        reference_date=date(2026, 6, 30),
+        updated_at=NOW,
+    )
+
+    class ManualRepo:
+        def list_for_asset(self, user_id, asset_id):
+            return [manual_item]
+
+    treasury = FakeTreasuryProvider(
+        {"tesouro-selic-01032031": treasury_row(buy_rate="1.11")}
+    )
+    result = resolve_symbol(
+        IndicatorResolverService(
+            market_service=FakeMarket(MarketRateLimitError("429")),
+            normalizer=IndicatorNormalizationService(),
+            treasury_provider=treasury,
+            manual_repository=ManualRepo(),
+        ),
+        # Símbolo real mas SEM correspondência no índice (vencimento
+        # diferente) -- nunca deve casar por semelhança.
+        symbol="TESOURO-SELIC-01012099",
+        baseline=[indicator("treasury_rate")],
+        asset_class=InvestmentClass.TREASURY,
+        asset_id="asset",
+    )
+    # Sem correspondência exata -> cai para manual, nunca inventa/aproxima.
+    assert result.value == Decimal("6.25")
+    assert result.source == "Extrato do Tesouro Direto"
+    assert result.source_type == "manual"
+    assert result.source != "Tesouro Transparente"
+
+
+def test_treasury_index_lookup_is_exact_never_fuzzy():
+    treasury = FakeTreasuryProvider(
+        {"tesouro-selic-01032031": treasury_row(buy_rate="6.25")}
+    )
+    # Mesmo tipo, vencimento levemente diferente -- não pode casar por
+    # semelhança nem pegar "o primeiro título encontrado".
+    result = resolve_symbol(
+        resolver(treasury_provider=treasury),
+        symbol="TESOURO-SELIC-02032031",
+        baseline=[indicator("treasury_rate")],
+        asset_class=InvestmentClass.TREASURY,
+    )
+    assert result.value is None
+    assert result.status != IndicatorStatus.AVAILABLE
