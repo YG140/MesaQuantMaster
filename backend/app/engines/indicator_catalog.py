@@ -700,6 +700,19 @@ FII_INDICATORS = [
         unit="currency",
     ),
     catalog_entry(
+        "segment",
+        "Natureza do fundo (tijolo/papel/híbrido)",
+        STRUCTURE,
+        [InvestmentClass.FII],
+        unit="text",
+        description=(
+            "Classificação real do fundo (ex.: segmentType da BRAPI, "
+            "derivado do próprio provedor/CVM) -- nunca inferida pelo "
+            "ticker. Usada para decidir dinamicamente quais indicadores "
+            "de segment_risk são aplicáveis a este FII."
+        ),
+    ),
+    catalog_entry(
         "market_cap",
         "Valor de mercado",
         PRICE_MARKET,
@@ -2138,9 +2151,18 @@ def canonical_pillars_for_class(asset_class: InvestmentClass) -> list[IndicatorP
             ),
             _pillar(
                 "segment_risk",
-                indicator_keys=["physical_vacancy", "financial_vacancy", "credit_risk"],
+                indicator_keys=[
+                    "physical_vacancy",
+                    "financial_vacancy",
+                    "credit_risk",
+                    "debtor_concentration",
+                ],
                 requirement_mode="ANY_OF",
-                description="Indicador de risco do segmento disponível.",
+                description=(
+                    "Indicador de risco do segmento disponível -- aplicável "
+                    "conforme a natureza real do fundo (tijolo: vacância; "
+                    "papel: concentração de devedores/emissores)."
+                ),
             ),
         ]
     if asset_class == InvestmentClass.ETF:
@@ -2422,8 +2444,6 @@ def is_indicator_not_applicable(key: str, *, sector: str | None = None, asset_cl
         if key_profile and key in {"ev_ebitda", "net_debt_ebitda", "roic", "ebitda_margin"}:
             if "banco" in key_profile or "segur" in key_profile:
                 return True
-    if key in {"physical_vacancy"} and asset_class == InvestmentClass.FII:
-        return True
     return False
 
 

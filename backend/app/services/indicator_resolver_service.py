@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import json
 
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +17,7 @@ from app.providers.tesouro_transparente_provider import TesouroTransparenteProvi
 from app.repositories.indicator_snapshot_repository import IndicatorSnapshotRepository
 from app.repositories.manual_indicator_repository import ManualIndicatorRepository
 from app.repositories.cvm_financial_repository import CvmFinancialRepository
+from app.repositories.cvm_fii_repository import CvmFiiRepository
 from app.schemas.market_intelligence import (
     AnalysisImpact,
     ConfidenceLevel,
@@ -178,6 +179,24 @@ def _cvm_valid_until(
     return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
 
 
+# Prazo de entrega do Informe Trimestral de FII (ANEXO 39-II da Instrução
+# CVM 571/2015) após o encerramento do trimestre de referência. NÃO foi
+# possível confirmar o texto exato desse prazo regulatório dentro do escopo
+# desta correção -- reaproveita, de forma conservadora e explicitamente
+# documentada, o mesmo prazo já confirmado para o ITR de companhias abertas
+# (CVM_QUARTERLY_FILING_DEADLINE_DAYS = 45), erra sempre para o lado de
+# marcar STALE mais cedo, nunca para estender validade além do comprovado.
+def _fii_vacancy_valid_until(reference_date: date) -> datetime:
+    """Validade do dado oficial de vacância de FII = prazo esperado para o
+    PRÓXIMO Informe Trimestral que o substituiria economicamente (mesmo
+    princípio de _next_cvm_report_deadline: nunca reutiliza cegamente a
+    política DFP/ITR anual, usa a cadência trimestral real do documento).
+    """
+    next_quarter_end = _add_months(reference_date, 3)
+    deadline = _add_days(next_quarter_end, CVM_QUARTERLY_FILING_DEADLINE_DAYS)
+    return datetime.combine(deadline, time.min, tzinfo=timezone.utc)
+
+
 # Indicadores que DerivedIndicatorEngine sabe calcular a partir de
 # componentes brutos CVM (seção 6 do resolver híbrido) — só tentados quando
 # ainda pendentes após BRAPI/CVM direto, nunca substituindo um valor já
@@ -214,6 +233,8 @@ class IndicatorResolverService:
         cvm_provider: CvmOpenDataProvider | None = None,
         cvm_repository: CvmFinancialRepository | None = None,
         cvm_link_session_factory=None,
+        cvm_fii_repository: CvmFiiRepository | None = None,
+        fii_link_session_factory=None,
     ):
         self.market_service = market_service
         self.normalizer = normalizer
@@ -228,6 +249,10 @@ class IndicatorResolverService:
         # nada relacionado à resolução de indicadores em si, que continua
         # usando exclusivamente self.cvm_repository/sua sessão compartilhada.
         self.cvm_link_session_factory = cvm_link_session_factory or SessionLocal
+        self.cvm_fii_repository = cvm_fii_repository
+        # Mesma filosofia de isolamento acima, aplicada ao vínculo
+        # automático ativo<->fundo FII (ver _persist_fii_link_isolated).
+        self.fii_link_session_factory = fii_link_session_factory or SessionLocal
 
     def resolve_asset(
         self,
@@ -252,6 +277,8 @@ class IndicatorResolverService:
                 source="BRAPI",
                 source_type="provider",
             )
+            if asset_class == InvestmentClass.FII:
+                self._apply_fii_brapi_derived(resolved, payloads, collected_at)
             self._record_stage_attempts(
                 resolved,
                 pending_before=pending,
@@ -283,6 +310,13 @@ class IndicatorResolverService:
 
         if asset_id is not None and self._has_unresolved(resolved):
             self._apply_cvm(resolved, asset_id, collected_at, symbol=symbol)
+
+        if (
+            asset_class == InvestmentClass.FII
+            and asset_id is not None
+            and self._has_unresolved(resolved)
+        ):
+            self._apply_fii_official_risk(resolved, asset_id, collected_at, symbol=symbol)
 
         if self._has_unresolved(resolved):
             self._apply_stale_snapshot_fallback(resolved, symbol, collected_at)
@@ -444,7 +478,13 @@ class IndicatorResolverService:
         self, symbol: str, asset_class: InvestmentClass
     ) -> tuple[list[dict], list[tuple[str, bool, Exception | None]]]:
         datasets = (
-            ["indicators"]
+            # "indicators" traz o segmentType real (papel/tijolo) e dados
+            # financeiros; "properties"/"portfolio" trazem vacância física
+            # agregada e a composição de ativos (financialAssets) usada
+            # para concentração de devedores em FII de papel -- cada
+            # dataset é tentado isoladamente (ver loop abaixo), então uma
+            # falha de plano em um deles nunca invalida os outros.
+            ["indicators", "properties", "portfolio"]
             if asset_class == InvestmentClass.FII
             else ["statistics", "financial_data"]
         )
@@ -509,6 +549,104 @@ class IndicatorResolverService:
                         "freshness_status": "current",
                     }
                 )
+
+    def _apply_fii_brapi_derived(self, resolved, payloads, collected_at) -> None:
+        """Indicadores de FII que exigem agregação sobre uma LISTA bruta da
+        BRAPI (não um único campo escalar, por isso merge_provider_payloads
+        via alias não os alcança): debtor_concentration, a partir da lista
+        financialAssets do dataset fii/portfolio.
+
+        Concentração = participação do MAIOR emissor único sobre o total de
+        ativos financeiros do fundo -- só calculado quando a lista real tem
+        pelo menos um item com valor informado; nunca inventa 0% quando a
+        lista está ausente/vazia (fundo de tijolo sem carteira de papel
+        simplesmente não tem este dado, o que é diferente de "0% concentrado").
+        """
+        current = resolved.get("debtor_concentration")
+        if current is None or current.status in self._RESOLVED_STATUSES:
+            return
+        portfolio_payload = self._find_fii_payload(payloads, "financialAssets")
+        if portfolio_payload is None:
+            return
+        financial_assets = portfolio_payload.get("financialAssets") or []
+        concentration = self._largest_issuer_share(financial_assets)
+        if concentration is None:
+            return
+        reference_raw = portfolio_payload.get("referenceDate")
+        reference = self._parse_brapi_date(reference_raw) or collected_at
+        resolved["debtor_concentration"] = current.model_copy(
+            update={
+                "value": concentration,
+                "display_value": display_value(concentration, "percent", None),
+                "status": IndicatorStatus.AVAILABLE,
+                "source": "BRAPI",
+                "source_type": "provider",
+                "reference_date": reference,
+                "collected_at": collected_at,
+                "valid_until": self._valid_until(
+                    "debtor_concentration", collected_at, source_type="provider"
+                ),
+                "freshness_status": "current",
+                "confidence": ConfidenceLevel.HIGH,
+                "period": "período informado pelo provedor",
+                "unavailable_reason": None,
+                "provider_failure_reason": None,
+                "provenance": {
+                    "provider": "brapi",
+                    "dataset": "fii/portfolio",
+                    "field": "financialAssets",
+                    "method": (
+                        "maior valor de um único emissor (issuerCnpj) "
+                        "dividido pelo total de financialAssets"
+                    ),
+                    "reference_date": str(reference_raw) if reference_raw else None,
+                },
+            }
+        )
+
+    @staticmethod
+    def _find_fii_payload(payloads: list[dict], required_key: str) -> dict | None:
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            fiis = payload.get("fiis")
+            if not isinstance(fiis, list) or not fiis:
+                continue
+            first = fiis[0]
+            if isinstance(first, dict) and first.get(required_key):
+                return first
+        return None
+
+    @staticmethod
+    def _largest_issuer_share(financial_assets: list[dict]) -> Decimal | None:
+        by_issuer: dict[str, Decimal] = {}
+        total = Decimal("0")
+        for item in financial_assets:
+            if not isinstance(item, dict) or item.get("value") is None:
+                continue
+            try:
+                amount = Decimal(str(item["value"]))
+            except (InvalidOperation, ValueError):
+                continue
+            issuer_key = str(
+                item.get("issuerCnpj") or item.get("issuer") or item.get("name") or ""
+            ).strip()
+            if not issuer_key:
+                continue
+            total += amount
+            by_issuer[issuer_key] = by_issuer.get(issuer_key, Decimal("0")) + amount
+        if not by_issuer or total <= 0:
+            return None
+        return max(by_issuer.values()) / total
+
+    @staticmethod
+    def _parse_brapi_date(value) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value)).replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
 
     @staticmethod
     def _valid_until(
@@ -904,6 +1042,115 @@ class IndicatorResolverService:
         """
         existing_link = CvmFinancialRepository(db).find_link(asset_id)
         return existing_link is not None and existing_link.issuer_id == issuer_id
+
+    def _apply_fii_official_risk(self, resolved, asset_id, collected_at, symbol) -> None:
+        """Vacância física oficial de FII, via CVM Dados Abertos (Informe
+        Trimestral) -- fallback usado quando BRAPI não resolveu
+        physical_vacancy (indisponível pelo plano, ou fundo de papel sem
+        dado a resolver por essa via). Segue a MESMA prioridade/filosofia
+        de _apply_cvm: só roda se ainda houver algo pendente, nunca
+        sobrescreve algo já resolvido, nunca inventa dado ausente.
+        """
+        if self.cvm_fii_repository is None:
+            return
+        current = resolved.get("physical_vacancy")
+        if current is None or current.status in self._RESOLVED_STATUSES:
+            return
+        issuer = self.cvm_fii_repository.linked_issuer(asset_id)
+        if issuer is None:
+            issuer = self._auto_link_fii_issuer(asset_id, symbol)
+        if issuer is None:
+            return
+        document = self.cvm_fii_repository.latest_vacancy_document(issuer.id)
+        if document is None:
+            return
+        reference = datetime.combine(
+            document.reference_date, time.min, tzinfo=timezone.utc
+        )
+        valid_until = _fii_vacancy_valid_until(document.reference_date)
+        if collected_at > valid_until:
+            # Documento oficial mais recente já expirou pela própria
+            # cadência trimestral -- não finge que ainda é atual.
+            return
+        value = Decimal(document.area_weighted_vacancy_rate)
+        resolved["physical_vacancy"] = current.model_copy(
+            update={
+                "value": value,
+                "display_value": display_value(value, "percent", None),
+                "unit": "percent",
+                "status": IndicatorStatus.AVAILABLE,
+                "source": "CVM Dados Abertos (FII)",
+                "source_type": "official",
+                "reference_date": reference,
+                "collected_at": collected_at,
+                "valid_until": valid_until,
+                "freshness_status": "current",
+                "confidence": ConfidenceLevel.HIGH,
+                "period": "trimestral",
+                "unavailable_reason": None,
+                "provider_failure_reason": None,
+                "provenance": {
+                    "provider": "cvm",
+                    "dataset": "fii-doc-inf_trimestral",
+                    "resource": document.source_resource,
+                    "document_type": "INF_TRIMESTRAL",
+                    "reference_date": str(document.reference_date),
+                    "version": document.version,
+                    "cnpj_fundo_classe": issuer.cnpj,
+                    "property_count": document.property_count,
+                    "method": document.aggregation_method,
+                },
+            }
+        )
+
+    def _auto_link_fii_issuer(self, asset_id, symbol: str):
+        """Vincula automaticamente ativo<->fundo FII por CNPJ EXATO -- mesma
+        regra do auto-link corporativo (nunca por nome). Usa o CNPJ do
+        perfil do provedor de mercado; só vincula se houver correspondência
+        exata com um FiiIssuer já sincronizado via Informe Trimestral.
+        """
+        if self.market_service is None:
+            return None
+        try:
+            profile = self.market_service.get_profile(symbol)
+        except Exception:
+            return None
+        cnpj = CvmOpenDataProvider.normalize_cnpj(getattr(profile, "cnpj", None) or "")
+        if not cnpj:
+            return None
+        issuer = self.cvm_fii_repository.find_issuer_by_cnpj(cnpj)
+        if issuer is None:
+            return None
+        persisted = self._persist_fii_link_isolated(asset_id, issuer.id)
+        return issuer if persisted else None
+
+    def _persist_fii_link_isolated(self, asset_id, issuer_id) -> bool:
+        """Persiste o vínculo ativo<->fundo FII em transação curta e
+        isolada, própria -- nunca na sessão compartilhada de resolução.
+        Mesma arquitetura de _persist_cvm_link_isolated (ver essa
+        docstring para a motivação completa): retorna True somente com
+        persistência confirmada (direta ou por corrida concorrente
+        idempotente), nunca sobrescreve um vínculo existente para um
+        fundo diferente, nunca lança exceção para o chamador.
+        """
+        db = self.fii_link_session_factory()
+        try:
+            try:
+                link = CvmFiiRepository(db).ensure_asset_link(asset_id, issuer_id)
+                if link is None:
+                    db.rollback()
+                    return False
+                db.commit()
+                return True
+            except IntegrityError:
+                db.rollback()
+                existing_link = CvmFiiRepository(db).find_link(asset_id)
+                return existing_link is not None and existing_link.issuer_id == issuer_id
+            except Exception:
+                db.rollback()
+                return False
+        finally:
+            db.close()
 
     def _apply_cvm_derived_indicators(
         self,

@@ -55,18 +55,18 @@ class IndicatorValidationService:
                         "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
-            elif indicator.key == "physical_vacancy" and is_fii_paper(segment or sector):
+            elif indicator.key in _FII_BRICK_ONLY_INDICATORS and is_fii_paper(segment or sector):
                 item = indicator.model_copy(
                     update={
                         "status": IndicatorStatus.NOT_APPLICABLE,
                         "value": None,
                         "display_value": None,
-                        "unavailable_reason": "Vacância física não se aplica a FII de papel.",
-                        "explanation": "Vacância física não se aplica a FII de papel.",
+                        "unavailable_reason": "Indicador de imóvel físico não se aplica a FII de papel.",
+                        "explanation": "Indicador de imóvel físico não se aplica a FII de papel.",
                         "provider_failure_reason": ProviderFailureReason.NOT_APPLICABLE,
                     }
                 )
-            elif indicator.key in {"receivable_quality", "debtor_concentration", "tenant_concentration", "contract_average_term"} and is_fii_brick(segment or sector):
+            elif indicator.key in _FII_PAPER_ONLY_INDICATORS and is_fii_brick(segment or sector):
                 item = indicator.model_copy(
                     update={
                         "status": IndicatorStatus.NOT_APPLICABLE,
@@ -228,6 +228,32 @@ def _negative_earnings_context(indicators: dict[str, NormalizedIndicator]) -> bo
         if isinstance(value, Decimal) and value <= 0:
             return True
     return False
+
+
+# Indicadores que só fazem sentido para FII com imóveis físicos (tijolo) --
+# NOT_APPLICABLE quando o fundo é comprovadamente de papel/recebíveis (ver
+# is_fii_paper). Nunca NOT_APPLICABLE para tijolo/híbrido/desconhecido.
+_FII_BRICK_ONLY_INDICATORS = frozenset(
+    {
+        "physical_vacancy",
+        "financial_vacancy",
+        "property_concentration",
+        "tenant_concentration",
+        "contract_average_term",
+        "property_quality",
+    }
+)
+
+# Indicadores que só fazem sentido para FII de recebíveis/papel --
+# NOT_APPLICABLE quando o fundo é comprovadamente de tijolo (ver
+# is_fii_brick). Nunca NOT_APPLICABLE para papel/híbrido/desconhecido.
+_FII_PAPER_ONLY_INDICATORS = frozenset(
+    {
+        "receivable_quality",
+        "debtor_concentration",
+        "delinquency",
+    }
+)
 
 
 def is_fii_paper(segment: str | None) -> bool:

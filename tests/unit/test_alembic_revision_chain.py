@@ -25,6 +25,7 @@ EXPECTED_CHAIN = (
     "20260723_portfolio_audits",
     "20260727_email_auth_tokens",
     "20260817_investor_profile",
+    "20260818_cvm_fii_vacancy",
 )
 REQUIRED_SECURITY_FILES = {
     "backend/alembic.ini",
