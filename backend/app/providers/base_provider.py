@@ -8,6 +8,14 @@ class BaseMarketProvider(ABC):
     Interface base para provedores de dados de mercado.
     """
 
+    # Mercado que este provider comprovadamente atende (ex.: "B3"), usado
+    # por app.services.symbol_identity.market_context_of() para decidir se
+    # regras específicas de um mercado (ex.: canonicalização do sufixo
+    # fracionário B3) podem se aplicar aos símbolos que ele resolve. `None`
+    # é o default seguro: nenhuma regra específica de mercado é aplicada
+    # a um provider que não declara explicitamente o seu.
+    market: str | None = None
+
     @abstractmethod
     def get_quote(self, ticker: str) -> QuoteResponse:
         """

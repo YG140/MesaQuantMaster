@@ -30,6 +30,7 @@ from app.schemas.market_intelligence import (
     ValuationStatus,
 )
 from app.services.intelligence_service import PortfolioIntelligenceService
+from app.services.symbol_identity import B3_MARKET
 
 NOW = datetime(2026, 8, 12, tzinfo=timezone.utc)
 
@@ -1122,6 +1123,48 @@ def test_maximum_weight_per_issuer_caps_combined_allocation():
         if item.issuer == "Emissor Único"
     )
     assert total_for_issuer <= Decimal("15")
+
+
+def test_b3_fractional_ticker_shares_issuer_cap_with_standard_lot():
+    """Prompt 2, seção 28: PETR4 (lote padrão) e PETR4F (mercado
+    fracionário B3) precisam ser tratados como o MESMO emissor para
+    `maximum_weight_per_issuer` -- nunca como duas empresas
+    independentes (ver auditoria Prompt 1, seção I). O `issuer` de cada
+    candidato aqui é calculado exatamente como
+    PortfolioIntelligenceService monta em produção (ver
+    intelligence_service._issuer_identity), não uma string arbitrária."""
+    issuer_petr4 = PortfolioIntelligenceService._issuer_identity(
+        asset=None,
+        snapshot=type("S", (), {"symbol": "PETR4"})(),
+        market_context=B3_MARKET,
+    )
+    issuer_petr4f = PortfolioIntelligenceService._issuer_identity(
+        asset=None,
+        snapshot=type("S", (), {"symbol": "PETR4F"})(),
+        market_context=B3_MARKET,
+    )
+    assert issuer_petr4 == issuer_petr4f == "B3:PETR4"
+
+    p = policy(
+        [policy_allocation("Ações", 100, maximum=100)],
+        maximum_weight_per_asset=Decimal("40"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("15"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_percentage_per_asset=Decimal("40"), max_percentage_per_sector=Decimal("100")),
+        [
+            candidate("PETR4", sector="Energia", issuer=issuer_petr4, score="90"),
+            candidate("PETR4F", sector="Energia", issuer=issuer_petr4f, score="80"),
+        ],
+        policy=p,
+    )
+    total_for_petrobras = sum(
+        item.recommended_percentage
+        for item in result.assets
+        if item.symbol in {"PETR4", "PETR4F"}
+    )
+    assert total_for_petrobras <= Decimal("15")
 
 
 def test_issuer_absent_uses_isolated_identity_never_grouped_with_other_absent():

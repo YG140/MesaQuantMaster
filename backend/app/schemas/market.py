@@ -67,6 +67,8 @@ class QuoteResponse(BaseModel):
 
 class MarketProfileResponse(BaseModel):
     symbol: str
+    requested_symbol: str | None = None
+    symbol_changed: bool = False
     name: str | None = None
     sector: str | None = None
     industry: str | None = None

@@ -14,6 +14,7 @@ from app.schemas.market import (
 from datetime import datetime, timezone
 from app.providers.exceptions import MarketPermissionError, MarketAuthenticationError
 from app.services.market_cache import TTLCache
+from app.services.symbol_identity import market_context_of, resolve_symbol_identity
 
 
 class MarketService:
@@ -214,21 +215,48 @@ class MarketService:
         return next((asset for asset in assets if asset.ticker.upper() == symbol), None)
 
     def get_profile(self, ticker: str) -> MarketProfileResponse:
-        symbol = self._normalize_symbol(ticker)
-        cache_key = f"profile:{symbol}"
+        # Perfil da empresa (nome, setor, CNPJ, etc.) é identidade
+        # ECONÔMICA, compartilhada entre o lote padrão e o mercado
+        # fracionário B3 (ex.: PETR4 e PETR4F são a mesma Petrobras) —
+        # ao contrário de get_quote/get_quotes, que preservam o símbolo de
+        # negociação exato porque cotação/volume do fracionário são
+        # próprios (ver auditoria Prompt 1, seção C). Por isso, e só aqui,
+        # consultamos o provider pelo canonical_symbol; o cache também usa
+        # o canonical_symbol como chave, para que PETR4 e PETR4F
+        # compartilhem a mesma entrada em vez de duas consultas idênticas.
+        #
+        # O contexto de mercado usado para decidir SE essa canonicalização
+        # se aplica vem do PRÓPRIO provider em uso (market_context_of),
+        # nunca de um "B3" fixo aqui -- um provider que não declara seu
+        # mercado (fake genérico, provider futuro de outro mercado) nunca
+        # aciona a regra do fracionário B3, mesmo que o símbolo termine em
+        # "F" e tenha o formato estrutural de um código-base B3 válido.
+        identity = resolve_symbol_identity(ticker, market=self._market_context())
+        canonical_symbol = identity.canonical_symbol
+        cache_key = f"profile:{canonical_symbol}"
         cached = self._profile_cache.get(cache_key)
         if cached is not None:
-            return cached.model_copy(update={"cache_hit": True})
+            profile = cached.model_copy(update={"cache_hit": True})
+        else:
+            profile = self.provider.get_profile(canonical_symbol).model_copy(
+                update={"limited_mode": self._limited_mode()}
+            )
+            self._profile_cache.set(
+                cache_key,
+                profile,
+                settings.BRAPI_PROFILE_CACHE_SECONDS,
+            )
 
-        profile = self.provider.get_profile(symbol).model_copy(
-            update={"limited_mode": self._limited_mode()}
+        # Provenance explícita (mesmo padrão já usado por QuoteResponse.
+        # requested_symbol/symbol_changed): nunca deixa parecer que o
+        # provider respondeu especificamente por PETR4F quando, na
+        # verdade, os dados vieram da identidade econômica PETR4.
+        return profile.model_copy(
+            update={
+                "requested_symbol": identity.trading_symbol,
+                "symbol_changed": identity.is_fractional,
+            }
         )
-        self._profile_cache.set(
-            cache_key,
-            profile,
-            settings.BRAPI_PROFILE_CACHE_SECONDS,
-        )
-        return profile
 
     def provider_capabilities(self) -> ProviderCapabilitiesResponse:
         supported = [
@@ -283,11 +311,25 @@ class MarketService:
         )
 
     def get_stock_dataset(self, dataset: str, symbols: list[str], **params):
+        # Fundamentos/estatísticas de ações são identidade ECONÔMICA (ver
+        # get_profile acima e auditoria Prompt 1, seção C/H): a BRAPI
+        # recusa esses datasets no plano gratuito quando consultados pelo
+        # símbolo do mercado fracionário mesmo quando o MESMO plano libera
+        # o dado pelo lote padrão. Canonicalizamos ANTES de chamar o
+        # provider — o provider em si nunca sabe que uma canonicalização
+        # ocorreu, recebe só o(s) símbolo(s) que deve efetivamente
+        # consultar. Contexto de mercado sempre derivado do provider em uso
+        # (ver get_profile acima) -- nunca "B3" fixo.
+        market = self._market_context()
+        canonical_symbols = [
+            resolve_symbol_identity(symbol, market=market).canonical_symbol
+            for symbol in symbols
+        ]
         return self._call_with_restriction_cache(
             "stocks",
             dataset,
-            symbols,
-            lambda: self.provider.get_stock_dataset(dataset, symbols, **params),
+            canonical_symbols,
+            lambda: self.provider.get_stock_dataset(dataset, canonical_symbols, **params),
         )
 
     def get_fii_dataset(self, dataset: str, symbols: list[str], **params):
@@ -330,6 +372,9 @@ class MarketService:
 
     def _limited_mode(self) -> bool:
         return bool(getattr(self.provider, "limited_mode", False))
+
+    def _market_context(self) -> str | None:
+        return market_context_of(self.provider)
 
     @staticmethod
     def _normalize_symbol(ticker: str) -> str:
