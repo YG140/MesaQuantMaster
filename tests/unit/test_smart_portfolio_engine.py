@@ -1280,7 +1280,33 @@ def test_strategy_summary_reflects_effective_policy_not_conflicting_request():
     assert "renda_passiva" in result.strategy_summary
     assert "mais_10_anos" in result.strategy_summary
     assert "Arrojado" not in result.strategy_summary
-    assert "Perfil do Investidor confirmado" in result.strategy_summary
+    assert "PortfolioPolicy" in result.strategy_summary
+
+
+def test_policy_provenance_is_never_attributed_to_investor_profile_onboarding():
+    """PortfolioPolicy não tem campo de provenance -- ela pode ter sido
+    criada pelo onboarding do Perfil do Investidor OU diretamente via
+    POST/PUT /intelligence/policy, e o sistema não sabe distinguir qual.
+    policy_source e strategy_summary NUNCA podem afirmar uma origem que
+    não é conhecida. As asserções abaixo são literais (não seguem a
+    constante POLICY_SOURCE cegamente) para travar regressão futura caso
+    alguém reintroduza uma provenance inventada."""
+    p = policy([policy_allocation("Ações", 100, maximum=100)])
+    result = SmartPortfolioEngine.build(
+        request(), [candidate("AAAA3")], policy=p
+    )
+    # Literal: nunca "investor_profile_policy" nem qualquer variação que
+    # afirme onboarding como a origem.
+    assert result.policy_source == "portfolio_policy"
+    assert "investor_profile" not in result.policy_source
+    assert "onboarding" not in result.policy_source
+    # strategy_summary nunca pode afirmar que a origem é o onboarding do
+    # Perfil do Investidor confirmado -- só que UMA policy persistida
+    # existe e foi usada.
+    assert "Perfil do Investidor confirmado" not in result.strategy_summary
+    assert "onboarding" not in result.strategy_summary.lower()
+    assert "PortfolioPolicy" in result.strategy_summary
+    assert "persistida" in result.strategy_summary.lower()
 
 
 def test_protection_phase_still_suspends_execution_regardless_of_aggressive_policy():

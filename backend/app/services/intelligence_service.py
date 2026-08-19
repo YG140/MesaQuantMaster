@@ -109,10 +109,11 @@ class PortfolioIntelligenceService:
     ) -> BuildPortfolioResponse:
         # user_id vem exclusivamente do usuário autenticado (ver
         # app/api/intelligence.py, current_user.id) -- nunca do corpo da
-        # requisição. Uma PortfolioPolicy confirmada/persistida (via
-        # onboarding do Perfil do Investidor OU via PUT/POST /policy
-        # diretos -- ambos igualmente autoritativos, não há campo que
-        # distinga a origem) passa a ser a fonte estratégica de verdade
+        # requisição. Uma PortfolioPolicy persistida (via onboarding do
+        # Perfil do Investidor OU via PUT/POST /policy diretos -- ambos
+        # igualmente autoritativos; o modelo não persiste campo de
+        # provenance, então não há como distinguir a origem) passa a ser
+        # a fonte estratégica de verdade
         # de build_portfolio() (ver SmartPortfolioEngine.build/
         # PortfolioStrategy). Ausência de política preserva o
         # comportamento legado integralmente (policy=None) -- inclusive

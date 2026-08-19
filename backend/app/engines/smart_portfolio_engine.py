@@ -80,7 +80,14 @@ class PortfolioCandidate:
 # PortfolioStrategy.class_targets.
 RESERVE_CLASS_LABEL = "Reserva de emergência"
 
-POLICY_SOURCE = "investor_profile_policy"
+# Valor NEUTRO quanto à origem: PortfolioPolicy é gravada tanto pelo
+# onboarding do Perfil do Investidor (InvestorProfileService.confirm())
+# quanto diretamente por POST/PUT /intelligence/policy -- o modelo
+# PortfolioPolicy não tem nenhum campo de provenance que permita
+# distinguir qual caminho gravou uma policy específica. "policy_source"
+# só pode afirmar honestamente que UMA PortfolioPolicy persistida foi
+# aplicada, nunca de onde ela veio (nem inventar essa origem).
+POLICY_SOURCE = "portfolio_policy"
 LEGACY_SOURCE = "request_legacy"
 
 
@@ -96,11 +103,15 @@ class PortfolioStrategy:
     """Envelope estratégico EFETIVO para uma execução de build_portfolio.
 
     Fonte de verdade (ver AGENTS.md/auditoria): quando existe uma
-    PortfolioPolicy confirmada/persistida para o usuário (`source ==
-    POLICY_SOURCE`), todo campo estratégico vem dela -- nunca do corpo da
-    requisição, que não pode sobrescrever silenciosamente uma política já
-    confirmada. Um override operacional do request só pode ser MAIS
-    restritivo que a política, nunca mais permissivo (ver from_policy).
+    PortfolioPolicy persistida para o usuário (`source == POLICY_SOURCE`),
+    todo campo estratégico vem dela -- nunca do corpo da requisição, que
+    não pode sobrescrever silenciosamente uma política já persistida. Um
+    override operacional do request só pode ser MAIS restritivo que a
+    política, nunca mais permissivo (ver from_policy). A PortfolioPolicy
+    pode ter sido criada pelo onboarding do Perfil do Investidor OU
+    diretamente via POST/PUT /intelligence/policy -- ambos igualmente
+    autoritativos; o modelo não persiste essa origem, então nada aqui
+    afirma qual dos dois caminhos gravou a policy em uso.
 
     Quando não existe política (`source == LEGACY_SOURCE`), o
     comportamento anterior a esta mudança é preservado integralmente:
@@ -306,7 +317,12 @@ class SmartPortfolioEngine:
                 f"Objetivo {strategy.objective}; perfil {strategy.risk_profile}; "
                 f"horizonte {strategy.horizon}; até {request.max_assets} ativos."
                 + (
-                    " Estratégia definida pelo Perfil do Investidor confirmado."
+                    # Nunca afirma que a origem é o onboarding do Perfil do
+                    # Investidor: a policy pode ter sido criada por lá OU
+                    # diretamente via POST/PUT /intelligence/policy, e o
+                    # modelo não persiste qual dos dois caminhos foi usado.
+                    " Estratégia definida pela política de carteira "
+                    "(PortfolioPolicy) persistida do usuário."
                     if strategy.source == POLICY_SOURCE
                     else ""
                 )
@@ -355,7 +371,7 @@ class SmartPortfolioEngine:
                     amount=(request.available_amount * percentage / HUNDRED).quantize(CENT),
                     explanation=(
                         "Soma das alocações elegíveis da classe, dentro da meta definida "
-                        "pela política do Perfil do Investidor."
+                        "pela política de carteira (PortfolioPolicy) persistida do usuário."
                         if target is not None
                         else "Soma das alocações elegíveis da classe, limitada pelas "
                         "restrições informadas."
@@ -401,7 +417,8 @@ class SmartPortfolioEngine:
             if policy_mode:
                 if asset_class not in allowed:
                     reasons.append(
-                        "Classe fora do envelope da política do Perfil do Investidor."
+                        "Classe fora do envelope da política de carteira "
+                        "(PortfolioPolicy) persistida do usuário."
                     )
             elif allowed and asset_class not in allowed:
                 reasons.append("Classe fora da lista permitida.")
