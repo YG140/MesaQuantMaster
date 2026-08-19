@@ -20,7 +20,7 @@ import type {
   RestrictionsAnswer,
   RiskToleranceAnswer,
 } from "../types/api";
-import { formatPercent } from "../utils/formatters";
+import { formatPercent, normalizeDecimalForApi } from "../utils/formatters";
 
 const OBJECTIVE_OPTIONS = [
   { value: "crescimento_patrimonial", label: "Crescimento patrimonial" },
@@ -256,8 +256,12 @@ export function OnboardingPage() {
     setError(null);
     try {
       await investorProfileEndpoints.saveAnswers(token, partial);
-    } catch {
-      setError("Não foi possível salvar sua resposta agora. Tente novamente.");
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Não foi possível salvar sua resposta agora. Tente novamente.";
+      setError(message);
       throw new Error("save_failed");
     } finally {
       setIsSaving(false);
@@ -511,8 +515,8 @@ function ContributionStep({
         event.preventDefault();
         onNext({
           contribution: {
-            monthly_contribution: monthly,
-            initial_contribution: initial,
+            monthly_contribution: normalizeDecimalForApi(monthly),
+            initial_contribution: normalizeDecimalForApi(initial),
             contribution_stability: stability as never,
           },
         });

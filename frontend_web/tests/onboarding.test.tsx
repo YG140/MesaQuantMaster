@@ -22,6 +22,19 @@ function authenticate() {
   sessionStorage.setItem("mesa_quant_session", "test-token");
 }
 
+// Mesma forma que o backend usa para validar `Decimal` (sem virgula, sem milhar).
+function isBackendDecimalParseable(value: string) {
+  return /^-?\d+(\.\d+)?$/.test(value);
+}
+
+type ContributionPayload = {
+  contribution: {
+    monthly_contribution: string;
+    initial_contribution: string;
+    contribution_stability: string;
+  };
+};
+
 describe("onboarding do perfil do investidor", () => {
   it("usuário não autenticado não acessa /onboarding", async () => {
     renderWithProviders(<AppRouter />, "/onboarding");
@@ -155,6 +168,184 @@ describe("onboarding do perfil do investidor", () => {
 
     await user.click(screen.getByRole("button", { name: /Confirmar e continuar/ }));
     expect((await screen.findAllByText("Patrimônio", {}, { timeout: 10_000 })).length).toBeGreaterThan(0);
+  });
+
+  it("converte aporte mensal e inicial de Real (pt-BR) para decimal antes de enviar ao backend (bug 422)", async () => {
+    let capturedBody: ContributionPayload | null = null;
+    server.use(
+      http.get(`${api}/investor-profile/status`, () => pendingStatus("needs_onboarding")),
+      http.put(`${api}/investor-profile/answers`, async ({ request }) => {
+        capturedBody = (await request.json()) as ContributionPayload;
+        return HttpResponse.json({ id: "investor-profile-1" });
+      }),
+    );
+    authenticate();
+    const user = userEvent.setup();
+    renderWithProviders(<AppRouter />, "/onboarding");
+
+    await user.click(await screen.findByLabelText("Crescimento patrimonial", {}, { timeout: 10_000 }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+    await user.click(await screen.findByLabelText("Mais de 10 anos"));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await screen.findByText("Quanto você pretende investir por mês?");
+    const monthlyInput = screen.getByLabelText("Aporte mensal");
+    const initialInput = screen.getByLabelText("Investimento inicial (se houver)");
+    await user.clear(monthlyInput);
+    await user.type(monthlyInput, "50000");
+    expect(monthlyInput).toHaveValue("500,00");
+    await user.clear(initialInput);
+    await user.type(initialInput, "000");
+    expect(initialInput).toHaveValue("0,00");
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    // Cast (não narrowing): `waitFor` acima ja garante nao-nulo em runtime; o
+    // TS estreita `let` reatribuido dentro do closure do MSW para `null`.
+    const body = capturedBody as unknown as ContributionPayload;
+    expect(body.contribution.monthly_contribution).toBe("500");
+    expect(body.contribution.monthly_contribution).not.toMatch(/,/);
+    expect(body.contribution.initial_contribution).toBe("0");
+    expect(body.contribution.contribution_stability).toBe("fixo");
+    expect(isBackendDecimalParseable(body.contribution.monthly_contribution)).toBe(true);
+  });
+
+  it("preserva casas decimais nao inteiras (1.500,50) e o modo de aporte variavel", async () => {
+    let capturedBody: ContributionPayload | null = null;
+    server.use(
+      http.get(`${api}/investor-profile/status`, () => pendingStatus("needs_onboarding")),
+      http.put(`${api}/investor-profile/answers`, async ({ request }) => {
+        capturedBody = (await request.json()) as ContributionPayload;
+        return HttpResponse.json({ id: "investor-profile-1" });
+      }),
+    );
+    authenticate();
+    const user = userEvent.setup();
+    renderWithProviders(<AppRouter />, "/onboarding");
+
+    await user.click(await screen.findByLabelText("Crescimento patrimonial", {}, { timeout: 10_000 }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+    await user.click(await screen.findByLabelText("Mais de 10 anos"));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await screen.findByText("Quanto você pretende investir por mês?");
+    const monthlyInput = screen.getByLabelText("Aporte mensal");
+    await user.clear(monthlyInput);
+    await user.type(monthlyInput, "150050");
+    expect(monthlyInput).toHaveValue("1.500,50");
+    await user.click(screen.getByLabelText("Aporte variável, conforme sobra no mês"));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    // Cast (não narrowing): `waitFor` acima ja garante nao-nulo em runtime; o
+    // TS estreita `let` reatribuido dentro do closure do MSW para `null`.
+    const body = capturedBody as unknown as ContributionPayload;
+    expect(body.contribution.monthly_contribution).toBe("1500.5");
+    expect(body.contribution.contribution_stability).toBe("variavel");
+  });
+
+  it("round trip: aporte salvo como decimal da API aparece em Real e volta como decimal ao salvar de novo", async () => {
+    let capturedBody: ContributionPayload | null = null;
+    server.use(
+      http.get(`${api}/investor-profile/status`, () => pendingStatus("in_progress")),
+      http.get(`${api}/investor-profile`, () =>
+        HttpResponse.json({
+          id: "investor-profile-1",
+          user_id: "user-1",
+          status: "in_progress",
+          version: 1,
+          primary_objective: "crescimento_patrimonial",
+          secondary_objectives: [],
+          horizon: "mais_10_anos",
+          initial_contribution: "0.00",
+          monthly_contribution: "500.00",
+          contribution_stability: "fixo",
+          income_range: null,
+          investable_net_worth_range: null,
+          emergency_reserve_months: null,
+          has_relevant_debt: null,
+          dependents: null,
+          liquidity_need: null,
+          income_need: null,
+          allowed_classes: null,
+          restricted_classes: null,
+          dimensions: null,
+          explanations: [],
+          policy_preview: null,
+          evaluated_at: null,
+          confirmed_at: null,
+          last_reviewed_at: null,
+          created_at: "2026-08-17T12:00:00Z",
+          updated_at: "2026-08-17T12:00:00Z",
+        }),
+      ),
+      http.put(`${api}/investor-profile/answers`, async ({ request }) => {
+        capturedBody = (await request.json()) as ContributionPayload;
+        return HttpResponse.json({ id: "investor-profile-1" });
+      }),
+    );
+    authenticate();
+    const user = userEvent.setup();
+    renderWithProviders(<AppRouter />, "/onboarding");
+
+    await user.click(await screen.findByLabelText("Crescimento patrimonial", {}, { timeout: 10_000 }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+    await user.click(await screen.findByLabelText("Mais de 10 anos"));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await screen.findByText("Quanto você pretende investir por mês?");
+    await waitFor(() => expect(screen.getByLabelText("Aporte mensal")).toHaveValue("500,00"));
+
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    // Cast (não narrowing): `waitFor` acima ja garante nao-nulo em runtime; o
+    // TS estreita `let` reatribuido dentro do closure do MSW para `null`.
+    const body = capturedBody as unknown as ContributionPayload;
+    expect(body.contribution.monthly_contribution).toBe("500");
+    expect(body.contribution.monthly_contribution).not.toBe("50000");
+    expect(body.contribution.monthly_contribution).not.toMatch(/,/);
+    expect(isBackendDecimalParseable(body.contribution.monthly_contribution)).toBe(true);
+  });
+
+  it("exibe a mensagem real de validação da API em erro 422, sem cair no texto generico nem expor dados sensiveis", async () => {
+    server.use(
+      http.get(`${api}/investor-profile/status`, () => pendingStatus("needs_onboarding")),
+      http.put(`${api}/investor-profile/answers`, async ({ request }) => {
+        const body = (await request.json()) as { contribution?: unknown };
+        if (!body.contribution) {
+          return HttpResponse.json({ id: "investor-profile-1" });
+        }
+        return HttpResponse.json(
+          {
+            detail: [
+              {
+                loc: ["body", "contribution", "monthly_contribution"],
+                msg: "Input should be a valid decimal",
+                type: "decimal_parsing",
+              },
+            ],
+          },
+          { status: 422 },
+        );
+      }),
+    );
+    authenticate();
+    const user = userEvent.setup();
+    renderWithProviders(<AppRouter />, "/onboarding");
+
+    await user.click(await screen.findByLabelText("Crescimento patrimonial", {}, { timeout: 10_000 }));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+    await user.click(await screen.findByLabelText("Mais de 10 anos"));
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    await screen.findByText("Quanto você pretende investir por mês?");
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("contribution.monthly_contribution: Input should be a valid decimal");
+    expect(alert).not.toHaveTextContent("Não foi possível salvar sua resposta agora. Tente novamente.");
+    expect(document.body.textContent).not.toContain("test-token");
   });
 
   it("mostra a revisão diretamente quando o status já é pending_confirmation", async () => {
