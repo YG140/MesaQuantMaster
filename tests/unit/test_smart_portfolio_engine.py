@@ -2,8 +2,18 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
-from app.engines.smart_portfolio_engine import PortfolioCandidate, SmartPortfolioEngine
-from app.schemas.intelligence import BuildPortfolioRequest, BuildPortfolioResponse
+from app.engines.smart_portfolio_engine import (
+    LEGACY_SOURCE,
+    POLICY_SOURCE,
+    PortfolioCandidate,
+    SmartPortfolioEngine,
+)
+from app.schemas.intelligence import (
+    BuildPortfolioRequest,
+    BuildPortfolioResponse,
+    PortfolioPolicyAllocationRead,
+    PortfolioPolicyRead,
+)
 from app.schemas.market_intelligence import (
     AssetAnalysisError,
     AssetIntelligenceSnapshot,
@@ -39,6 +49,46 @@ def request(**updates):
     return BuildPortfolioRequest(**values)
 
 
+def policy_allocation(asset_class, target, *, minimum=None, maximum=None, enabled=True):
+    target = Decimal(str(target))
+    return PortfolioPolicyAllocationRead(
+        id=None,
+        asset_class=asset_class,
+        target_percentage=target,
+        minimum_percentage=(
+            Decimal(str(minimum)) if minimum is not None else (target * Decimal("0.7"))
+        ),
+        maximum_percentage=(
+            Decimal(str(maximum)) if maximum is not None else (target * Decimal("1.3"))
+        ),
+        enabled=enabled,
+    )
+
+
+def policy(allocations, **updates):
+    values = dict(
+        id=uuid4(),
+        user_id=uuid4(),
+        name="Política de teste",
+        objective="crescimento_patrimonial",
+        risk_profile="Moderado",
+        investment_horizon="mais_10_anos",
+        monthly_contribution=Decimal("500"),
+        liquidity_need="moderada",
+        income_need=False,
+        emergency_reserve_months=6,
+        maximum_weight_per_asset=Decimal("20"),
+        maximum_weight_per_sector=Decimal("30"),
+        maximum_weight_per_issuer=Decimal("30"),
+        rebalance_tolerance=Decimal("5"),
+        allocations=allocations,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    values.update(updates)
+    return PortfolioPolicyRead(**values)
+
+
 def candidate(
     symbol,
     asset_class=InvestmentClass.STOCK,
@@ -58,6 +108,7 @@ def candidate(
     anomaly_flags=None,
     coverage_breakdown=None,
     data_quality=None,
+    issuer=None,
 ):
     indicator = NormalizedIndicator(
         key="price_earnings",
@@ -104,7 +155,7 @@ def candidate(
         stale_indicators_count=0,
         calculated_at=NOW,
     )
-    return PortfolioCandidate(snapshot=snapshot, sector=sector, issuer=symbol)
+    return PortfolioCandidate(snapshot=snapshot, sector=sector, issuer=issuer or symbol)
 
 
 class FakeAsset:
@@ -960,3 +1011,400 @@ def test_preflight_never_uses_resolution_summary_as_eligibility_gate():
     response = SmartPortfolioEngine.build(request(), [stale_but_medium])
     assert response.preflight.stale_assets_count == 1
     assert any(asset.symbol == "AAAA3" for asset in response.assets)
+
+
+# =====================================================================
+# Integração com PortfolioPolicy (Perfil do Investidor como fonte de
+# verdade estratégica) -- ver SmartPortfolioEngine.build/PortfolioStrategy.
+# =====================================================================
+
+
+def test_no_policy_preserves_legacy_behavior():
+    result = SmartPortfolioEngine.build(request(), [candidate("AAAA3")])
+    assert result.policy_source == LEGACY_SOURCE
+    assert result.policy_id is None
+    assert result.class_allocations[0].target_percentage is None
+    assert result.class_allocations[0].gap_percentage is None
+
+
+def test_request_risk_profile_never_overrides_confirmed_policy():
+    """Exemplo proibido da seção 4: perfil confirmado Conservador, request
+    manda risk_profile="Arrojado" -- o gate de crypto deve continuar usando
+    o perfil EFETIVO (Conservador), nunca o do request."""
+    p = policy(
+        [policy_allocation("Ações", 50), policy_allocation("Criptomoedas", 10)],
+        risk_profile="Conservador",
+    )
+    result = SmartPortfolioEngine.build(
+        request(risk_profile="Arrojado"),
+        [candidate("BTC", InvestmentClass.CRYPTO, sector=None)],
+        policy=p,
+    )
+    assert not result.assets
+    assert result.exclusions[0].symbol == "BTC"
+    assert "conservador" in result.exclusions[0].reasons[0].lower()
+
+
+def test_policy_class_targets_replace_equal_class_target():
+    """Metas desiguais por classe (Ações 60%, FIIs 10%) devem ser
+    respeitadas -- nunca a meta igualitária legada (que daria 50/50)."""
+    p = policy(
+        [policy_allocation("Ações", 60), policy_allocation("FIIs", 10)],
+        maximum_weight_per_asset=Decimal("100"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("100"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(
+            max_percentage_per_asset=Decimal("100"),
+            max_percentage_per_sector=Decimal("100"),
+        ),
+        [
+            candidate("AAAA3", InvestmentClass.STOCK, sector="Energia"),
+            candidate("FII11", InvestmentClass.FII, sector="Papel"),
+        ],
+        policy=p,
+    )
+    totals = {item.asset_class: item.percentage for item in result.class_allocations}
+    assert totals["Ações"] == Decimal("60.00")
+    assert totals["FIIs"] == Decimal("10.00")
+    assert result.policy_source == POLICY_SOURCE
+    assert result.policy_id == p.id
+
+
+def test_request_cannot_widen_max_percentage_per_asset_above_policy():
+    """Seção 11: override operacional só pode ser MAIS restritivo, nunca
+    mais permissivo -- request pedindo 50% não amplia o teto de 10% da
+    política."""
+    p = policy(
+        [policy_allocation("Ações", 100, maximum=100)],
+        maximum_weight_per_asset=Decimal("10"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_percentage_per_asset=Decimal("50")),
+        [candidate("AAAA3")],
+        policy=p,
+    )
+    assert result.assets[0].recommended_percentage <= Decimal("10")
+
+
+def test_request_cannot_widen_max_percentage_per_sector_above_policy():
+    p = policy(
+        [policy_allocation("Ações", 100, maximum=100)],
+        maximum_weight_per_sector=Decimal("8"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_percentage_per_sector=Decimal("90"), max_percentage_per_asset=Decimal("100")),
+        [candidate("AAAA3", sector="Energia")],
+        policy=p,
+    )
+    assert result.assets[0].recommended_percentage <= Decimal("8")
+
+
+def test_maximum_weight_per_issuer_caps_combined_allocation():
+    p = policy(
+        [policy_allocation("Ações", 100, maximum=100)],
+        maximum_weight_per_asset=Decimal("40"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("15"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_percentage_per_asset=Decimal("40"), max_percentage_per_sector=Decimal("100")),
+        [
+            candidate("AAAA3", sector="Energia", issuer="Emissor Único", score="90"),
+            candidate("AAAA4", sector="Financeiro", issuer="Emissor Único", score="80"),
+        ],
+        policy=p,
+    )
+    total_for_issuer = sum(
+        item.recommended_percentage
+        for item in result.assets
+        if item.issuer == "Emissor Único"
+    )
+    assert total_for_issuer <= Decimal("15")
+
+
+def test_issuer_absent_uses_isolated_identity_never_grouped_with_other_absent():
+    """issuer=None nunca é agrupado com outro issuer=None como se fossem o
+    mesmo emissor real -- cada símbolo sem emissor conhecido usa
+    identidade isolada (ver _allocate_with_policy_targets)."""
+    a = candidate("AAAA3", sector="Energia", score="90")
+    b = candidate("AAAA4", sector="Financeiro", score="80")
+    a = PortfolioCandidate(snapshot=a.snapshot, sector=a.sector, issuer=None)
+    b = PortfolioCandidate(snapshot=b.snapshot, sector=b.sector, issuer=None)
+    p = policy(
+        [policy_allocation("Ações", 100, maximum=100)],
+        maximum_weight_per_asset=Decimal("40"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("15"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_percentage_per_asset=Decimal("40"), max_percentage_per_sector=Decimal("100")),
+        [a, b],
+        policy=p,
+    )
+    # Cada um bate no próprio teto de emissor (15%) de forma INDEPENDENTE
+    # -- se estivessem incorretamente agrupados como um único "emissor
+    # ausente" compartilhado, o total combinado seria travado em 15% (ex.:
+    # um recebe 15% e o outro 0%, ou split 7.5/7.5), nunca os dois
+    # atingindo 15% cada, que soma 30% > o teto de um emissor só.
+    by_symbol = {item.symbol: item.recommended_percentage for item in result.assets}
+    assert by_symbol["AAAA3"] == Decimal("15")
+    assert by_symbol["AAAA4"] == Decimal("15")
+
+
+def test_class_without_eligible_candidate_produces_explicit_gap_never_bad_asset():
+    p = policy(
+        [policy_allocation("Ações", 50), policy_allocation("FIIs", 15)],
+    )
+    result = SmartPortfolioEngine.build(
+        request(),
+        [candidate("AAAA3")],  # nenhum FII entre os candidatos
+        policy=p,
+    )
+    fii_row = next(item for item in result.class_allocations if item.asset_class == "FIIs")
+    assert fii_row.percentage == Decimal("0.00")
+    assert fii_row.target_percentage == Decimal("15")
+    assert fii_row.gap_percentage == Decimal("15")
+    assert fii_row.gap_reason is not None
+    assert not any(item.asset_class == "FIIs" for item in result.assets)
+
+
+def test_target_not_reachable_by_asset_limit_leaves_honest_gap():
+    p = policy(
+        [policy_allocation("Ações", 30, maximum=100)],
+        maximum_weight_per_asset=Decimal("5"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_percentage_per_asset=Decimal("100")),
+        [candidate("AAAA3")],
+        policy=p,
+    )
+    acoes_row = next(item for item in result.class_allocations if item.asset_class == "Ações")
+    assert acoes_row.percentage == Decimal("5.00")
+    assert acoes_row.gap_percentage == Decimal("25.00")
+
+
+def test_max_assets_truncation_never_breaks_per_asset_or_issuer_caps():
+    p = policy(
+        [policy_allocation("Ações", 90, maximum=100)],
+        maximum_weight_per_asset=Decimal("10"),
+        maximum_weight_per_issuer=Decimal("10"),
+    )
+    candidates = [
+        candidate(f"T{i:03d}3", sector=f"Setor{i}", issuer=f"Emissor{i}", score=str(90 - i))
+        for i in range(20)
+    ]
+    result = SmartPortfolioEngine.build(
+        request(max_assets=3, max_percentage_per_asset=Decimal("100")),
+        candidates,
+        policy=p,
+    )
+    assert len(result.assets) <= 3
+    assert all(item.recommended_percentage <= Decimal("10") for item in result.assets)
+    acoes_row = next(item for item in result.class_allocations if item.asset_class == "Ações")
+    assert acoes_row.gap_percentage is not None and acoes_row.gap_percentage > 0
+
+
+def test_policy_disabled_class_never_selected_even_if_request_allows_it():
+    p = policy(
+        [
+            policy_allocation("Ações", 50),
+            policy_allocation("FIIs", 20, enabled=False),
+        ],
+    )
+    result = SmartPortfolioEngine.build(
+        request(allowed_classes=["FIIs"]),
+        [candidate("FII11", InvestmentClass.FII, sector="Papel")],
+        policy=p,
+    )
+    assert not result.assets
+    assert result.exclusions[0].symbol == "FII11"
+
+
+def test_income_need_from_policy_influences_scoring_even_if_request_disagrees():
+    p = policy([policy_allocation("FIIs", 100, maximum=100)], income_need=True)
+    high_income = candidate(
+        "FII11", InvestmentClass.FII, sector="Papel", score="60", income_score=Decimal("95")
+    )
+    low_income = candidate(
+        "FII22", InvestmentClass.FII, sector="Papel", score="60", income_score=Decimal("10")
+    )
+    result = SmartPortfolioEngine.build(
+        request(needs_income=False, max_assets=2),
+        [high_income, low_income],
+        policy=p,
+    )
+    ranked_symbols = [item.symbol for item in result.assets]
+    assert ranked_symbols[0] == "FII11"
+
+
+def test_liquidity_need_from_policy_influences_scoring_even_if_request_disagrees():
+    p = policy([policy_allocation("Tesouro Direto", 100, maximum=100)], liquidity_need="alta")
+    liquid = candidate(
+        "TESOURO1",
+        InvestmentClass.TREASURY,
+        sector=None,
+        score="60",
+        liquidity_score=Decimal("95"),
+    )
+    illiquid = candidate(
+        "TESOURO2",
+        InvestmentClass.TREASURY,
+        sector=None,
+        score="60",
+        liquidity_score=Decimal("10"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(needs_liquidity=False, max_assets=2),
+        [liquid, illiquid],
+        policy=p,
+    )
+    ranked_symbols = [item.symbol for item in result.assets]
+    assert ranked_symbols[0] == "TESOURO1"
+
+
+def test_strategy_summary_reflects_effective_policy_not_conflicting_request():
+    p = policy(
+        [policy_allocation("Ações", 100, maximum=100)],
+        risk_profile="Moderado",
+        objective="renda_passiva",
+        investment_horizon="mais_10_anos",
+    )
+    result = SmartPortfolioEngine.build(
+        request(risk_profile="Arrojado", objective="crescimento", horizon="curto prazo"),
+        [candidate("AAAA3")],
+        policy=p,
+    )
+    assert "Moderado" in result.strategy_summary
+    assert "renda_passiva" in result.strategy_summary
+    assert "mais_10_anos" in result.strategy_summary
+    assert "Arrojado" not in result.strategy_summary
+    assert "PortfolioPolicy" in result.strategy_summary
+
+
+def test_policy_provenance_is_never_attributed_to_investor_profile_onboarding():
+    """PortfolioPolicy não tem campo de provenance -- ela pode ter sido
+    criada pelo onboarding do Perfil do Investidor OU diretamente via
+    POST/PUT /intelligence/policy, e o sistema não sabe distinguir qual.
+    policy_source e strategy_summary NUNCA podem afirmar uma origem que
+    não é conhecida. As asserções abaixo são literais (não seguem a
+    constante POLICY_SOURCE cegamente) para travar regressão futura caso
+    alguém reintroduza uma provenance inventada."""
+    p = policy([policy_allocation("Ações", 100, maximum=100)])
+    result = SmartPortfolioEngine.build(
+        request(), [candidate("AAAA3")], policy=p
+    )
+    # Literal: nunca "investor_profile_policy" nem qualquer variação que
+    # afirme onboarding como a origem.
+    assert result.policy_source == "portfolio_policy"
+    assert "investor_profile" not in result.policy_source
+    assert "onboarding" not in result.policy_source
+    # strategy_summary nunca pode afirmar que a origem é o onboarding do
+    # Perfil do Investidor confirmado -- só que UMA policy persistida
+    # existe e foi usada.
+    assert "Perfil do Investidor confirmado" not in result.strategy_summary
+    assert "onboarding" not in result.strategy_summary.lower()
+    assert "PortfolioPolicy" in result.strategy_summary
+    assert "persistida" in result.strategy_summary.lower()
+
+
+def test_protection_phase_still_suspends_execution_regardless_of_aggressive_policy():
+    p = policy([policy_allocation("Ações", 100, maximum=100)], risk_profile="Arrojado")
+    result = SmartPortfolioEngine.build(
+        request(
+            net_monthly_income=Decimal("3000"),
+            essential_monthly_expenses=Decimal("2800"),
+            total_monthly_expenses=Decimal("2900"),
+            emergency_reserve=Decimal("0"),
+            high_cost_debt=Decimal("5000"),
+        ),
+        [candidate("AAAA3")],
+        policy=p,
+    )
+    assert result.diagnosis.phase == "protection"
+    assert result.assets
+    assert any("suspensa" in item.lower() for item in result.assets[0].execution_impediments)
+
+
+def test_no_policy_response_schema_stays_backward_compatible():
+    """Chamada com a assinatura antiga (sem `policy=`) continua funcionando
+    e devolvendo defaults aditivos seguros."""
+    result = SmartPortfolioEngine.build(request(), [candidate("AAAA3")])
+    assert isinstance(result, BuildPortfolioResponse)
+    assert result.policy_source == "request_legacy"
+    assert result.policy_id is None
+
+
+# --- Invariantes (seção 34) ------------------------------------------------
+
+
+def test_invariant_no_class_exceeds_policy_maximum_percentage():
+    p = policy([policy_allocation("Ações", 30, maximum=35)])
+    candidates = [candidate(f"T{i:03d}3", sector=f"S{i}", issuer=f"E{i}") for i in range(10)]
+    result = SmartPortfolioEngine.build(
+        request(max_percentage_per_asset=Decimal("100"), max_assets=10), candidates, policy=p
+    )
+    acoes_row = next(item for item in result.class_allocations if item.asset_class == "Ações")
+    assert acoes_row.percentage <= Decimal("35")
+
+
+def test_invariant_deterministic_with_policy():
+    p = policy([policy_allocation("Ações", 60), policy_allocation("FIIs", 20)])
+    candidates = [
+        candidate("BBBB3", sector="Financeiro"),
+        candidate("AAAA3", sector="Energia"),
+        candidate("FII11", InvestmentClass.FII, sector="Papel"),
+    ]
+    first = SmartPortfolioEngine.build(request(), candidates, policy=p)
+    second = SmartPortfolioEngine.build(request(), list(reversed(candidates)), policy=p)
+    assert [(item.symbol, item.recommended_percentage) for item in first.assets] == [
+        (item.symbol, item.recommended_percentage) for item in second.assets
+    ]
+
+
+def test_invariant_unallocated_plus_allocated_equals_available_with_policy():
+    p = policy([policy_allocation("Ações", 40), policy_allocation("FIIs", 20)])
+    result = SmartPortfolioEngine.build(
+        request(),
+        [candidate("AAAA3"), candidate("FII11", InvestmentClass.FII, sector="Papel")],
+        policy=p,
+    )
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("10000.00")
+
+
+def test_reserve_class_from_policy_is_never_redistributed_to_other_classes():
+    """Reserva de emergência é tratada pelo FinancialDiagnosisEngine/fase
+    protection, NUNCA como classe investível pelo SmartPortfolio -- sua
+    meta na política nunca é silenciosamente transferida para outra
+    classe (ex.: Ações não vira 100% só porque Reserva não tem
+    candidato) nem aparece como uma "classe" a preencher na resposta."""
+    p = policy(
+        [
+            policy_allocation("Ações", 80, maximum=100),
+            policy_allocation("Reserva de emergência", 20, maximum=100),
+        ],
+        maximum_weight_per_asset=Decimal("100"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("100"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(
+            max_percentage_per_asset=Decimal("100"),
+            max_percentage_per_sector=Decimal("100"),
+        ),
+        [candidate("AAAA3", sector="Energia")],
+        policy=p,
+    )
+    totals = {item.asset_class: item.percentage for item in result.class_allocations}
+    # Nunca "sobe" para 100% absorvendo a meta da reserva -- fica
+    # exatamente nos 80% reais da política.
+    assert totals["Ações"] == Decimal("80.00")
+    # Reserva nunca vira uma linha/classe que o SmartPortfolio tenta
+    # preencher com ativos.
+    assert "Reserva de emergência" not in totals
+    assert not any(item.asset_class == "Reserva de emergência" for item in result.assets)
+    # Os 20% da meta de reserva ficam honestamente livres, nunca
+    # redistribuídos/forçados em Ações.
+    assert result.unallocated_amount == Decimal("2000.00")
+    assert result.status == "partial"
