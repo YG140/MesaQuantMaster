@@ -65,6 +65,7 @@ from app.services.market_intelligence_service import (
     strategy_fit,
 )
 from app.services.portfolio_service import PortfolioService
+from app.services.symbol_identity import B3_MARKET
 
 
 def quote(symbol: str = "PETR4", *, change_percent: Decimal = Decimal("1.25")):
@@ -1491,8 +1492,18 @@ def test_b3_fii_symbol_overrides_generic_fund_provider_type():
 
 
 def test_fractional_stock_ticker_is_still_classified_as_stock():
-    assert infer_class_from_symbol("PETR4F", "stock") == InvestmentClass.STOCK
-    assert infer_class_from_symbol("PETR4F", None) == InvestmentClass.STOCK
+    """Requer contexto B3 explícito (ver Prompt 3, seção 5) -- nunca
+    assumido implicitamente. `MarketIntelligenceService._market_context()`
+    é quem prova esse contexto em produção, derivado do provider
+    realmente em uso (ver test_market_service_symbol_identity.py)."""
+    assert (
+        infer_class_from_symbol("PETR4F", "stock", market=B3_MARKET)
+        == InvestmentClass.STOCK
+    )
+    assert (
+        infer_class_from_symbol("PETR4F", None, market=B3_MARKET)
+        == InvestmentClass.STOCK
+    )
 
 
 def test_hypothetical_fractional_fii_keeps_fii_class_via_canonical_11_suffix():
@@ -1501,17 +1512,44 @@ def test_hypothetical_fractional_fii_keeps_fii_class_via_canonical_11_suffix():
     identidade econômica (canonical_symbol), não o símbolo de negociação
     bruto. Mesmo sem asset_type resolvido (provider indisponível/perfil
     vazio, exatamente o cenário que a auditoria encontrou para
-    fracionários), "MXRF11F" continua FII."""
-    assert infer_class_from_symbol("MXRF11F", None) == InvestmentClass.FII
+    fracionários), "MXRF11F" continua FII -- com contexto B3 comprovado."""
+    assert (
+        infer_class_from_symbol("MXRF11F", None, market=B3_MARKET)
+        == InvestmentClass.FII
+    )
 
 
 def test_hypothetical_fractional_etf_keeps_known_etf_override():
-    assert infer_class_from_symbol("BOVA11F", "FII") == InvestmentClass.ETF
+    assert (
+        infer_class_from_symbol("BOVA11F", "FII", market=B3_MARKET)
+        == InvestmentClass.ETF
+    )
 
 
 def test_standard_fii_and_etf_symbols_are_unaffected_by_the_fractional_rule():
     assert infer_class_from_symbol("MXRF11", None) == InvestmentClass.FII
     assert infer_class_from_symbol("BOVA11", "FII") == InvestmentClass.ETF
+
+
+# --- Sem contexto B3 comprovado, o "F" nunca é removido (Prompt 3, seção
+#     10, caso B) ------------------------------------------------------------
+
+
+def test_fractional_looking_symbol_without_b3_context_never_canonicalizes():
+    """Sem `market=B3_MARKET` (default: nenhum contexto), um símbolo com o
+    formato estrutural de um fracionário B3 válido nunca é canonicalizado
+    -- protege qualquer ticker internacional legitimamente terminado em
+    "F" que passe por este classificador fora de um fluxo B3 comprovado.
+    """
+    assert infer_class_from_symbol("PETR4F", "stock") == InvestmentClass.STOCK
+    assert infer_class_from_symbol("MXRF11F", None) != InvestmentClass.FII
+
+
+def test_fractional_looking_symbol_in_a_different_proven_market_never_canonicalizes():
+    assert (
+        infer_class_from_symbol("PETR4F", "stock", market="NASDAQ")
+        == InvestmentClass.STOCK
+    )
 
 
 def test_quote_volume_and_liquidity_explain_limited_data():

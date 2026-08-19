@@ -14,7 +14,7 @@ from app.schemas.market import (
 from datetime import datetime, timezone
 from app.providers.exceptions import MarketPermissionError, MarketAuthenticationError
 from app.services.market_cache import TTLCache
-from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
+from app.services.symbol_identity import market_context_of, resolve_symbol_identity
 
 
 class MarketService:
@@ -224,7 +224,14 @@ class MarketService:
         # consultamos o provider pelo canonical_symbol; o cache também usa
         # o canonical_symbol como chave, para que PETR4 e PETR4F
         # compartilhem a mesma entrada em vez de duas consultas idênticas.
-        identity = resolve_symbol_identity(ticker, market=B3_MARKET)
+        #
+        # O contexto de mercado usado para decidir SE essa canonicalização
+        # se aplica vem do PRÓPRIO provider em uso (market_context_of),
+        # nunca de um "B3" fixo aqui -- um provider que não declara seu
+        # mercado (fake genérico, provider futuro de outro mercado) nunca
+        # aciona a regra do fracionário B3, mesmo que o símbolo termine em
+        # "F" e tenha o formato estrutural de um código-base B3 válido.
+        identity = resolve_symbol_identity(ticker, market=self._market_context())
         canonical_symbol = identity.canonical_symbol
         cache_key = f"profile:{canonical_symbol}"
         cached = self._profile_cache.get(cache_key)
@@ -311,9 +318,11 @@ class MarketService:
         # o dado pelo lote padrão. Canonicalizamos ANTES de chamar o
         # provider — o provider em si nunca sabe que uma canonicalização
         # ocorreu, recebe só o(s) símbolo(s) que deve efetivamente
-        # consultar.
+        # consultar. Contexto de mercado sempre derivado do provider em uso
+        # (ver get_profile acima) -- nunca "B3" fixo.
+        market = self._market_context()
         canonical_symbols = [
-            resolve_symbol_identity(symbol, market=B3_MARKET).canonical_symbol
+            resolve_symbol_identity(symbol, market=market).canonical_symbol
             for symbol in symbols
         ]
         return self._call_with_restriction_cache(
@@ -363,6 +372,9 @@ class MarketService:
 
     def _limited_mode(self) -> bool:
         return bool(getattr(self.provider, "limited_mode", False))
+
+    def _market_context(self) -> str | None:
+        return market_context_of(self.provider)
 
     @staticmethod
     def _normalize_symbol(ticker: str) -> str:

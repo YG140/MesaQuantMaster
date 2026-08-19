@@ -101,3 +101,21 @@ def resolve_symbol_identity(symbol: str, *, market: str | None = None) -> Symbol
         market_segment=None,
         resolution_reason=None,
     )
+
+
+def market_context_of(provider) -> str | None:
+    """Deriva o contexto de mercado COMPROVADO de um provider concreto —
+    nunca assumido implicitamente pela camada que o consome (MarketService,
+    MarketIntelligenceService, PortfolioIntelligenceService, etc.).
+
+    Um provider declara seu mercado através de um atributo `market`
+    opcional (ver BrapiProvider.market = B3_MARKET, coerente com o já
+    existente `provider_name`). Um provider que não declara essa metadata
+    -- fake genérico de teste, provider futuro de outro mercado sem essa
+    informação -- resulta em None, e None NUNCA aciona a regra do
+    fracionário B3 em `resolve_symbol_identity`. Isto é o que impede
+    `market=B3_MARKET` de ser hardcoded em camada genérica: o valor vem
+    sempre do provider realmente em uso naquela chamada, nunca de uma
+    suposição estática de que "todo provider deste sistema é B3".
+    """
+    return getattr(provider, "market", None)

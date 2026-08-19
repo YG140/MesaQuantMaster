@@ -25,6 +25,7 @@ from app.services.market_normalizer import (
     normalize_country,
     unwrap_brapi_item,
 )
+from app.services.symbol_identity import B3_MARKET
 
 
 class BrapiProvider(BaseMarketProvider):
@@ -36,6 +37,12 @@ class BrapiProvider(BaseMarketProvider):
     """
 
     provider_name = "BRAPI"
+    # brapi.dev cobre exclusivamente instrumentos negociados na B3 -- este
+    # é o único lugar do sistema que AFIRMA essa identidade de mercado
+    # (metadado do próprio provider, nunca uma suposição de MarketService
+    # ou de qualquer camada genérica). Consumido via
+    # app.services.symbol_identity.market_context_of(provider).
+    market = B3_MARKET
 
     STOCK_DATASETS = {
         "statistics": "/api/v2/stocks/statistics",

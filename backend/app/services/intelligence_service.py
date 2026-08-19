@@ -22,7 +22,11 @@ from app.schemas.intelligence import (
 )
 from app.services.portfolio_service import PortfolioService
 from app.services.market_intelligence_service import MarketIntelligenceService
-from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
+from app.services.symbol_identity import (
+    B3_MARKET,
+    market_context_of,
+    resolve_symbol_identity,
+)
 from app.schemas.market_intelligence import AnalyzeAssetsRequest
 
 
@@ -181,6 +185,19 @@ class PortfolioIntelligenceService:
             snapshots.extend(result.snapshots)
             errors.extend(result.errors)
 
+        # Contexto de mercado do provider REALMENTE em uso nesta chamada
+        # (ver market_context_of) -- calculado uma única vez aqui, nunca
+        # assumido como "B3" implicitamente dentro de _issuer_identity.
+        # getattr encadeado com default: resiliente a duplos de teste que
+        # não expõem market_service/provider (resulta em None, nunca
+        # aciona a regra do fracionário B3).
+        market_context = market_context_of(
+            getattr(
+                getattr(self.market_intelligence_service, "market_service", None),
+                "provider",
+                None,
+            )
+        )
         assets_by_symbol = {item.ticker.upper(): item for item in considered_assets}
         candidates = []
         for snapshot in snapshots:
@@ -189,7 +206,9 @@ class PortfolioIntelligenceService:
                 PortfolioCandidate(
                     snapshot=snapshot,
                     sector=asset.sector if asset else None,
-                    issuer=self._issuer_identity(asset, snapshot),
+                    issuer=self._issuer_identity(
+                        asset, snapshot, market_context=market_context
+                    ),
                 )
             )
         return SmartPortfolioEngine.build(
@@ -205,7 +224,7 @@ class PortfolioIntelligenceService:
         )
 
     @staticmethod
-    def _issuer_identity(asset, snapshot) -> str | None:
+    def _issuer_identity(asset, snapshot, *, market_context: str | None) -> str | None:
         """Chave de identidade de emissor usada por
         `SmartPortfolioEngine.allocate` para `maximum_weight_per_issuer`.
 
@@ -216,9 +235,27 @@ class PortfolioIntelligenceService:
         o próprio ticker -- "PETR4F", não "Petroleo Brasileiro SA Pfd")
         fariam o motor tratar PETR4 e PETR4F como dois emissores
         independentes para fins de concentração (ver auditoria Prompt 1,
-        seção I). Usar a identidade econômica (`canonical_symbol`, ver
-        symbol_identity.resolve_symbol_identity) corrige exatamente esse
-        caso: mesmo canonical_symbol => mesmo emissor.
+        seção I).
+
+        A chave é NAMESPACED por mercado comprovado, nunca só
+        `canonical_symbol` sozinho -- um `canonical_symbol` idêntico ("PETR4")
+        obtido em dois mercados DIFERENTES nunca pode colidir na mesma
+        chave de emissor (ticker nunca é identidade global única, ver
+        auditoria Prompt 1 seção 4). O mercado usado é, em ordem de
+        prioridade:
+
+        1. `asset.exchange`, se já persistido no próprio Asset -- é a
+           identidade mais estável, independente de qual provider
+           respondeu a ESTA chamada específica.
+        2. `market_context` (mercado do provider realmente em uso nesta
+           chamada, ver market_context_of), quando o Asset não tem
+           exchange conhecido.
+
+        A canonicalização do fracionário só é aplicada quando esse
+        mercado resolvido é EXATAMENTE B3_MARKET -- nunca por suposição.
+        Sem nenhum mercado comprovado (nem exchange nem contexto), o
+        fallback é o `canonical_symbol` isolado, sem namespace --
+        idêntico ao comportamento anterior, conservador.
 
         Não resolve o caso pré-existente e mais amplo de classes
         diferentes do MESMO emissor CVM com canonical_symbol distinto
@@ -231,7 +268,16 @@ class PortfolioIntelligenceService:
         ticker = asset.ticker if asset is not None else snapshot.symbol
         if not ticker:
             return None
-        return resolve_symbol_identity(ticker, market=B3_MARKET).canonical_symbol
+
+        exchange = getattr(asset, "exchange", None) or market_context
+        resolution_market = exchange if exchange == B3_MARKET else None
+        canonical_symbol = resolve_symbol_identity(
+            ticker, market=resolution_market
+        ).canonical_symbol
+
+        if not exchange:
+            return canonical_symbol
+        return f"{exchange}:{canonical_symbol}"
 
     @staticmethod
     def _policy_to_schema(policy: PortfolioPolicy) -> PortfolioPolicyRead:

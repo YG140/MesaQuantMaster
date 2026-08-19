@@ -39,7 +39,7 @@ from app.services.indicator_resolver_service import (
     build_resolution_summary,
 )
 from app.services.portfolio_service import PortfolioService
-from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
+from app.services.symbol_identity import market_context_of, resolve_symbol_identity
 
 
 class MarketIntelligenceService:
@@ -141,6 +141,9 @@ class MarketIntelligenceService:
             calculated_at=now,
         )
 
+    def _market_context(self) -> str | None:
+        return market_context_of(getattr(self.market_service, "provider", None))
+
     def indicators_for_asset(self, symbol: str, user_id) -> list:
         return self.analyze_asset(symbol, user_id).indicators
 
@@ -185,7 +188,9 @@ class MarketIntelligenceService:
             asset_type=asset_type,
             collected_at=collected_at,
         )
-        inferred_asset_class = infer_class_from_symbol(symbol, asset_type)
+        inferred_asset_class = infer_class_from_symbol(
+            symbol, asset_type, market=self._market_context()
+        )
         if (
             asset_class == InvestmentClass.UNKNOWN
             or inferred_asset_class != asset_class
@@ -320,17 +325,24 @@ def normalize_symbols(symbols: list[str]) -> list[str]:
     return normalized
 
 
-def infer_class_from_symbol(symbol: str, asset_type: str | None) -> InvestmentClass:
+def infer_class_from_symbol(
+    symbol: str, asset_type: str | None, *, market: str | None = None
+) -> InvestmentClass:
     # Classifica pela identidade ECONÔMICA (canonical_symbol), nunca pelo
     # símbolo de negociação bruto: um FII/ETF fracionário B3 (ex.:
     # hipotético "MXRF11F") preserva a classe FII do seu lote padrão
     # "MXRF11" -- o sufixo "F" do mercado fracionário nunca deve mascarar
-    # o "11" que identifica a classe. Para qualquer símbolo que não seja
-    # fracionário B3 (inclusive todo ticker hoje em produção, já que essa
-    # convenção nunca existiu no sistema antes desta correção),
-    # canonical_symbol == o próprio símbolo normalizado -- comportamento
-    # idêntico ao anterior, sem regressão.
-    canonical_symbol = resolve_symbol_identity(symbol, market=B3_MARKET).canonical_symbol
+    # o "11" que identifica a classe.
+    #
+    # `market` NUNCA tem default implícito para B3 -- é responsabilidade
+    # exclusiva do chamador (ver MarketIntelligenceService._market_context,
+    # que deriva do provider realmente em uso) provar que o contexto é B3
+    # antes que qualquer canonicalização do fracionário seja tentada. Sem
+    # esse contexto (`market=None` ou qualquer outro mercado), a regra do
+    # fracionário nunca se aplica e canonical_symbol == símbolo
+    # normalizado -- comportamento idêntico ao de antes desta correção
+    # existir, sem regressão para nenhum ticker de produção hoje.
+    canonical_symbol = resolve_symbol_identity(symbol, market=market).canonical_symbol
     if canonical_symbol in KNOWN_B3_ETFS:
         return InvestmentClass.ETF
     classified = classify_market_asset(asset_type)

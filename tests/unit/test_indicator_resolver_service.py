@@ -46,6 +46,7 @@ from app.services.indicator_resolver_service import (
 )
 from app.schemas.market import MarketProfileResponse
 from app.services.market_service import MarketService
+from app.services.symbol_identity import B3_MARKET
 
 
 NOW = datetime(2026, 7, 20, tzinfo=timezone.utc)
@@ -1436,6 +1437,10 @@ class _FractionalAwareBrapiLikeProvider:
     """
 
     limited_mode = False
+    # Metadado de mercado do próprio provider -- só assim MarketService
+    # aciona a canonicalização do fracionário B3 (ver Prompt 3 seção 2/3:
+    # market=B3_MARKET nunca pode ser assumido implicitamente).
+    market = B3_MARKET
 
     def __init__(self, canonical_symbol: str, cnpj: str):
         self.canonical_symbol = canonical_symbol
@@ -1470,6 +1475,67 @@ class _FractionalAwareBrapiLikeProvider:
 
     def get_stock_dataset(self, dataset: str, symbols: list[str], **params):
         raise AssertionError("not used")
+
+
+def test_fractional_ticker_brapi_fundamentals_provenance_registers_the_bridge():
+    """Prompt 3, seção 7/10 caso H (fora do caminho CVM): quando um
+    indicador é resolvido a partir do dataset de fundamentos da BRAPI
+    (statistics/financial_data) usando o canonical_symbol, sua
+    provenance também registra a ponte -- não só os indicadores CVM.
+    `source` continua "BRAPI" (o VALOR realmente veio da BRAPI aqui,
+    diferente do caso CVM onde a BRAPI é só ponte de identidade)."""
+    MarketService.clear_caches()
+    market = FakeMarket(payload={"priceToBook": "1.4"})
+    # FakeMarket não tem `.provider` -- adicionamos um que declara B3,
+    # exatamente o metadado que BrapiProvider real declara (ver
+    # BrapiProvider.market), para que MarketService/_market_context
+    # comprovem o contexto sem precisar de um MarketService real aqui.
+    market.provider = SimpleNamespace(market=B3_MARKET, provider_name="BRAPI")
+
+    result = resolve_symbol(
+        resolver(market=market), "PETR4F", [indicator()], asset_id=None
+    )
+
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.source == "BRAPI"
+    identity_resolution = result.provenance["identity_resolution"]
+    assert identity_resolution["requested_symbol"] == "PETR4F"
+    assert identity_resolution["canonical_symbol"] == "PETR4"
+    assert identity_resolution["resolution_method"] == "canonical_symbol_substitution"
+
+
+def test_standard_lot_ticker_brapi_fundamentals_never_get_a_fabricated_bridge():
+    MarketService.clear_caches()
+    market = FakeMarket(payload={"priceToBook": "1.4"})
+    market.provider = SimpleNamespace(market=B3_MARKET, provider_name="BRAPI")
+
+    result = resolve_symbol(
+        resolver(market=market), "PETR4", [indicator()], asset_id=None
+    )
+
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert "identity_resolution" not in result.provenance
+
+
+def test_fii_dataset_never_gets_a_fabricated_identity_bridge():
+    """get_fii_dataset nunca foi alterado (fora de escopo, ver Prompt 2
+    seção 12/21) -- mesmo com contexto B3 comprovado e um símbolo com
+    formato fracionário válido, um FII nunca deve anotar
+    identity_resolution para o dataset BRAPI, porque nenhuma
+    canonicalização de fato ocorreu nesse caminho."""
+    MarketService.clear_caches()
+    market = FakeMarket(payload={"priceToBook": "1.4"})
+    market.provider = SimpleNamespace(market=B3_MARKET, provider_name="BRAPI")
+
+    result = resolve_symbol(
+        resolver(market=market),
+        "MXRF11F",
+        [indicator()],
+        asset_class=InvestmentClass.FII,
+        asset_id=None,
+    )
+
+    assert "identity_resolution" not in result.provenance
 
 
 def test_fractional_ticker_auto_links_cvm_issuer_via_canonical_symbol():
@@ -1526,6 +1592,143 @@ def test_fractional_ticker_auto_links_cvm_issuer_via_canonical_symbol():
         assert persisted.issuer_id == issuer.id
     finally:
         verify.close()
+
+
+def test_fractional_ticker_cvm_value_keeps_cvm_as_source_and_provenance_registers_bridge():
+    """Prompt 3, seção 7-9 / 10 casos H e I: quando o VALOR final de um
+    indicador vem da CVM (não da BRAPI), `source`/`source_type` continuam
+    exatamente "CVM Dados Abertos"/"official" -- a BRAPI foi usada
+    SOMENTE como ponte de identidade (profile -> CNPJ) para localizar o
+    emissor, nunca como fonte do dado em si. A provenance registra essa
+    ponte de forma completa e ADITIVA (as chaves pré-existentes de
+    provenance -- provider/document_type/cnpj/... -- continuam intactas).
+    """
+    MarketService.clear_caches()
+    asset_id = uuid4()
+    issuer_id = uuid4()
+    issuer = SimpleNamespace(id=issuer_id, cnpj="33000167000101", cvm_code="9512")
+    account = SimpleNamespace(
+        normalized_key="price_book",
+        normalized_value=Decimal("1.40"),
+        acquisition_method="reported",
+        account_code="2.03",
+        account_description="Patrimônio Líquido",
+        original_value=Decimal("1.40"),
+    )
+    document = SimpleNamespace(
+        period_end=date(2026, 6, 30),
+        collected_at=NOW,
+        period_kind="year_to_date",
+        document_type="ITR",
+        scope="consolidated",
+    )
+
+    class Cvm(_UnknownFiscalCalendarCvm):
+        def linked_issuer(self, asset_id):
+            return None
+
+        def find_issuer_by_cnpj(self, cnpj):
+            assert cnpj == "33000167000101"
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return [(account, document, issuer)]
+
+    provider = _FractionalAwareBrapiLikeProvider(
+        canonical_symbol="PETR4", cnpj="33.000.167/0001-01"
+    )
+    market = MarketService(provider=provider)
+
+    result = resolve_symbol(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+            cvm_link_session_factory=_fresh_isolated_session_factory(),
+        ),
+        "PETR4F",
+        [indicator()],
+        asset_id=asset_id,
+    )
+
+    # O VALOR veio da CVM -- source/source_type nunca mudam por causa da
+    # ponte de identidade ter sido a BRAPI.
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.source == "CVM Dados Abertos"
+    assert result.source_type == "official"
+
+    # Provenance pré-existente (chaves já usadas antes desta correção)
+    # permanece intacta -- merge aditivo, nunca substituição.
+    assert result.provenance["provider"] == "cvm"
+    assert result.provenance["cnpj"] == issuer.cnpj
+    assert result.provenance["cvm_code"] == issuer.cvm_code
+
+    # Nova informação: a ponte de identidade completa.
+    identity_resolution = result.provenance["identity_resolution"]
+    assert identity_resolution["requested_symbol"] == "PETR4F"
+    assert identity_resolution["trading_symbol"] == "PETR4F"
+    assert identity_resolution["canonical_symbol"] == "PETR4"
+    assert identity_resolution["provider_symbol"] == "PETR4"
+    assert identity_resolution["resolution_method"] == "exact_cnpj"
+    assert identity_resolution["bridge_provider"] == "BRAPI"
+
+
+def test_standard_lot_ticker_cvm_provenance_never_gets_a_fabricated_identity_bridge():
+    """Prompt 3, seção 10, caso J: PETR4 normal (sem sufixo fracionário)
+    nunca recebe uma nota de identity_resolution -- não houve ponte
+    nenhuma (trading_symbol == canonical_symbol), então não há nada a
+    registrar."""
+    MarketService.clear_caches()
+    asset_id = uuid4()
+    issuer_id = uuid4()
+    issuer = SimpleNamespace(id=issuer_id, cnpj="33000167000101", cvm_code="9512")
+    account = SimpleNamespace(
+        normalized_key="price_book",
+        normalized_value=Decimal("1.40"),
+        acquisition_method="reported",
+        account_code="2.03",
+        account_description="Patrimônio Líquido",
+        original_value=Decimal("1.40"),
+    )
+    document = SimpleNamespace(
+        period_end=date(2026, 6, 30),
+        collected_at=NOW,
+        period_kind="year_to_date",
+        document_type="ITR",
+        scope="consolidated",
+    )
+
+    class Cvm(_UnknownFiscalCalendarCvm):
+        def linked_issuer(self, asset_id):
+            return None
+
+        def find_issuer_by_cnpj(self, cnpj):
+            assert cnpj == "33000167000101"
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return [(account, document, issuer)]
+
+    provider = _FractionalAwareBrapiLikeProvider(
+        canonical_symbol="PETR4", cnpj="33.000.167/0001-01"
+    )
+    market = MarketService(provider=provider)
+
+    result = resolve_symbol(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+            cvm_link_session_factory=_fresh_isolated_session_factory(),
+        ),
+        "PETR4",
+        [indicator()],
+        asset_id=asset_id,
+    )
+
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.source == "CVM Dados Abertos"
+    assert "identity_resolution" not in result.provenance
 
 
 def test_standard_lot_ticker_still_auto_links_cvm_issuer_directly():

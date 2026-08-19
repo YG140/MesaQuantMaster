@@ -30,6 +30,7 @@ from app.schemas.market_intelligence import (
     ValuationStatus,
 )
 from app.services.intelligence_service import PortfolioIntelligenceService
+from app.services.symbol_identity import B3_MARKET
 
 NOW = datetime(2026, 8, 12, tzinfo=timezone.utc)
 
@@ -1133,12 +1134,16 @@ def test_b3_fractional_ticker_shares_issuer_cap_with_standard_lot():
     PortfolioIntelligenceService monta em produção (ver
     intelligence_service._issuer_identity), não uma string arbitrária."""
     issuer_petr4 = PortfolioIntelligenceService._issuer_identity(
-        asset=None, snapshot=type("S", (), {"symbol": "PETR4"})()
+        asset=None,
+        snapshot=type("S", (), {"symbol": "PETR4"})(),
+        market_context=B3_MARKET,
     )
     issuer_petr4f = PortfolioIntelligenceService._issuer_identity(
-        asset=None, snapshot=type("S", (), {"symbol": "PETR4F"})()
+        asset=None,
+        snapshot=type("S", (), {"symbol": "PETR4F"})(),
+        market_context=B3_MARKET,
     )
-    assert issuer_petr4 == issuer_petr4f == "PETR4"
+    assert issuer_petr4 == issuer_petr4f == "B3:PETR4"
 
     p = policy(
         [policy_allocation("Ações", 100, maximum=100)],

@@ -37,6 +37,7 @@ from app.services.indicator_normalization_service import (
     sanitize_failure_detail,
 )
 from app.services.market_service import MarketService
+from app.services.symbol_identity import market_context_of, resolve_symbol_identity
 
 
 # Validade temporal de dado CVM = prazo esperado para o PRÓXIMO reporte
@@ -310,6 +311,15 @@ class IndicatorResolverService:
         # automático ativo<->fundo FII (ver _persist_fii_link_isolated).
         self.fii_link_session_factory = fii_link_session_factory or SessionLocal
 
+    def _market_context(self) -> str | None:
+        """Contexto de mercado do provider realmente em uso por
+        `self.market_service`, nunca "B3" assumido aqui. Resiliente a
+        duplos de teste que não expõem `.provider` (ex.: FakeMarket deste
+        próprio módulo de testes) -- resultam em None, e None nunca aciona
+        a regra do fracionário B3.
+        """
+        return market_context_of(getattr(self.market_service, "provider", None))
+
     def resolve_asset(
         self,
         *,
@@ -321,6 +331,20 @@ class IndicatorResolverService:
         collected_at: datetime,
     ) -> list[NormalizedIndicator]:
         resolved = {item.key: item for item in baseline}
+        # Identidade resolvida UMA ÚNICA VEZ para esta resolução inteira,
+        # com o contexto de mercado do provider REALMENTE em uso (nunca
+        # "B3" hardcoded aqui -- ver market_context_of/MarketService).
+        # `trading_symbol` continua o `symbol` de sempre (cotação/snapshot
+        # nunca mudam); `canonical_symbol` só difere quando o provider
+        # comprovadamente atende B3 E o símbolo é um fracionário válido --
+        # usado abaixo apenas para anotar provenance quando fundamentos
+        # BRAPI/CVM tiverem sido de fato resolvidos pela identidade
+        # canônica (a canonicalização em si já acontece de forma
+        # transparente dentro de MarketService.get_profile/
+        # get_stock_dataset -- este resolver nunca precisa saber qual
+        # símbolo foi realmente enviado ao provider para funcionar
+        # corretamente, só para ser honesto na provenance).
+        identity = resolve_symbol_identity(symbol, market=self._market_context())
         self._apply_snapshots(resolved, symbol, collected_at)
 
         if self._has_unresolved(resolved):
@@ -328,12 +352,25 @@ class IndicatorResolverService:
             payloads, dataset_outcomes, payloads_by_dataset = self._load_brapi_free(
                 symbol, asset_class
             )
+            # A canonicalização de fundamentos só ocorre de fato para o
+            # dataset de AÇÕES (get_stock_dataset) -- get_fii_dataset
+            # nunca foi alterado (fora de escopo desta correção, ver
+            # Prompt 2 seção 12/21), então anotar identity_resolution
+            # para FII aqui seria afirmar uma ponte que não existe.
+            payload_identity_resolution = (
+                self._identity_resolution_provenance(
+                    identity, resolution_method="canonical_symbol_substitution"
+                )
+                if asset_class != InvestmentClass.FII
+                else None
+            )
             self._apply_payloads(
                 resolved,
                 payloads,
                 collected_at,
                 source="BRAPI",
                 source_type="provider",
+                identity_resolution=payload_identity_resolution,
             )
             if asset_class == InvestmentClass.FII:
                 self._apply_fii_brapi_derived(resolved, payloads_by_dataset, collected_at)
@@ -350,7 +387,7 @@ class IndicatorResolverService:
             self._apply_treasury_official(resolved, symbol, collected_at)
 
         if asset_id is not None and self._has_unresolved(resolved):
-            self._apply_cvm(resolved, asset_id, collected_at, symbol=symbol)
+            self._apply_cvm(resolved, asset_id, collected_at, identity=identity)
 
         if (
             asset_class == InvestmentClass.FII
@@ -699,7 +736,14 @@ class IndicatorResolverService:
         return reference + timedelta(days=validity_days if validity_days is not None else 1)
 
     def _apply_payloads(
-        self, resolved, payloads, collected_at, *, source: str, source_type: str
+        self,
+        resolved,
+        payloads,
+        collected_at,
+        *,
+        source: str,
+        source_type: str,
+        identity_resolution: dict | None = None,
     ) -> None:
         if not payloads:
             return
@@ -714,16 +758,22 @@ class IndicatorResolverService:
                 candidate.status == IndicatorStatus.AVAILABLE
                 and candidate.value is not None
             ):
-                resolved[candidate.key] = candidate.model_copy(
-                    update={
-                        "source": source,
-                        "source_type": source_type,
-                        "valid_until": self._valid_until(
-                            candidate.key, collected_at, source_type=source_type
-                        ),
-                        "freshness_status": "current",
+                update = {
+                    "source": source,
+                    "source_type": source_type,
+                    "valid_until": self._valid_until(
+                        candidate.key, collected_at, source_type=source_type
+                    ),
+                    "freshness_status": "current",
+                }
+                if identity_resolution is not None:
+                    # Aditivo -- nunca substitui provenance já existente
+                    # no candidato (ver seção 7 do Prompt 3).
+                    update["provenance"] = {
+                        **(candidate.provenance or {}),
+                        "identity_resolution": identity_resolution,
                     }
-                )
+                resolved[candidate.key] = candidate.model_copy(update=update)
 
     def _apply_fii_brapi_derived(self, resolved, payloads_by_dataset, collected_at) -> None:
         """Indicadores de FII resolvidos a partir de estruturas brutas da
@@ -1132,13 +1182,22 @@ class IndicatorResolverService:
                 }
             )
 
-    def _apply_cvm(self, resolved, asset_id, collected_at, symbol=None) -> None:
+    def _apply_cvm(self, resolved, asset_id, collected_at, identity=None) -> None:
         if self.cvm_repository is None:
             return
         pending = self._unresolved_keys(resolved)
         if not pending:
             return
 
+        symbol = identity.trading_symbol if identity is not None else None
+        # Nota de provenance para o caso em que o VALOR do indicador vem
+        # da CVM, mas a IDENTIDADE do emissor só foi encontrada porque o
+        # CNPJ foi obtido via canonical_symbol (ver
+        # MarketService.get_profile) -- nunca None quando trading_symbol
+        # == canonical_symbol (nada foi "traduzido", nada a anotar).
+        identity_resolution = self._identity_resolution_provenance(
+            identity, resolution_method="exact_cnpj"
+        )
         issuer = self.cvm_repository.linked_issuer(asset_id)
         if issuer is None and symbol is not None:
             issuer = self._auto_link_cvm_issuer(asset_id, symbol)
@@ -1235,6 +1294,11 @@ class IndicatorResolverService:
                             }
                             for item, _, _ in rows
                         ],
+                        **(
+                            {"identity_resolution": identity_resolution}
+                            if identity_resolution is not None
+                            else {}
+                        ),
                     },
                     "resolution_attempts": [*current.resolution_attempts, attempt],
                 }
@@ -1245,7 +1309,12 @@ class IndicatorResolverService:
         derived_pending = still_pending & set(DERIVED_INDICATOR_KEYS)
         if derived_pending:
             derived_resolved = self._apply_cvm_derived_indicators(
-                resolved, grouped, derived_pending, collected_at, fiscal_year_end
+                resolved,
+                grouped,
+                derived_pending,
+                collected_at,
+                fiscal_year_end,
+                identity_resolution=identity_resolution,
             )
             still_pending -= derived_resolved
 
@@ -1259,6 +1328,49 @@ class IndicatorResolverService:
                 reason=ProviderFailureReason.NOT_REPORTED,
                 attempted_at=collected_at,
             )
+
+    def _identity_resolution_provenance(
+        self, identity, *, resolution_method: str
+    ) -> dict | None:
+        """Nota de provenance ADITIVA (nunca substitui o que já existe em
+        `provenance`) registrando a ponte de identidade entre o símbolo de
+        negociação solicitado e a identidade econômica canônica usada para
+        obter o dado (ex.: PETR4F -> PETR4).
+
+        Retorna None quando não houve ponte alguma (trading_symbol ==
+        canonical_symbol, ou `identity` ausente) -- nunca anota uma
+        transformação que não ocorreu.
+
+        `resolution_method` descreve COMO a ponte foi usada neste caso
+        específico -- nunca hardcoded genericamente, porque os dois
+        chamadores fazem coisas diferentes:
+        - "exact_cnpj": o CVM (_apply_cvm) usou canonical_symbol só para
+          obter o CNPJ (via profile) e localizar o emissor por
+          correspondência EXATA -- nunca fuzzy por nome.
+        - "canonical_symbol_substitution": os fundamentos BRAPI
+          (statistics/financial_data, ver resolve_asset) foram consultados
+          diretamente pelo canonical_symbol em vez do trading_symbol.
+
+        `bridge_provider` identifica qual provider serviu de PONTE de
+        identidade -- nunca deve ser confundido com a fonte do VALOR do
+        indicador em si, que continua em `source`/`source_type`/
+        `provenance.provider` de cada indicador individualmente (ex.: "CVM
+        Dados Abertos" / "official" mesmo quando a ponte de identidade foi
+        a BRAPI).
+        """
+        if identity is None or not identity.is_fractional:
+            return None
+        return {
+            "requested_symbol": identity.requested_symbol,
+            "trading_symbol": identity.trading_symbol,
+            "canonical_symbol": identity.canonical_symbol,
+            "provider_symbol": identity.canonical_symbol,
+            "bridge_provider": getattr(
+                self.market_service.provider, "provider_name", "BRAPI"
+            ),
+            "resolution_method": resolution_method,
+            "symbol_resolution": identity.resolution_reason,
+        }
 
     def _auto_link_cvm_issuer(self, asset_id, symbol: str):
         """Vincula automaticamente ativo<->emissor CVM por CNPJ EXATO.
@@ -1494,6 +1606,7 @@ class IndicatorResolverService:
         pending: set[str],
         collected_at: datetime,
         fiscal_year_end: date | None,
+        identity_resolution: dict | None = None,
     ) -> set[str]:
         """Calcula indicadores derivados (seção 6 do resolver híbrido) a
         partir de componentes brutos já apurados pelo CVM, quando todos os
@@ -1657,6 +1770,11 @@ class IndicatorResolverService:
                         "components": {
                             key: str(value) for key, value in result.components.items()
                         },
+                        **(
+                            {"identity_resolution": identity_resolution}
+                            if identity_resolution is not None
+                            else {}
+                        ),
                     },
                     "resolution_attempts": [*current.resolution_attempts, attempt],
                 }
