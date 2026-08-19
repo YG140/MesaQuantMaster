@@ -44,6 +44,7 @@ from app.services.indicator_resolver_service import (
     _fiscal_year_end_for_period,
     _next_cvm_report_deadline,
 )
+from app.schemas.market import MarketProfileResponse
 from app.services.market_service import MarketService
 
 
@@ -1408,6 +1409,199 @@ def test_auto_link_is_idempotent_when_pre_existing_link_matches_the_same_issuer(
         assert links[0].issuer_id == issuer.id
     finally:
         verify.close()
+
+
+# --- Ação fracionária B3: auto-link CVM via canonical_symbol ---------------
+#
+# A auditoria (Prompt 1) provou com dados reais da BRAPI que o profile do
+# ticker fracionário (ex. PETR4F) volta sem CNPJ ("data": null), enquanto o
+# mesmo profile pelo lote padrão (PETR4) tem CNPJ completo. A correção NÃO
+# muda `_auto_link_cvm_issuer` -- ele continua chamando
+# `market_service.get_profile(symbol)` exatamente como antes. Quem resolve a
+# identidade econômica é o próprio MarketService (ver market_service.py:
+# get_profile), de forma transparente para o resolver. Por isso estes testes
+# usam um MarketService DE VERDADE (não o FakeMarket simples usado acima),
+# ligado a um provider fake que só entrega CNPJ quando consultado pelo
+# símbolo canônico -- provando o caminho real de ponta a ponta.
+
+
+class _FractionalAwareBrapiLikeProvider:
+    """Fake de provider que reproduz o comportamento real observado na
+    auditoria: profile só tem CNPJ para o símbolo canônico (lote padrão);
+    para o símbolo do mercado fracionário, o profile existe mas vem vazio
+    (equivalente a `"data": null` da BRAPI) -- prova que o resolver só
+    consegue o CNPJ porque o MarketService canonicalizou antes de chamar o
+    provider, nunca porque o fake "ajudou" devolvendo o mesmo dado para
+    qualquer símbolo.
+    """
+
+    limited_mode = False
+
+    def __init__(self, canonical_symbol: str, cnpj: str):
+        self.canonical_symbol = canonical_symbol
+        self.cnpj = cnpj
+        self.profile_calls: list[str] = []
+
+    def get_profile(self, ticker: str):
+        self.profile_calls.append(ticker)
+        if ticker == self.canonical_symbol:
+            return MarketProfileResponse(
+                symbol=ticker,
+                name="Petroleo Brasileiro SA Pfd",
+                sector="Energia",
+                cnpj=self.cnpj,
+                provider="BRAPI",
+            )
+        return MarketProfileResponse(symbol=ticker, cnpj=None, provider="BRAPI")
+
+    # Não usados pelos testes abaixo (auto-link só chama get_profile), mas
+    # exigidos para o objeto se comportar como um provider completo.
+    def get_quote(self, ticker: str):
+        raise AssertionError("not used")
+
+    def get_quotes(self, tickers: list[str]):
+        raise AssertionError("not used")
+
+    def search_assets(self, query: str, limit: int = 10):
+        return []
+
+    def get_asset(self, ticker: str):
+        return None
+
+    def get_stock_dataset(self, dataset: str, symbols: list[str], **params):
+        raise AssertionError("not used")
+
+
+def test_fractional_ticker_auto_links_cvm_issuer_via_canonical_symbol():
+    # MarketService cacheia perfil por classe (ver market_service.py) --
+    # cada teste que usa uma instância real precisa de um estado limpo,
+    # senão herdaria a resposta cacheada de outro teste deste módulo.
+    MarketService.clear_caches()
+    asset_id = uuid4()
+    issuer = SimpleNamespace(id=uuid4(), cnpj="33000167000101", cvm_code="9512")
+
+    class Cvm(_UnknownFiscalCalendarCvm):
+        def linked_issuer(self, asset_id):
+            return None
+
+        def find_issuer_by_cnpj(self, cnpj):
+            assert cnpj == "33000167000101"
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return []
+
+    provider = _FractionalAwareBrapiLikeProvider(
+        canonical_symbol="PETR4", cnpj="33.000.167/0001-01"
+    )
+    market = MarketService(provider=provider)
+    link_session_factory = _fresh_isolated_session_factory()
+
+    result = resolve_symbol(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+            cvm_link_session_factory=link_session_factory,
+        ),
+        "PETR4F",
+        [indicator()],
+        asset_id=asset_id,
+    )
+
+    # O provider nunca foi consultado por "PETR4F" -- só pelo canonical.
+    assert provider.profile_calls == ["PETR4"]
+    # Sem dados sincronizados -> NOT_SYNCED, nunca IDENTIFIER_UNRESOLVED:
+    # o vínculo ativo<->emissor foi encontrado normalmente via CNPJ.
+    assert result.provider_failure_reason == ProviderFailureReason.NOT_SYNCED
+
+    verify = link_session_factory()
+    try:
+        persisted = (
+            verify.query(AssetCvmIssuer)
+            .filter(AssetCvmIssuer.asset_id == asset_id)
+            .first()
+        )
+        assert persisted is not None
+        assert persisted.issuer_id == issuer.id
+    finally:
+        verify.close()
+
+
+def test_standard_lot_ticker_still_auto_links_cvm_issuer_directly():
+    """Regressão: PETR4 (sem sufixo fracionário) continua funcionando
+    exatamente como antes -- canonical_symbol == trading_symbol, o
+    provider é consultado pelo mesmo símbolo de sempre."""
+    MarketService.clear_caches()
+    asset_id = uuid4()
+    issuer = SimpleNamespace(id=uuid4(), cnpj="33000167000101", cvm_code="9512")
+
+    class Cvm(_UnknownFiscalCalendarCvm):
+        def linked_issuer(self, asset_id):
+            return None
+
+        def find_issuer_by_cnpj(self, cnpj):
+            assert cnpj == "33000167000101"
+            return issuer
+
+        def latest_normalized(self, asset_id):
+            return []
+
+    provider = _FractionalAwareBrapiLikeProvider(
+        canonical_symbol="PETR4", cnpj="33.000.167/0001-01"
+    )
+    market = MarketService(provider=provider)
+
+    result = resolve_symbol(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+            cvm_link_session_factory=_fresh_isolated_session_factory(),
+        ),
+        "PETR4",
+        [indicator()],
+        asset_id=asset_id,
+    )
+
+    assert provider.profile_calls == ["PETR4"]
+    assert result.provider_failure_reason == ProviderFailureReason.NOT_SYNCED
+
+
+def test_invalid_f_suffixed_ticker_never_auto_links_by_a_fabricated_base():
+    """PETRF (base inválida: "PETR" sem dígito de classe) nunca é
+    canonicalizado -- o provider é consultado pelo próprio "PETRF", que
+    não tem CNPJ nenhum cadastrado, então o vínculo permanece
+    IDENTIFIER_UNRESOLVED (honesto), nunca um emissor errado."""
+    MarketService.clear_caches()
+    asset_id = uuid4()
+
+    class Cvm(_UnknownFiscalCalendarCvm):
+        def linked_issuer(self, asset_id):
+            return None
+
+        def find_issuer_by_cnpj(self, cnpj):
+            raise AssertionError("nunca deveria buscar CNPJ para base inválida")
+
+    provider = _FractionalAwareBrapiLikeProvider(
+        canonical_symbol="PETR4", cnpj="33.000.167/0001-01"
+    )
+    market = MarketService(provider=provider)
+
+    result = resolve_symbol(
+        IndicatorResolverService(
+            market_service=market,
+            normalizer=IndicatorNormalizationService(),
+            cvm_repository=Cvm(),
+            cvm_link_session_factory=_fresh_isolated_session_factory(),
+        ),
+        "PETRF",
+        [indicator()],
+        asset_id=asset_id,
+    )
+
+    assert provider.profile_calls == ["PETRF"]
+    assert result.provider_failure_reason == ProviderFailureReason.IDENTIFIER_UNRESOLVED
 
 
 # --- Indicadores derivados de componentes CVM (roe, roa, net_debt_equity,

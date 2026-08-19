@@ -1490,6 +1490,30 @@ def test_b3_fii_symbol_overrides_generic_fund_provider_type():
     )
 
 
+def test_fractional_stock_ticker_is_still_classified_as_stock():
+    assert infer_class_from_symbol("PETR4F", "stock") == InvestmentClass.STOCK
+    assert infer_class_from_symbol("PETR4F", None) == InvestmentClass.STOCK
+
+
+def test_hypothetical_fractional_fii_keeps_fii_class_via_canonical_11_suffix():
+    """Prompt 2, seção 23: o sufixo "F" do mercado fracionário nunca pode
+    mascarar o "11" que identifica FII/ETF -- a classificação usa a
+    identidade econômica (canonical_symbol), não o símbolo de negociação
+    bruto. Mesmo sem asset_type resolvido (provider indisponível/perfil
+    vazio, exatamente o cenário que a auditoria encontrou para
+    fracionários), "MXRF11F" continua FII."""
+    assert infer_class_from_symbol("MXRF11F", None) == InvestmentClass.FII
+
+
+def test_hypothetical_fractional_etf_keeps_known_etf_override():
+    assert infer_class_from_symbol("BOVA11F", "FII") == InvestmentClass.ETF
+
+
+def test_standard_fii_and_etf_symbols_are_unaffected_by_the_fractional_rule():
+    assert infer_class_from_symbol("MXRF11", None) == InvestmentClass.FII
+    assert infer_class_from_symbol("BOVA11", "FII") == InvestmentClass.ETF
+
+
 def test_quote_volume_and_liquidity_explain_limited_data():
     now = datetime(2026, 7, 16, tzinfo=timezone.utc)
     _, indicators = IndicatorNormalizationService().normalize_quote(

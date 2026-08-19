@@ -22,6 +22,7 @@ from app.schemas.intelligence import (
 )
 from app.services.portfolio_service import PortfolioService
 from app.services.market_intelligence_service import MarketIntelligenceService
+from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
 from app.schemas.market_intelligence import AnalyzeAssetsRequest
 
 
@@ -188,7 +189,7 @@ class PortfolioIntelligenceService:
                 PortfolioCandidate(
                     snapshot=snapshot,
                     sector=asset.sector if asset else None,
-                    issuer=asset.name if asset else snapshot.name,
+                    issuer=self._issuer_identity(asset, snapshot),
                 )
             )
         return SmartPortfolioEngine.build(
@@ -202,6 +203,35 @@ class PortfolioIntelligenceService:
             batch_size=MAX_SYMBOLS_PER_ANALYSIS_BATCH,
             batch_count=len(batches),
         )
+
+    @staticmethod
+    def _issuer_identity(asset, snapshot) -> str | None:
+        """Chave de identidade de emissor usada por
+        `SmartPortfolioEngine.allocate` para `maximum_weight_per_issuer`.
+
+        Antes desta correção era `asset.name` (nome de exibição bruto).
+        Isso não é uma identidade de emissor confiável: dois nomes
+        ligeiramente diferentes para a MESMA empresa (ex.: o `shortName`
+        que a BRAPI retorna para o mercado fracionário B3 é literalmente
+        o próprio ticker -- "PETR4F", não "Petroleo Brasileiro SA Pfd")
+        fariam o motor tratar PETR4 e PETR4F como dois emissores
+        independentes para fins de concentração (ver auditoria Prompt 1,
+        seção I). Usar a identidade econômica (`canonical_symbol`, ver
+        symbol_identity.resolve_symbol_identity) corrige exatamente esse
+        caso: mesmo canonical_symbol => mesmo emissor.
+
+        Não resolve o caso pré-existente e mais amplo de classes
+        diferentes do MESMO emissor CVM com canonical_symbol distinto
+        (ex.: PETR3 vs PETR4) -- isso exigiria vincular cada candidato ao
+        issuer_id/CNPJ oficial já resolvido, plumbing que build_portfolio
+        não tem hoje (nem asset_repository nem market_intelligence_service
+        expõem cvm_repository aqui) e que está fora do escopo desta
+        correção especificamente sobre ações fracionárias B3.
+        """
+        ticker = asset.ticker if asset is not None else snapshot.symbol
+        if not ticker:
+            return None
+        return resolve_symbol_identity(ticker, market=B3_MARKET).canonical_symbol
 
     @staticmethod
     def _policy_to_schema(policy: PortfolioPolicy) -> PortfolioPolicyRead:

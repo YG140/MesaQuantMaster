@@ -39,6 +39,7 @@ from app.services.indicator_resolver_service import (
     build_resolution_summary,
 )
 from app.services.portfolio_service import PortfolioService
+from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
 
 
 class MarketIntelligenceService:
@@ -320,11 +321,20 @@ def normalize_symbols(symbols: list[str]) -> list[str]:
 
 
 def infer_class_from_symbol(symbol: str, asset_type: str | None) -> InvestmentClass:
-    normalized_symbol = symbol.upper().strip()
-    if normalized_symbol in KNOWN_B3_ETFS:
+    # Classifica pela identidade ECONÔMICA (canonical_symbol), nunca pelo
+    # símbolo de negociação bruto: um FII/ETF fracionário B3 (ex.:
+    # hipotético "MXRF11F") preserva a classe FII do seu lote padrão
+    # "MXRF11" -- o sufixo "F" do mercado fracionário nunca deve mascarar
+    # o "11" que identifica a classe. Para qualquer símbolo que não seja
+    # fracionário B3 (inclusive todo ticker hoje em produção, já que essa
+    # convenção nunca existiu no sistema antes desta correção),
+    # canonical_symbol == o próprio símbolo normalizado -- comportamento
+    # idêntico ao anterior, sem regressão.
+    canonical_symbol = resolve_symbol_identity(symbol, market=B3_MARKET).canonical_symbol
+    if canonical_symbol in KNOWN_B3_ETFS:
         return InvestmentClass.ETF
     classified = classify_market_asset(asset_type)
-    if normalized_symbol.endswith("11") and classified in {
+    if canonical_symbol.endswith("11") and classified in {
         InvestmentClass.UNKNOWN,
         InvestmentClass.INVESTMENT_FUND,
     }:
