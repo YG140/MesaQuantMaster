@@ -99,7 +99,14 @@ class CotahistProvider:
         cache_ttl_hours: int = 20,
     ):
         self.cache_dir = Path(cache_dir)
-        self.client = client or httpx.Client(timeout=timeout_seconds, follow_redirects=True)
+        # follow_redirects=False deliberadamente -- confirmado por checagem
+        # real (HEAD contra o endpoint oficial) que o COTAHIST responde
+        # 200 OK direto, sem nenhum redirect. Sem essa evidência de um
+        # redirect legítimo, seguir 3xx automaticamente permitiria que uma
+        # resposta comprometida/typosquat redirecionasse o download para
+        # qualquer host -- ver _download(), que rejeita 3xx explicitamente
+        # como B3DownloadError em vez de segui-los.
+        self.client = client or httpx.Client(timeout=timeout_seconds, follow_redirects=False)
         self.daily_max_download_bytes = daily_max_download_bytes
         self.daily_max_uncompressed_bytes = daily_max_uncompressed_bytes
         self.annual_max_download_bytes = annual_max_download_bytes
@@ -158,6 +165,19 @@ class CotahistProvider:
                     metadata["checked_at"] = now.isoformat()
                     self._write_metadata(metadata_path, metadata)
                     return self._result(archive, reference_date, metadata, True)
+                if 300 <= response.status_code < 400:
+                    # follow_redirects=False (ver __init__) -- nenhum 3xx
+                    # (exceto 304, tratado acima) é seguido automaticamente.
+                    # Sem evidência de que o endpoint COTAHIST oficial exige
+                    # redirect legítimo (checagem real: HEAD contra produção
+                    # retornou 200 direto), qualquer redirect é tratado como
+                    # download inválido -- nunca uma navegação arbitrária
+                    # para outro host.
+                    raise B3DownloadError(
+                        "Resposta de redirect (HTTP "
+                        f"{response.status_code}) do servidor oficial "
+                        "COTAHIST nunca é seguida automaticamente."
+                    )
                 response.raise_for_status()
                 declared = int(response.headers.get("Content-Length", "0") or 0)
                 if declared > max_download_bytes:
@@ -284,20 +304,37 @@ class CotahistProvider:
             raise B3ParseError("Arquivo COTAHIST sem registro de header (tipo 00).")
         if not trailer_seen:
             raise B3ParseError("Arquivo COTAHIST sem registro de trailer (tipo 99).")
-        if declared_total is not None:
-            expected_detail_count = declared_total - 2  # header + trailer inclusos no total
-            if expected_detail_count != detail_count:
-                raise B3ParseError(
-                    "Contagem de registros do trailer COTAHIST não bate com o "
-                    f"arquivo: declarado={declared_total} (esperado "
-                    f"{expected_detail_count} registros de detalhe), "
-                    f"encontrado={detail_count}."
-                )
+        if declared_total is not None and declared_total != detail_count:
+            # TOTREG conta SOMENTE os registros tipo 01 (detalhe) -- nunca
+            # inclui o próprio header/trailer. Confirmado por dado real:
+            # um download ao vivo do arquivo diário oficial durante esta
+            # correção trouxe TOTREG=19232 para exatamente 19232 registros
+            # tipo 01 -- uma suposição anterior de "declared_total - 2"
+            # (header+trailer inclusos) nunca bateu com nenhum arquivo
+            # real e teria feito TODO download real falhar esta checagem.
+            raise B3ParseError(
+                "Contagem de registros do trailer COTAHIST não bate com o "
+                f"arquivo: declarado={declared_total}, encontrado={detail_count}."
+            )
 
     def _parse_detail(self, line: str) -> B3HistoricalRecord:
         try:
             trading_date = self._parse_date(line[_DATA_PREGAO], required=True)
             assert trading_date is not None
+            # FATCOT (fator de cotação) é um campo numérico obrigatório do
+            # layout oficial para todo registro tipo 01 -- nunca
+            # legitimamente ausente/zerado para um instrumento realmente
+            # cotado. Um valor em branco ou "0000000" indica um registro
+            # corrompido/truncado, nunca um "sem fator declarado" que possa
+            # ser honestamente assumido como 1 -- fabricar esse default
+            # violaria a mesma regra "ausência nunca vira zero/inventado"
+            # já aplicada a todos os outros campos deste parser.
+            quote_factor = self._parse_int(line[_FATCOT])
+            if not quote_factor:
+                raise B3ParseError(
+                    f"FATCOT ausente ou zerado ({line[_FATCOT]!r}) -- campo "
+                    "obrigatório no layout oficial, nunca fabricado como 1."
+                )
             return B3HistoricalRecord(
                 trading_date=trading_date,
                 codbdi=line[_CODBDI].strip(),
@@ -320,7 +357,7 @@ class CotahistProvider:
                 strike_price=self._parse_price(line[_PREEXE]),
                 correction_indicator=self._parse_text(line[_INDOPC]),
                 maturity_date=self._parse_date(line[_DATVEN], required=False),
-                quote_factor=self._parse_int(line[_FATCOT]) or 1,
+                quote_factor=quote_factor,
                 isin=self._parse_text(line[_CODISI]),
                 distribution_number=self._parse_text(line[_DISMES]),
             )

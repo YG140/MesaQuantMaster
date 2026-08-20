@@ -83,14 +83,22 @@ class B3OfficialDataProvider:
                 attempts += 1
                 try:
                     download = self.cotahist.download_daily(cursor)
+                    # list() força a iteração COMPLETA do generator antes
+                    # de procurarmos o ticker -- iter_records só valida
+                    # header/trailer/contagem de registros DEPOIS do laço
+                    # de leitura (ver cotahist.py), então um next() com
+                    # short-circuit encerraria a leitura assim que o ticker
+                    # aparecesse, sem nunca confirmar a integridade do
+                    # resto do arquivo. Um pregão diário é pequeno o
+                    # bastante para isso ser seguro (ver get_historical,
+                    # que já faz o mesmo para o arquivo anual, bem maior).
+                    records = list(
+                        self.cotahist.iter_records(
+                            download.path, self.cotahist.daily_max_uncompressed_bytes
+                        )
+                    )
                     record = next(
-                        (
-                            r
-                            for r in self.cotahist.iter_records(
-                                download.path, self.cotahist.daily_max_uncompressed_bytes
-                            )
-                            if r.trading_symbol == trading_symbol
-                        ),
+                        (r for r in records if r.trading_symbol == trading_symbol),
                         None,
                     )
                 except B3ProviderError:

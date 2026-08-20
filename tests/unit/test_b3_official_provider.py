@@ -3,12 +3,14 @@ from decimal import Decimal
 from pathlib import Path
 from zipfile import ZipFile
 
+import httpx
 import pytest
 
 from app.providers.b3.cotahist import CotahistProvider
 from app.providers.b3.daily_price import B3DailyPriceSource
 from app.providers.b3.exceptions import (
     B3ArchiveError,
+    B3DownloadError,
     B3NotConfiguredError,
     B3ParseError,
     B3SizeLimitError,
@@ -123,8 +125,15 @@ def make_cotahist_zip(
 
 
 def valid_lines(detail_lines: list[str]) -> list[str]:
-    total = len(detail_lines) + 2
-    return [cotahist_header(), *detail_lines, cotahist_trailer(total_registers=total)]
+    # TOTREG conta SOMENTE os registros tipo 01 (detalhe) -- nunca inclui
+    # o próprio header/trailer (confirmado por dado real, ver
+    # cotahist.py: um download ao vivo trouxe TOTREG=19232 para
+    # exatamente 19232 registros tipo 01, nunca 19230).
+    return [
+        cotahist_header(),
+        *detail_lines,
+        cotahist_trailer(total_registers=len(detail_lines)),
+    ]
 
 
 # --- Header / trailer / registro válido --------------------------------
@@ -230,7 +239,7 @@ def test_never_strips_f_globally_a_plain_stock_record_stays_standard(tmp_path):
 
 def test_truncated_line_raises_parse_error_never_silently_accepted(tmp_path):
     bad = cotahist_detail()[:-10]  # linha mais curta que 245 bytes
-    archive = make_cotahist_zip(tmp_path, [cotahist_header(), bad, cotahist_trailer(total_registers=3)])
+    archive = make_cotahist_zip(tmp_path, [cotahist_header(), bad, cotahist_trailer(total_registers=1)])
     provider = CotahistProvider(cache_dir=tmp_path)
     with pytest.raises(B3ParseError):
         list(provider.iter_records(archive))
@@ -248,7 +257,7 @@ def test_invalid_numeric_character_raises_parse_error(tmp_path):
 
 def test_missing_header_raises_parse_error(tmp_path):
     detail = cotahist_detail()
-    archive = make_cotahist_zip(tmp_path, [detail, cotahist_trailer(total_registers=2)])
+    archive = make_cotahist_zip(tmp_path, [detail, cotahist_trailer(total_registers=1)])
     provider = CotahistProvider(cache_dir=tmp_path)
     with pytest.raises(B3ParseError, match="header"):
         list(provider.iter_records(archive))
@@ -272,10 +281,35 @@ def test_trailer_count_mismatch_raises_parse_error_never_silently_accepted(tmp_p
         list(provider.iter_records(archive))
 
 
+def test_trailer_count_matches_only_type01_records_never_including_header_and_trailer(
+    tmp_path,
+):
+    """Regressão real (Correção 3, Prompt 3): TOTREG do trailer conta
+    SOMENTE os registros tipo 01 (detalhe) -- nunca o header/trailer em
+    si. Confirmado por um download AO VIVO do arquivo diário oficial
+    durante esta correção: TOTREG=19232 batia exatamente com 19232
+    registros tipo 01 reais, nunca 19230 (=TOTREG-2). Uma suposição
+    anterior de "declared_total - 2" fazia TODO arquivo real ser
+    rejeitado como corrompido -- este teste prova a semântica correta com
+    3 registros de detalhe e TOTREG=3 (nunca 5)."""
+    details = [
+        cotahist_detail(codneg="PETR4"),
+        cotahist_detail(codneg="VALE3"),
+        cotahist_detail(codneg="ITUB4"),
+    ]
+    archive = make_cotahist_zip(
+        tmp_path, [cotahist_header(), *details, cotahist_trailer(total_registers=3)]
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    records = list(provider.iter_records(archive))
+    assert len(records) == 3
+    assert {r.trading_symbol for r in records} == {"PETR4", "VALE3", "ITUB4"}
+
+
 def test_unknown_critical_record_type_raises_parse_error(tmp_path):
     detail = cotahist_detail()
     bogus = "42" + detail[2:]  # TIPREG desconhecido
-    archive = make_cotahist_zip(tmp_path, [cotahist_header(), bogus, cotahist_trailer(total_registers=3)])
+    archive = make_cotahist_zip(tmp_path, [cotahist_header(), bogus, cotahist_trailer(total_registers=1)])
     provider = CotahistProvider(cache_dir=tmp_path)
     with pytest.raises(B3ParseError):
         list(provider.iter_records(archive))
@@ -596,3 +630,212 @@ def test_get_recent_eod_continues_past_a_single_bad_day():
     result = provider.get_recent_eod("ITUB4", anchor_date=anchor)
     assert result is not None
     assert result.record.trading_date == date(2026, 8, 18)
+
+
+# --- FATCOT (Correção 3, Prompt 3, seção 6): campo obrigatório, nunca -----
+# --- fabricado como 1 quando ausente/zerado -------------------------------
+
+
+def test_fatcot_blank_raises_parse_error_never_fabricates_a_default_of_one(tmp_path):
+    detail = cotahist_detail()
+    # corrompe o campo FATCOT (offset 210:217, ver cotahist.py) com espaços
+    blanked = detail[:210] + " " * 7 + detail[217:]
+    archive = make_cotahist_zip(tmp_path, valid_lines([blanked]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError, match="FATCOT"):
+        list(provider.iter_records(archive))
+
+
+def test_fatcot_zero_raises_parse_error_never_fabricates_a_default_of_one(tmp_path):
+    detail = cotahist_detail(fatcot=0)
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError, match="FATCOT"):
+        list(provider.iter_records(archive))
+
+
+# --- Bloqueador 3 (Correção 3, Prompt 3): nenhum registro é utilizável ----
+# --- antes da integridade do arquivo INTEIRO ser confirmada --------------
+
+
+class _FixedFileCotahist:
+    """download_daily sempre aponta para o MESMO arquivo ZIP sintético já
+    em disco (sem rede) -- mas iter_records delega para um
+    CotahistProvider REAL (`_real`), então o parser genuíno (com suas
+    validações de header/trailer/contagem de registros, todas executadas
+    SOMENTE após o laço de leitura terminar) é exercitado de ponta a
+    ponta. Prova que B3OfficialDataProvider.get_recent_eod nunca expõe um
+    ticker antes de a integridade completa do arquivo ter sido
+    confirmada -- mesmo quando o ticker procurado aparece ANTES de um
+    problema mais adiante no arquivo (trailer ausente, registro
+    corrompido, contagem incompatível)."""
+
+    def __init__(self, archive_path: Path, real_provider: CotahistProvider):
+        from app.providers.b3.cotahist import CotahistDownloadResult
+
+        self._archive_path = archive_path
+        self._real = real_provider
+        self._result_cls = CotahistDownloadResult
+        self.daily_max_uncompressed_bytes = real_provider.daily_max_uncompressed_bytes
+        self.annual_max_uncompressed_bytes = real_provider.annual_max_uncompressed_bytes
+
+    def download_daily(self, reference_date):
+        return self._result_cls(
+            path=self._archive_path,
+            reference_date=reference_date,
+            etag=None,
+            last_modified=None,
+            collected_at=datetime(2026, 8, 19, tzinfo=timezone.utc),
+            cache_hit=False,
+            size_bytes=self._archive_path.stat().st_size,
+        )
+
+    def iter_records(self, path, max_uncompressed_bytes=None):
+        return self._real.iter_records(path, max_uncompressed_bytes)
+
+
+def test_get_recent_eod_never_returns_a_ticker_from_a_file_missing_its_trailer(tmp_path):
+    detail = cotahist_detail(codneg="PETR4")
+    archive = make_cotahist_zip(tmp_path, [cotahist_header(), detail])  # sem trailer
+    real = CotahistProvider(cache_dir=tmp_path)
+    provider = B3OfficialDataProvider(cotahist=_FixedFileCotahist(archive, real))
+
+    result = provider.get_recent_eod(
+        "PETR4", anchor_date=date(2026, 8, 19), max_lookback_days=1
+    )
+
+    assert result is None
+
+
+def test_get_recent_eod_never_returns_a_ticker_from_a_file_with_a_corrupted_later_record(
+    tmp_path,
+):
+    valid_detail = cotahist_detail(codneg="PETR4")
+    vale_detail = cotahist_detail(codneg="VALE3")
+    corrupted = vale_detail[:108] + "X" * 13 + vale_detail[121:]
+    lines = valid_lines([valid_detail, corrupted])
+    archive = make_cotahist_zip(tmp_path, lines)
+    real = CotahistProvider(cache_dir=tmp_path)
+    provider = B3OfficialDataProvider(cotahist=_FixedFileCotahist(archive, real))
+
+    result = provider.get_recent_eod(
+        "PETR4", anchor_date=date(2026, 8, 19), max_lookback_days=1
+    )
+
+    # PETR4 aparece ANTES do registro corrompido no arquivo -- mas isso
+    # nunca é suficiente: a integridade do arquivo inteiro precisa ser
+    # confirmada antes de qualquer registro virar utilizável.
+    assert result is None
+
+
+def test_get_recent_eod_never_returns_a_ticker_from_a_file_with_a_bad_trailer_count(
+    tmp_path,
+):
+    detail = cotahist_detail(codneg="PETR4")
+    lines = [cotahist_header(), detail, cotahist_trailer(total_registers=999)]
+    archive = make_cotahist_zip(tmp_path, lines)
+    real = CotahistProvider(cache_dir=tmp_path)
+    provider = B3OfficialDataProvider(cotahist=_FixedFileCotahist(archive, real))
+
+    result = provider.get_recent_eod(
+        "PETR4", anchor_date=date(2026, 8, 19), max_lookback_days=1
+    )
+
+    assert result is None
+
+
+def test_get_recent_eod_returns_the_ticker_from_a_fully_valid_file(tmp_path):
+    detail = cotahist_detail(codneg="PETR4", preult="43.11")
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    real = CotahistProvider(cache_dir=tmp_path)
+    provider = B3OfficialDataProvider(cotahist=_FixedFileCotahist(archive, real))
+
+    result = provider.get_recent_eod(
+        "PETR4", anchor_date=date(2026, 8, 19), max_lookback_days=1
+    )
+
+    assert result is not None
+    assert result.record.trading_symbol == "PETR4"
+    assert result.record.close_price == Decimal("43.11")
+
+
+def test_get_recent_eod_returns_none_for_a_ticker_absent_from_a_valid_file(tmp_path):
+    detail = cotahist_detail(codneg="PETR4")
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    real = CotahistProvider(cache_dir=tmp_path)
+    provider = B3OfficialDataProvider(cotahist=_FixedFileCotahist(archive, real))
+
+    result = provider.get_recent_eod(
+        "VALE3", anchor_date=date(2026, 8, 19), max_lookback_days=1
+    )
+
+    assert result is None
+
+
+# --- Bloqueador 4 (Correção 3, Prompt 3): redirects nunca seguidos -------
+# --- automaticamente; checagem real (HEAD contra o endpoint oficial) -----
+# --- confirmou 200 direto, sem nenhum redirect, então não há evidência ---
+# --- de que um redirect legítimo seja necessário --------------------------
+
+
+def test_client_never_configures_follow_redirects_true():
+    """Guarda estrutural contra uma regressão futura reintroduzindo
+    follow_redirects=True no client de produção."""
+    provider = CotahistProvider(cache_dir=Path("."))
+    assert provider.client.follow_redirects is False
+
+
+def test_redirect_is_never_followed_and_is_rejected_as_invalid_download(tmp_path):
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(
+            302, headers={"Location": "http://127.0.0.1:12345/arquivo.zip"}
+        )
+
+    provider = CotahistProvider(
+        cache_dir=tmp_path,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(B3DownloadError):
+        provider.download_daily(date(2026, 8, 19))
+
+    # Nunca uma segunda requisição -- o redirect nunca é seguido.
+    assert len(seen) == 1
+    # Nenhum arquivo .part deixado para trás.
+    assert list(tmp_path.glob("*.part")) == []
+
+
+def test_rejected_redirect_never_destroys_a_previously_valid_cache(tmp_path):
+    archive = tmp_path / "COTAHIST_D19082026.zip"
+    lines = valid_lines([cotahist_detail(codneg="PETR4")])
+    with ZipFile(archive, "w") as zf:
+        zf.writestr("COTAHIST_D19082026.TXT", "\n".join(lines) + "\n")
+    original_bytes = archive.read_bytes()
+    metadata_path = archive.with_suffix(".json")
+    metadata_path.write_text(
+        '{"checked_at":"2020-01-01T00:00:00+00:00",'
+        '"collected_at":"2020-01-01T00:00:00+00:00",'
+        '"etag":"abc123","last_modified":"y","size_bytes":100}',
+        encoding="utf-8",
+    )
+    provider = CotahistProvider(
+        cache_dir=tmp_path,
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    302, headers={"Location": "http://127.0.0.1:12345/x.zip"}
+                )
+            )
+        ),
+        cache_ttl_hours=0,
+    )
+
+    with pytest.raises(B3DownloadError):
+        provider.download_daily(date(2026, 8, 19))
+
+    assert archive.exists()
+    assert archive.read_bytes() == original_bytes
+    assert list(tmp_path.glob("*.part")) == []

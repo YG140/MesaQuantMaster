@@ -624,7 +624,7 @@ class IndicatorResolverService:
         if result is not None:
             record = result.record
             reference = datetime.combine(record.trading_date, time.min, tzinfo=timezone.utc)
-            provenance = {
+            base_provenance = {
                 "provider": "b3",
                 "dataset": result.dataset,
                 "price_kind": "official_eod_close",
@@ -634,50 +634,32 @@ class IndicatorResolverService:
                 "isin": record.isin,
             }
             if "current_price" in pending and record.close_price is not None:
-                current = resolved["current_price"]
-                resolved["current_price"] = current.model_copy(
-                    update={
-                        "value": record.close_price,
-                        "display_value": display_value(
-                            record.close_price, current.unit, None
-                        ),
-                        "status": IndicatorStatus.AVAILABLE,
-                        "source": "B3",
-                        "source_type": "official",
-                        "reference_date": reference,
-                        "collected_at": result.collected_at,
-                        "valid_until": self._valid_until(
-                            "current_price", collected_at, source_type="official"
-                        ),
-                        "freshness_status": "current",
-                        "confidence": ConfidenceLevel.HIGH,
-                        "unavailable_reason": None,
-                        "provider_failure_reason": None,
-                        "provenance": provenance,
-                    }
+                self._apply_b3_eod_field(
+                    resolved,
+                    key="current_price",
+                    value=record.close_price,
+                    reference=reference,
+                    collected_at=collected_at,
+                    provider_collected_at=result.collected_at,
+                    provenance={**base_provenance, "field": "PREULT"},
                 )
-            if "volume" in pending and record.traded_volume is not None:
-                current = resolved["volume"]
-                resolved["volume"] = current.model_copy(
-                    update={
-                        "value": record.traded_volume,
-                        "display_value": display_value(
-                            record.traded_volume, current.unit, None
-                        ),
-                        "status": IndicatorStatus.AVAILABLE,
-                        "source": "B3",
-                        "source_type": "official",
-                        "reference_date": reference,
-                        "collected_at": result.collected_at,
-                        "valid_until": self._valid_until(
-                            "volume", collected_at, source_type="official"
-                        ),
-                        "freshness_status": "current",
-                        "confidence": ConfidenceLevel.HIGH,
-                        "unavailable_reason": None,
-                        "provider_failure_reason": None,
-                        "provenance": provenance,
-                    }
+            # QUATOT (quantidade total negociada), nunca VOLTOT (volume
+            # financeiro) -- o indicador interno `volume` é contratualmente
+            # "quantity" (ver IndicatorNormalizationService._value_for_key
+            # e o catálogo: unit="quantity", usado por `liquidity` =
+            # price * volume). VOLTOT é um conceito diferente (R$
+            # negociados) que esta tarefa não introduz como indicador
+            # separado -- ver B3HistoricalRecord.traded_volume, preservado
+            # apenas para uso futuro (ex.: um eventual `financial_volume`).
+            if "volume" in pending and record.traded_quantity is not None:
+                self._apply_b3_eod_field(
+                    resolved,
+                    key="volume",
+                    value=Decimal(record.traded_quantity),
+                    reference=reference,
+                    collected_at=collected_at,
+                    provider_collected_at=result.collected_at,
+                    provenance={**base_provenance, "field": "QUATOT"},
                 )
 
         self._record_stage_attempts(
@@ -687,6 +669,59 @@ class IndicatorResolverService:
             source_type="official",
             dataset_outcomes=[("cotahist_daily", result is not None, outcome_exc)],
             attempted_at=collected_at,
+        )
+
+    def _apply_b3_eod_field(
+        self,
+        resolved: dict[str, NormalizedIndicator],
+        *,
+        key: str,
+        value: Decimal,
+        reference: datetime,
+        collected_at: datetime,
+        provider_collected_at: datetime,
+        provenance: dict,
+    ) -> None:
+        """Preenche um indicador com um valor EOD B3, com validade ANCORADA
+        na competência econômica real (`reference` = data do pregão),
+        nunca em `collected_at` (o momento em que este resolve_asset foi
+        chamado) -- baixar hoje um fechamento de vários pregões atrás
+        (ver max_lookback_days em get_recent_eod) nunca pode "rejuvenescer"
+        sua validade. Usa a MESMA política temporal do catálogo já
+        aplicada a este indicador em qualquer outra fonte (ver
+        _valid_until), não uma janela arbitrária nova.
+
+        Se a validade (calculada a partir da própria competência do
+        registro) já expirou no momento desta resolução, o indicador é
+        deixado PENDENTE -- nunca marcado como AVAILABLE/"current" (isso
+        fabricaria uma aparência de dado atual que ele não tem) e nunca
+        marcado STALE aqui (um estágio B3 novo no MEIO da cascata
+        assumindo STALE poderia ser sobrescrito de forma não intencional
+        pelo estágio de stale snapshot, que roda depois e não foi
+        desenhado para ceder a uma fonte de maior prioridade já stale).
+        Os estágios seguintes da cascata (snapshot stale, manual)
+        continuam livres para tentar preencher esta chave normalmente.
+        """
+        valid_until = self._valid_until(key, reference, source_type="official")
+        if collected_at > valid_until:
+            return
+        current = resolved[key]
+        resolved[key] = current.model_copy(
+            update={
+                "value": value,
+                "display_value": display_value(value, current.unit, None),
+                "status": IndicatorStatus.AVAILABLE,
+                "source": "B3",
+                "source_type": "official",
+                "reference_date": reference,
+                "collected_at": provider_collected_at,
+                "valid_until": valid_until,
+                "freshness_status": "current",
+                "confidence": ConfidenceLevel.HIGH,
+                "unavailable_reason": None,
+                "provider_failure_reason": None,
+                "provenance": provenance,
+            }
         )
 
     def _load_brapi_free(
