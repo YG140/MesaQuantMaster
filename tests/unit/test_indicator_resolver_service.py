@@ -3245,6 +3245,7 @@ def _b3_record(
     # outro por engano quebre imediatamente (ver Bloqueador 1).
     financial_volume: str | None = "1575798553.00",
     market_type: str = "010",
+    quote_factor: int = 1,
 ) -> B3HistoricalRecord:
     return B3HistoricalRecord(
         trading_date=trading_date,
@@ -3268,7 +3269,7 @@ def _b3_record(
         strike_price=None,
         correction_indicator=None,
         maturity_date=None,
-        quote_factor=1,
+        quote_factor=quote_factor,
         isin="BRPETRACNPR6",
         distribution_number=None,
     )
@@ -3579,3 +3580,136 @@ def test_b3_eod_never_runs_for_treasury_even_in_a_proven_b3_market_context():
     )
 
     assert fake_b3.calls == []
+
+
+# --- FATCOT (Correção 3, Prompt 3, revisão final): PREULT NUNCA dividido -
+# --- por quote_factor, apesar do layout oficial descrever FATCOT='1000' -
+# --- como "quote per lot of a thousand shares" --------------------------
+
+
+def test_b3_eod_current_price_uses_preult_directly_never_divided_by_fatcot_1000():
+    """Confirmado por evidência real cruzada durante esta revisão: papéis
+    reais com FATCOT=1000 no COTAHIST oficial (FNAM11, FNOR11, GOLL54)
+    têm PREULT bruto batendo EXATAMENTE com a cotação publicada por
+    agregadores de mercado independentes na mesma data (ex.: FNAM11
+    PREULT=0.36 em 19/08/2026 == brapi.dev, mesma data, R$0,36) --
+    dividir por FATCOT produziria um preço ~1000x menor que o preço real
+    negociado. Por isso current_price usa PREULT diretamente, mesmo com
+    FATCOT != 1 (ver docstring de _apply_b3_eod_field para a evidência
+    completa)."""
+    record = _b3_record(symbol="FNAM11", close="0.36", quote_factor=1000)
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "FNAM11",
+        [indicator("current_price")],
+    )
+
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.value == Decimal("0.36")
+    assert result.value != Decimal("0.36") / Decimal(1000)
+
+
+def test_b3_eod_current_price_trivial_fatcot_1_stays_unchanged():
+    """Caso trivial explícito (FATCOT=1, cotação unitária): current_price
+    é exatamente PREULT, sem qualquer transformação -- comportamento
+    inalterado por esta revisão."""
+    record = _b3_record(symbol="PETR4", close="43.11", quote_factor=1)
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.value == Decimal("43.11")
+
+
+def test_b3_eod_provenance_always_preserves_quote_factor():
+    """FATCOT é preservado em provenance (nunca descartado) para
+    auditoria/revisão futura, mesmo sem nenhuma transformação aplicada a
+    current_price."""
+    record = _b3_record(symbol="FNAM11", close="0.36", quote_factor=1000)
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "FNAM11",
+        [indicator("current_price")],
+    )
+
+    assert result.provenance["quote_factor"] == 1000
+
+
+# --- STALE (Correção 3, Prompt 3, revisão final): registro B3 real porém -
+# --- vencido nunca vira NOT_REPORTED na tentativa registrada -------------
+
+
+def test_b3_eod_stale_record_records_stale_not_not_reported():
+    """Bloqueador 4: quando o COTAHIST tem um registro REAL para o
+    símbolo mas ele já está fora da validade temporal (ver
+    test_b3_eod_old_record_beyond_catalog_validity_never_becomes_available_current),
+    a tentativa B3 registrada em resolution_attempts nunca pode ser
+    NOT_REPORTED -- o dado FOI reportado pela B3, só não estava mais
+    válido. A razão refletida no indicador (via _reconcile_failure_reasons)
+    deve ser STALE, e a tentativa carrega a reference_date real do
+    pregão (nunca None, nunca "hoje")."""
+    record = _b3_record(symbol="PETR4", trading_date=date(2026, 7, 10))
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status != IndicatorStatus.AVAILABLE
+    assert result.provider_failure_reason == ProviderFailureReason.STALE
+    b3_attempts = [a for a in result.resolution_attempts if a.provider == "B3"]
+    assert len(b3_attempts) == 1
+    attempt = b3_attempts[0]
+    assert attempt.outcome == ResolutionOutcome.FAILURE
+    assert attempt.provider_failure_reason == ProviderFailureReason.STALE
+    assert attempt.provider_failure_reason != ProviderFailureReason.NOT_REPORTED
+    assert attempt.reference_date == datetime(2026, 7, 10, tzinfo=timezone.utc)
+
+
+def test_b3_eod_genuinely_missing_record_still_records_not_reported():
+    """Guarda de regressão: um registro genuinamente AUSENTE (get_recent_eod
+    retorna None -- ticker não encontrado em nenhum pregão do intervalo)
+    continua sendo NOT_REPORTED -- a correção do Bloqueador 4 é
+    localizada ao caso "valor real porém stale", nunca generaliza para
+    "ausência real"."""
+    fake_b3 = _FakeB3Provider(result=None)
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status != IndicatorStatus.AVAILABLE
+    b3_attempts = [a for a in result.resolution_attempts if a.provider == "B3"]
+    assert len(b3_attempts) == 1
+    assert b3_attempts[0].provider_failure_reason == ProviderFailureReason.NOT_REPORTED
+
+
+def test_b3_eod_parse_error_still_classified_from_the_real_exception_never_stale():
+    """Guarda de regressão: um B3ParseError (arquivo corrompido) continua
+    classificado a partir da exceção real -- nunca "finge" STALE (a
+    correção do Bloqueador 4 só se aplica quando o provider de fato
+    retornou um valor real e válido, porém vencido)."""
+    fake_b3 = _FakeB3Provider(error=B3ParseError("registro corrompido (simulado)"))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status != IndicatorStatus.AVAILABLE
+    b3_attempts = [a for a in result.resolution_attempts if a.provider == "B3"]
+    assert len(b3_attempts) == 1
+    assert b3_attempts[0].provider_failure_reason != ProviderFailureReason.STALE

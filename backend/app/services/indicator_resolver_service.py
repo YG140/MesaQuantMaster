@@ -621,6 +621,8 @@ class IndicatorResolverService:
         except B3ProviderError as exc:
             outcome_exc = exc
 
+        reference: datetime | None = None
+        stale_keys: set[str] = set()
         if result is not None:
             record = result.record
             reference = datetime.combine(record.trading_date, time.min, tzinfo=timezone.utc)
@@ -632,9 +634,18 @@ class IndicatorResolverService:
                 "trading_symbol": record.trading_symbol,
                 "market_type": record.market_type,
                 "isin": record.isin,
+                # FATCOT preservado em provenance para auditoria/futura
+                # revisão -- NUNCA aplicado como divisor/multiplicador de
+                # PREULT aqui (ver _apply_b3_eod_field, docstring: dado real
+                # cruzado com cotação de mercado independente prova que
+                # PREULT já é o preço por unidade mesmo com FATCOT != 1).
+                "quote_factor": record.quote_factor,
             }
             if "current_price" in pending and record.close_price is not None:
-                self._apply_b3_eod_field(
+                # PREULT usado DIRETAMENTE, nunca dividido/multiplicado por
+                # FATCOT -- ver docstring de _apply_b3_eod_field para a
+                # evidência real que fundamenta esta decisão.
+                if not self._apply_b3_eod_field(
                     resolved,
                     key="current_price",
                     value=record.close_price,
@@ -642,7 +653,8 @@ class IndicatorResolverService:
                     collected_at=collected_at,
                     provider_collected_at=result.collected_at,
                     provenance={**base_provenance, "field": "PREULT"},
-                )
+                ):
+                    stale_keys.add("current_price")
             # QUATOT (quantidade total negociada), nunca VOLTOT (volume
             # financeiro) -- o indicador interno `volume` é contratualmente
             # "quantity" (ver IndicatorNormalizationService._value_for_key
@@ -652,7 +664,7 @@ class IndicatorResolverService:
             # separado -- ver B3HistoricalRecord.traded_volume, preservado
             # apenas para uso futuro (ex.: um eventual `financial_volume`).
             if "volume" in pending and record.traded_quantity is not None:
-                self._apply_b3_eod_field(
+                if not self._apply_b3_eod_field(
                     resolved,
                     key="volume",
                     value=Decimal(record.traded_quantity),
@@ -660,7 +672,8 @@ class IndicatorResolverService:
                     collected_at=collected_at,
                     provider_collected_at=result.collected_at,
                     provenance={**base_provenance, "field": "QUATOT"},
-                )
+                ):
+                    stale_keys.add("volume")
 
         self._record_stage_attempts(
             resolved,
@@ -669,6 +682,8 @@ class IndicatorResolverService:
             source_type="official",
             dataset_outcomes=[("cotahist_daily", result is not None, outcome_exc)],
             attempted_at=collected_at,
+            stale_keys=frozenset(stale_keys),
+            stale_reference=reference,
         )
 
     def _apply_b3_eod_field(
@@ -681,7 +696,7 @@ class IndicatorResolverService:
         collected_at: datetime,
         provider_collected_at: datetime,
         provenance: dict,
-    ) -> None:
+    ) -> bool:
         """Preenche um indicador com um valor EOD B3, com validade ANCORADA
         na competência econômica real (`reference` = data do pregão),
         nunca em `collected_at` (o momento em que este resolve_asset foi
@@ -694,17 +709,35 @@ class IndicatorResolverService:
         Se a validade (calculada a partir da própria competência do
         registro) já expirou no momento desta resolução, o indicador é
         deixado PENDENTE -- nunca marcado como AVAILABLE/"current" (isso
-        fabricaria uma aparência de dado atual que ele não tem) e nunca
-        marcado STALE aqui (um estágio B3 novo no MEIO da cascata
-        assumindo STALE poderia ser sobrescrito de forma não intencional
-        pelo estágio de stale snapshot, que roda depois e não foi
-        desenhado para ceder a uma fonte de maior prioridade já stale).
-        Os estágios seguintes da cascata (snapshot stale, manual)
+        fabricaria uma aparência de dado atual que ele não tem) e o status
+        do indicador em si nunca vira STALE aqui (um estágio B3 novo no
+        MEIO da cascata assumindo STALE poderia ser sobrescrito de forma
+        não intencional pelo estágio de stale snapshot, que roda depois e
+        não foi desenhado para ceder a uma fonte de maior prioridade já
+        stale). Os estágios seguintes da cascata (snapshot stale, manual)
         continuam livres para tentar preencher esta chave normalmente.
+        Retorna False nesse caso -- o chamador usa isso para registrar a
+        tentativa como STALE (nunca NOT_REPORTED: o dado FOI reportado
+        pela B3, só estava vencido -- ver _apply_b3_official_eod).
+
+        `value` (PREULT para current_price) é usado DIRETAMENTE, nunca
+        dividido/multiplicado por FATCOT (`record.quote_factor`), apesar
+        do layout oficial descrever FATCOT='1000' como "quote per lot of
+        one thousand shares". Confirmado por evidência real cruzada
+        durante esta correção: no arquivo diário e anual oficiais de
+        2026, papéis reais com FATCOT=1000 (FNAM11, FNOR11, GOLL54) e
+        FATCOT=10000/1000000 (AZUL54, AZUL53) têm PREULT bruto batendo
+        EXATAMENTE com a cotação publicada por agregadores de mercado
+        independentes na mesma data (ex.: FNAM11 PREULT=0.36 em
+        19/08/2026 == brapi.dev "closing date 2026-08-19" == R$0,36) --
+        dividir por FATCOT produziria um preço ~1000x menor que o preço
+        real negociado. FATCOT é preservado em provenance (nunca
+        descartado) para auditoria e para uma eventual revisão futura com
+        mais evidência, mas nenhuma transformação é aplicada aqui.
         """
         valid_until = self._valid_until(key, reference, source_type="official")
         if collected_at > valid_until:
-            return
+            return False
         current = resolved[key]
         resolved[key] = current.model_copy(
             update={
@@ -723,6 +756,7 @@ class IndicatorResolverService:
                 "provenance": provenance,
             }
         )
+        return True
 
     def _load_brapi_free(
         self, symbol: str, asset_class: InvestmentClass
@@ -1218,12 +1252,25 @@ class IndicatorResolverService:
         source_type: str,
         dataset_outcomes: list[tuple[str, bool, Exception | None]],
         attempted_at: datetime,
+        stale_keys: frozenset[str] = frozenset(),
+        stale_reference: datetime | None = None,
     ) -> None:
         """Anexa uma tentativa estruturada por indicador ainda pendente antes do estágio.
 
         Indicadores resolvidos neste estágio recebem uma tentativa de sucesso;
         os que continuam pendentes recebem uma tentativa de falha com o motivo
         classificado a partir da exceção tipada real (nunca inventado).
+
+        `stale_keys` é um mecanismo aditivo, opcional e localizado ao
+        estágio B3 (ver _apply_b3_official_eod): chaves cujo valor real
+        FOI obtido do provider mas ficou pendente por estar vencido (fora
+        da validade temporal ancorada em reference_date, nunca por
+        collected_at -- ver _apply_b3_eod_field). Sem isso, o dado
+        reportado-porém-stale cairia no branch genérico abaixo e viraria
+        NOT_REPORTED, o que é factualmente falso (o provider REPORTOU um
+        valor real; só não estava mais válido). Nenhum outro estágio
+        chamador passa este parâmetro, então o comportamento genérico
+        para todos os outros providers permanece idêntico.
         """
         if not pending_before or not dataset_outcomes:
             return
@@ -1267,14 +1314,23 @@ class IndicatorResolverService:
             item = resolved.get(key)
             if item is None:
                 continue
+            if key in stale_keys:
+                key_reason = ProviderFailureReason.STALE
+                key_reference = stale_reference
+                key_detail = None
+            else:
+                key_reason = reason
+                key_reference = None
+                key_detail = detail
             attempt = ProviderResolutionAttempt(
                 provider=provider,
                 source_type=source_type,
                 dataset=dataset_label,
                 outcome=ResolutionOutcome.FAILURE,
-                provider_failure_reason=reason,
+                provider_failure_reason=key_reason,
                 attempted_at=attempted_at,
-                detail=detail,
+                reference_date=key_reference,
+                detail=key_detail,
             )
             resolved[key] = item.model_copy(
                 update={"resolution_attempts": [*item.resolution_attempts, attempt]}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -59,6 +60,21 @@ _DISMES = slice(242, 245)
 # vencimento (convenção observada e documentada em implementações fixed-
 # width deste tipo: campo N(08) zerado, nunca uma data real "0000-00-00").
 _NO_DATE = "00000000"
+
+# Limite conservador de razão de compressão (descompactado / compactado)
+# para o único membro do ZIP -- proteção contra zip bomb complementar ao
+# limite absoluto de tamanho descompactado já existente. Arquivos
+# COTAHIST reais (diário e anual, ver auditoria desta correção) têm razão
+# ~8.5-8.7:1 (texto fixo-largura repetitivo via DEFLATE); 100:1 dá margem
+# folgada para variação legítima sem abrir espaço para uma razão
+# patológica de zip bomb (tipicamente >>1000:1).
+_MAX_COMPRESSION_RATIO = 100
+
+# Caminho de entrada ZIP inseguro: drive letter Windows ("C:", "D:", ...)
+# no início do nome -- PurePosixPath.is_absolute() não reconhece essa
+# forma como absoluta, então precisa de checagem própria além de
+# is_absolute()/".." já aplicados.
+_WINDOWS_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
 
 
 @dataclass(frozen=True)
@@ -160,7 +176,16 @@ class CotahistProvider:
 
         temp_path: Path | None = None
         try:
-            with self.client.stream("GET", url, headers=headers) as response:
+            # follow_redirects=False passado EXPLICITAMENTE na requisição
+            # (não só no __init__ do client) -- httpx aceita `client=`
+            # injetado no construtor (ver __init__), e um client externo
+            # configurado com follow_redirects=True sobrescreveria a
+            # política do client interno se este override por-requisição
+            # não existisse. Prevalece sempre sobre o default do client,
+            # injetado ou não (ver testes com client injetado).
+            with self.client.stream(
+                "GET", url, headers=headers, follow_redirects=False
+            ) as response:
                 if response.status_code == 304 and archive.exists():
                     metadata["checked_at"] = now.isoformat()
                     self._write_metadata(metadata_path, metadata)
@@ -221,33 +246,68 @@ class CotahistProvider:
     # --- Segurança do ZIP -----------------------------------------------
 
     def validate_archive(self, path: Path, max_uncompressed_bytes: int) -> None:
-        """Nunca usa extractall(). Valida nomes/paths, rejeita path
-        traversal e absolute paths, soma o tamanho descompactado ANTES de
-        ler qualquer conteúdo (proteção contra zip bomb), e exige
-        exatamente um membro compatível com o nome COTAHIST esperado --
-        um arquivo inesperado dentro do ZIP é rejeitado, nunca lido."""
+        """Nunca usa extractall(). Exige exatamente UM membro no ZIP --
+        confirmado por dado real (auditoria desta correção): tanto o ZIP
+        diário quanto o anual oficiais contêm exatamente uma entrada
+        (COTAHIST_D<data>.TXT / COTAHIST_A<ano>.TXT), nunca mais. Um
+        segundo membro qualquer (ex.: COTAHIST.TXT + evil.txt) é
+        rejeitado sem jamais ser lido -- não há evidência de que a B3
+        publique entradas adicionais (diretórios inclusos) para justificar
+        aceitá-las.
+
+        Valida nome/path (path traversal, absolute path POSIX, drive
+        letter Windows, UNC) ANTES de olhar qualquer conteúdo, soma o
+        tamanho descompactado E a razão de compressão contra o tamanho
+        compactado (proteção contra zip bomb em duas frentes: tamanho
+        absoluto e razão suspeita) -- tudo antes de ler um único byte do
+        conteúdo do membro.
+        """
         try:
             with ZipFile(path) as archive:
                 members = archive.infolist()
                 if not members:
                     raise B3ArchiveError("ZIP COTAHIST está vazio.")
-                total = 0
-                cotahist_entries = []
-                for entry in members:
-                    member = PurePosixPath(entry.filename.replace("\\", "/"))
-                    if member.is_absolute() or ".." in member.parts:
-                        raise B3ArchiveError("ZIP COTAHIST contém caminho inseguro.")
-                    total += entry.file_size
-                    if total > max_uncompressed_bytes:
-                        raise B3SizeLimitError(
-                            "ZIP COTAHIST excede o limite descompactado configurado."
-                        )
-                    if member.name.upper().startswith("COTAHIST") and member.suffix.upper() == ".TXT":
-                        cotahist_entries.append(entry)
-                if len(cotahist_entries) != 1:
+                if len(members) != 1:
+                    raise B3ArchiveError(
+                        "ZIP COTAHIST contém mais de um membro -- esperado "
+                        "exatamente um arquivo COTAHIST*.TXT."
+                    )
+                entry = members[0]
+                raw_name = entry.filename.replace("\\", "/")
+                member = PurePosixPath(raw_name)
+                if (
+                    member.is_absolute()
+                    or raw_name.startswith("/")
+                    or _WINDOWS_DRIVE_PREFIX.match(raw_name)
+                    or ".." in member.parts
+                ):
+                    raise B3ArchiveError("ZIP COTAHIST contém caminho inseguro.")
+                if not (
+                    member.name.upper().startswith("COTAHIST")
+                    and member.suffix.upper() == ".TXT"
+                ):
                     raise B3ArchiveError(
                         "ZIP COTAHIST não contém exatamente um arquivo COTAHIST*.TXT "
                         "esperado."
+                    )
+                if entry.file_size > max_uncompressed_bytes:
+                    raise B3SizeLimitError(
+                        "ZIP COTAHIST excede o limite descompactado configurado."
+                    )
+                if entry.compress_size > 0:
+                    ratio = entry.file_size / entry.compress_size
+                    if ratio > _MAX_COMPRESSION_RATIO:
+                        raise B3SizeLimitError(
+                            "ZIP COTAHIST tem razão de compressão suspeita "
+                            f"({ratio:.1f}:1, limite {_MAX_COMPRESSION_RATIO}:1) -- "
+                            "possível zip bomb."
+                        )
+                elif entry.file_size > 0:
+                    # compress_size==0 com file_size>0 declarado -- razão
+                    # infinita, nunca aceito (nunca divide por zero aqui).
+                    raise B3SizeLimitError(
+                        "ZIP COTAHIST declara conteúdo descompactado sem "
+                        "nenhum dado compactado correspondente."
                     )
         except BadZipFile as exc:
             raise B3ArchiveError("Arquivo COTAHIST não é um ZIP válido.") from exc
@@ -259,9 +319,9 @@ class CotahistProvider:
     ) -> Iterator[B3HistoricalRecord]:
         """Itera os registros tipo 01 (cotação por papel) validando
         header/trailer conforme o layout oficial. Nunca aceita
-        silenciosamente um arquivo truncado ou com contagem de registros
-        inconsistente -- levanta B3ParseError em vez de propagar dado
-        financeiro fabricado."""
+        silenciosamente um arquivo truncado, fora de ordem ou com
+        contagem de registros inconsistente -- levanta B3ParseError em
+        vez de propagar dado financeiro fabricado."""
         self.validate_archive(path, max_uncompressed_bytes or self.daily_max_uncompressed_bytes)
         with ZipFile(path) as archive:
             entry = next(
@@ -279,16 +339,40 @@ class CotahistProvider:
                     line = raw_line.decode("latin-1").rstrip("\r\n")
                     if not line:
                         continue
-                    if len(line) < _RECORD_LENGTH:
+                    # Register Size: 245 bytes -- layout oficial não deixa
+                    # margem para "maior que o esperado" ser legítimo
+                    # (nunca só ">=", o excesso já seria um desvio do
+                    # layout fixo, nunca dado extra honesto).
+                    if len(line) != _RECORD_LENGTH:
                         raise B3ParseError(
-                            f"Registro COTAHIST truncado (tamanho {len(line)}, "
-                            f"esperado {_RECORD_LENGTH})."
+                            f"Registro COTAHIST com tamanho inválido ({len(line)}, "
+                            f"esperado exatamente {_RECORD_LENGTH})."
                         )
                     tipreg = line[_TIPREG]
                     if tipreg == "00":
+                        if header_seen:
+                            raise B3ParseError(
+                                "Arquivo COTAHIST contém mais de um registro de "
+                                "header (tipo 00)."
+                            )
+                        if detail_count or trailer_seen:
+                            raise B3ParseError(
+                                "Registro de header (tipo 00) fora de posição -- "
+                                "deve ser o primeiro registro do arquivo."
+                            )
                         header_seen = True
                         continue
                     if tipreg == "99":
+                        if trailer_seen:
+                            raise B3ParseError(
+                                "Arquivo COTAHIST contém mais de um registro de "
+                                "trailer (tipo 99)."
+                            )
+                        if not header_seen:
+                            raise B3ParseError(
+                                "Registro de trailer (tipo 99) antes do header "
+                                "(tipo 00)."
+                            )
                         trailer_seen = True
                         declared_total = self._parse_int(line[32:42])
                         continue
@@ -297,6 +381,14 @@ class CotahistProvider:
                         # ignorado silenciosamente como se o arquivo
                         # estivesse íntegro.
                         raise B3ParseError(f"Tipo de registro COTAHIST desconhecido: {tipreg!r}")
+                    if not header_seen:
+                        raise B3ParseError(
+                            "Registro de detalhe (tipo 01) antes do header (tipo 00)."
+                        )
+                    if trailer_seen:
+                        raise B3ParseError(
+                            "Registro de detalhe (tipo 01) depois do trailer (tipo 99)."
+                        )
                     detail_count += 1
                     yield self._parse_detail(line)
 
@@ -305,13 +397,27 @@ class CotahistProvider:
         if not trailer_seen:
             raise B3ParseError("Arquivo COTAHIST sem registro de trailer (tipo 99).")
         if declared_total is not None and declared_total != detail_count:
-            # TOTREG conta SOMENTE os registros tipo 01 (detalhe) -- nunca
-            # inclui o próprio header/trailer. Confirmado por dado real:
-            # um download ao vivo do arquivo diário oficial durante esta
-            # correção trouxe TOTREG=19232 para exatamente 19232 registros
-            # tipo 01 -- uma suposição anterior de "declared_total - 2"
-            # (header+trailer inclusos) nunca bateu com nenhum arquivo
-            # real e teria feito TODO download real falhar esta checagem.
+            # TOTREG conta SOMENTE os registros tipo 01 (detalhe) -- NUNCA
+            # inclui o próprio header/trailer, apesar do layout oficial
+            # publicado ("FILE LAYOUT - HISTORICAL QUOTATIONS", B3, Review
+            # 01, 17/04/2017) descrever literalmente o campo TOTAL
+            # REGISTERS como "INCLUDE ALSO HEADER AND TRAILER REGISTERS".
+            #
+            # Reconfirmado de forma independente e reproduzível nesta
+            # revisão (Correção 3, Prompt 3) com DOIS downloads ao vivo
+            # distintos do endpoint oficial:
+            #   - diário COTAHIST_D19082026.ZIP: TOTREG=19232, contagem
+            #     manual de linhas tipo "01"=19232 (header=1, trailer=1,
+            #     total de linhas=19234 -- TOTREG bate com detail_count,
+            #     nunca com o total de linhas do arquivo);
+            #   - anual COTAHIST_A2026.ZIP: TOTREG=2486436, contagem
+            #     manual de linhas tipo "01"=2486436 (mesma semântica,
+            #     mesma discrepância com o texto do PDF).
+            # Diário e anual têm a MESMA semântica -- não há necessidade
+            # de uma regra por variante. A documentação de 2017 está
+            # desatualizada em relação à geração real atual do arquivo;
+            # aceitar a suposição "declared_total - 2" (header+trailer
+            # inclusos) rejeitaria TODO download real como corrompido.
             raise B3ParseError(
                 "Contagem de registros do trailer COTAHIST não bate com o "
                 f"arquivo: declarado={declared_total}, encontrado={detail_count}."

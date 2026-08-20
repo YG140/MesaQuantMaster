@@ -271,6 +271,97 @@ def test_missing_trailer_raises_parse_error(tmp_path):
         list(provider.iter_records(archive))
 
 
+# --- Tamanho exato do registro (Correção 3, Prompt 3, revisão final): -----
+# --- "Register Size: 245 bytes" no layout oficial -- nunca só ">=" -------
+
+
+def test_record_with_244_bytes_is_rejected(tmp_path):
+    short = cotahist_detail()[:-1]
+    assert len(short) == 244
+    archive = make_cotahist_zip(tmp_path, [cotahist_header(), short, cotahist_trailer(total_registers=1)])
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
+def test_record_with_246_bytes_is_rejected_never_silently_accepted(tmp_path):
+    """Antes desta correção, o parser só rejeitava linhas MENORES que 245
+    bytes (`< _RECORD_LENGTH`) -- uma linha maior passava despercebida.
+    O layout oficial declara "Register Size: 245 bytes" sem margem para
+    "maior que o esperado" ser dado extra honesto."""
+    long_line = cotahist_detail() + "X"
+    assert len(long_line) == 246
+    archive = make_cotahist_zip(
+        tmp_path, [cotahist_header(), long_line, cotahist_trailer(total_registers=1)]
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
+def test_record_with_exactly_245_bytes_is_accepted(tmp_path):
+    detail = cotahist_detail()
+    assert len(detail) == 245
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    records = list(provider.iter_records(archive))
+    assert len(records) == 1
+
+
+# --- Ordem e unicidade header/trailer (Correção 3, Prompt 3, revisão -----
+# --- final): "00 Header, 01 detalhes, 99 Trailer" -- nunca fora de ordem -
+
+
+def test_second_header_is_rejected(tmp_path):
+    detail = cotahist_detail()
+    archive = make_cotahist_zip(
+        tmp_path,
+        [cotahist_header(), cotahist_header(), detail, cotahist_trailer(total_registers=1)],
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
+def test_second_trailer_is_rejected(tmp_path):
+    detail = cotahist_detail()
+    archive = make_cotahist_zip(
+        tmp_path,
+        [
+            cotahist_header(),
+            detail,
+            cotahist_trailer(total_registers=1),
+            cotahist_trailer(total_registers=1),
+        ],
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
+def test_detail_record_before_header_is_rejected_even_when_a_header_exists_later(tmp_path):
+    """Distinto de test_missing_header_raises_parse_error: aqui existe um
+    header no arquivo, mas ele vem DEPOIS de um registro de detalhe --
+    ordem errada, não ausência."""
+    detail = cotahist_detail()
+    archive = make_cotahist_zip(
+        tmp_path, [detail, cotahist_header(), cotahist_trailer(total_registers=1)]
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
+def test_detail_record_after_trailer_is_rejected(tmp_path):
+    detail = cotahist_detail()
+    archive = make_cotahist_zip(
+        tmp_path, [cotahist_header(), cotahist_trailer(total_registers=1), detail]
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
 def test_trailer_count_mismatch_raises_parse_error_never_silently_accepted(tmp_path):
     detail = cotahist_detail()
     archive = make_cotahist_zip(
@@ -304,6 +395,74 @@ def test_trailer_count_matches_only_type01_records_never_including_header_and_tr
     records = list(provider.iter_records(archive))
     assert len(records) == 3
     assert {r.trading_symbol for r in records} == {"PETR4", "VALE3", "ITUB4"}
+
+
+# --- TOTREG: diário e anual têm a MESMA semântica -- reverificado nesta --
+# --- revisão (Correção 3, Prompt 3, revisão final) com DOIS downloads ----
+# --- reais e independentes (ver comentário em cotahist.py, iter_records) -
+# --- contra a suspeita de que o layout oficial ("INCLUDE ALSO HEADER AND -
+# --- TRAILER REGISTERS") exigiria uma regra diferente por variante -------
+
+
+def test_totreg_semantics_hold_for_a_daily_style_file(tmp_path):
+    """Caso B do Bloqueador TOTREG: arquivo no padrão diário
+    (COTAHIST_D<data>.TXT, poucos registros) -- TOTREG = contagem de
+    registros tipo 01, nunca header+trailer inclusos."""
+    details = [cotahist_detail(codneg="PETR4"), cotahist_detail(codneg="VALE3")]
+    archive = make_cotahist_zip(
+        tmp_path,
+        [cotahist_header(), *details, cotahist_trailer(total_registers=2)],
+        entry_name="COTAHIST_D19082026.TXT",
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    records = list(provider.iter_records(archive))
+    assert len(records) == 2
+
+
+def test_totreg_semantics_hold_for_an_annual_style_file(tmp_path):
+    """Caso A do Bloqueador TOTREG: arquivo no padrão anual
+    (COTAHIST_A<ano>.TXT, muitos registros) -- mesma semântica do
+    diário, sem regra própria por variante (confirmado por dado real:
+    diário TOTREG=19232 e anual TOTREG=2486436 batem, cada um, com sua
+    própria contagem de registros tipo 01, nunca com header+trailer
+    inclusos)."""
+    details = [cotahist_detail(codneg=f"PAPEL{i:02d}") for i in range(10)]
+    archive = make_cotahist_zip(
+        tmp_path,
+        [cotahist_header(), *details, cotahist_trailer(total_registers=10)],
+        entry_name="COTAHIST_A2026.TXT",
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    records = list(provider.iter_records(archive))
+    assert len(records) == 10
+
+
+def test_totreg_mismatch_rejected_for_a_daily_style_file(tmp_path):
+    """Caso D do Bloqueador TOTREG: TOTREG incompatível no padrão
+    diário -- rejeitado, nunca aceito silenciosamente."""
+    detail = cotahist_detail(codneg="PETR4")
+    archive = make_cotahist_zip(
+        tmp_path,
+        [cotahist_header(), detail, cotahist_trailer(total_registers=42)],
+        entry_name="COTAHIST_D19082026.TXT",
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError, match="[Cc]ontagem"):
+        list(provider.iter_records(archive))
+
+
+def test_totreg_mismatch_rejected_for_an_annual_style_file(tmp_path):
+    """Caso C do Bloqueador TOTREG: TOTREG incompatível no padrão
+    anual -- rejeitado, nunca aceito silenciosamente."""
+    details = [cotahist_detail(codneg=f"PAPEL{i:02d}") for i in range(5)]
+    archive = make_cotahist_zip(
+        tmp_path,
+        [cotahist_header(), *details, cotahist_trailer(total_registers=999999)],
+        entry_name="COTAHIST_A2026.TXT",
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError, match="[Cc]ontagem"):
+        list(provider.iter_records(archive))
 
 
 def test_unknown_critical_record_type_raises_parse_error(tmp_path):
@@ -378,6 +537,44 @@ def test_zip_with_multiple_cotahist_files_is_rejected(tmp_path):
         provider.validate_archive(archive, 10_000_000)
 
 
+def test_zip_with_cotahist_plus_an_extra_unexpected_file_is_rejected(tmp_path):
+    """Bloqueador 5 (Correção 3, Prompt 3, revisão final): um ZIP com
+    COTAHIST_D19082026.TXT válido MAIS um segundo membro qualquer (aqui
+    "evil.txt") era aceito antes desta correção -- `cotahist_entries`
+    contava só o membro que batia com o padrão COTAHIST*.TXT, ignorando
+    que havia um SEGUNDO membro estranho no arquivo. Agora len(members)
+    != 1 rejeita o ZIP inteiro sem nunca abrir/ler nenhum membro."""
+    archive = tmp_path / "cotahist_plus_evil.zip"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr("COTAHIST_D19082026.TXT", cotahist_header())
+        zf.writestr("evil.txt", "payload")
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ArchiveError):
+        provider.validate_archive(archive, 10_000_000)
+
+
+def test_zip_with_windows_drive_letter_path_entry_is_rejected(tmp_path):
+    from zipfile import ZipInfo
+
+    archive = tmp_path / "evil_drive.zip"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr(ZipInfo(r"C:\evil\COTAHIST.TXT"), "not cotahist data")
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ArchiveError):
+        provider.validate_archive(archive, 10_000_000)
+
+
+def test_zip_with_unc_path_entry_is_rejected(tmp_path):
+    from zipfile import ZipInfo
+
+    archive = tmp_path / "evil_unc.zip"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr(ZipInfo(r"\\server\share\COTAHIST.TXT"), "not cotahist data")
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ArchiveError):
+        provider.validate_archive(archive, 10_000_000)
+
+
 def test_zip_bomb_uncompressed_limit_is_enforced(tmp_path):
     archive = tmp_path / "bomb.zip"
     with ZipFile(archive, "w") as zf:
@@ -387,6 +584,41 @@ def test_zip_bomb_uncompressed_limit_is_enforced(tmp_path):
     provider = CotahistProvider(cache_dir=tmp_path)
     with pytest.raises(B3SizeLimitError):
         provider.validate_archive(archive, max_uncompressed_bytes=100)
+
+
+def test_zip_with_a_suspicious_compression_ratio_is_rejected(tmp_path):
+    """Bloqueador 6 (Correção 3, Prompt 3, revisão final): razão de
+    compressão, complementar ao limite absoluto de tamanho já existente.
+    10MB de um caractere repetido comprime, via DEFLATE, a uma fração
+    minúscula do tamanho original -- ratio bem acima do limite
+    configurado (100:1) mesmo com o tamanho descompactado (10MB) dentro
+    do limite absoluto permitido (20MB), isolando especificamente a
+    checagem de razão (nunca a checagem de tamanho absoluto)."""
+    import zipfile
+
+    archive = tmp_path / "ratio_bomb.zip"
+    with ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("COTAHIST_D19082026.TXT", "0" * 10_000_000)
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3SizeLimitError):
+        provider.validate_archive(archive, max_uncompressed_bytes=20_000_000)
+
+
+def test_zip_with_a_realistic_compression_ratio_is_accepted(tmp_path):
+    """Contraprova do teste anterior: um ZIP comprimido de forma
+    realista (razão próxima da observada em arquivos COTAHIST reais
+    durante a auditoria, ~8.5:1 -- ver comentário de _MAX_COMPRESSION_RATIO
+    em cotahist.py) nunca é rejeitado pela checagem de razão."""
+    import zipfile
+
+    details = [cotahist_detail(codneg=f"PAPEL{i:02d}") for i in range(50)]
+    content = "\n".join(valid_lines(details)) + "\n"
+    archive = tmp_path / "realistic.zip"
+    with ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("COTAHIST_D19082026.TXT", content)
+    provider = CotahistProvider(cache_dir=tmp_path)
+    # Não deve levantar B3SizeLimitError nem B3ArchiveError.
+    provider.validate_archive(archive, max_uncompressed_bytes=20_000_000)
 
 
 def test_corrupted_zip_is_rejected(tmp_path):
@@ -805,6 +1037,37 @@ def test_redirect_is_never_followed_and_is_rejected_as_invalid_download(tmp_path
     # Nunca uma segunda requisição -- o redirect nunca é seguido.
     assert len(seen) == 1
     # Nenhum arquivo .part deixado para trás.
+    assert list(tmp_path.glob("*.part")) == []
+
+
+def test_redirect_is_rejected_even_with_an_injected_client_configured_to_follow_redirects(
+    tmp_path,
+):
+    """Bloqueador 10 (Correção 3, Prompt 3, revisão final): `client=`
+    injetado no construtor com follow_redirects=True não pode burlar a
+    política -- o override é passado EXPLICITAMENTE em cada requisição
+    (ver _download), prevalecendo sobre o default do client, injetado ou
+    não."""
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(
+            302, headers={"Location": "http://127.0.0.1:12345/arquivo.zip"}
+        )
+
+    injected_client = httpx.Client(
+        transport=httpx.MockTransport(handler), follow_redirects=True
+    )
+    assert injected_client.follow_redirects is True  # o client em si permite -- a política vem do request
+    provider = CotahistProvider(cache_dir=tmp_path, client=injected_client)
+
+    with pytest.raises(B3DownloadError):
+        provider.download_daily(date(2026, 8, 19))
+
+    # Uma única requisição -- o redirect nunca é seguido, mesmo com o
+    # client injetado permitindo follow_redirects por padrão.
+    assert len(seen) == 1
     assert list(tmp_path.glob("*.part")) == []
 
 
