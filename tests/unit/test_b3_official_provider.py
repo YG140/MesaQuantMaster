@@ -1,0 +1,598 @@
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from pathlib import Path
+from zipfile import ZipFile
+
+import pytest
+
+from app.providers.b3.cotahist import CotahistProvider
+from app.providers.b3.daily_price import B3DailyPriceSource
+from app.providers.b3.exceptions import (
+    B3ArchiveError,
+    B3NotConfiguredError,
+    B3ParseError,
+    B3SizeLimitError,
+)
+from app.providers.b3.instruments import B3InstrumentRegistrySource
+from app.providers.b3_official_provider import B3EodResult, B3OfficialDataProvider
+
+# --- Construtor de linha COTAHIST sintética, EXATAMENTE nos offsets do
+#     layout oficial validado na auditoria (b3.com.br, "FILE LAYOUT -
+#     HISTORICAL QUOTATIONS", Review 01, 17/04/2017). Nunca copia um
+#     arquivo oficial real para o repositório -- apenas reproduz o layout
+#     com dados sintéticos. --------------------------------------------
+
+
+def _num(value, width: int) -> str:
+    return str(value).rjust(width, "0")
+
+
+def _txt(value: str, width: int) -> str:
+    return value.ljust(width)[:width]
+
+
+def _price(value: str, width: int) -> str:
+    """Recebe uma string decimal (ex. "42.60") e formata como (N)V99."""
+    cents = int((Decimal(value) * 100).to_integral_value())
+    return _num(cents, width)
+
+
+def cotahist_header(*, filename_year: int = 2026, generation_date: str = "20260819") -> str:
+    return (
+        "00"
+        + _txt(f"COTAHIST.{filename_year}", 13)
+        + _txt("BOVESPA", 8)
+        + _num(generation_date, 8)
+        + _txt("", 214)
+    )
+
+
+def cotahist_detail(
+    *,
+    trading_date: str = "20260819",
+    codbdi: str = "02",
+    codneg: str = "PETR4",
+    tpmerc: str = "010",
+    nomres: str = "PETROBRAS",
+    especi: str = "PN",
+    prazot: str = "",
+    modref: str = "R$",
+    preabe: str = "42.50",
+    premax: str = "43.00",
+    premin: str = "42.40",
+    premed: str = "42.70",
+    preult: str = "42.60",
+    preofc: str = "42.59",
+    preofv: str = "42.61",
+    totneg: int = 46224,
+    quatot: int = 36838100,
+    voltot: str = "1575798553.00",
+    preexe: str = "0",
+    indopc: str = "0",
+    datven: str = "00000000",
+    fatcot: int = 1,
+    ptoexe: str = "0",
+    codisi: str = "BRPETRACNPR6",
+    dismes: str = "0",
+) -> str:
+    return (
+        "01"
+        + _num(trading_date, 8)
+        + _txt(codbdi, 2)
+        + _txt(codneg, 12)
+        + _txt(tpmerc, 3)
+        + _txt(nomres, 12)
+        + _txt(especi, 10)
+        + _txt(prazot, 3)
+        + _txt(modref, 4)
+        + _price(preabe, 13)
+        + _price(premax, 13)
+        + _price(premin, 13)
+        + _price(premed, 13)
+        + _price(preult, 13)
+        + _price(preofc, 13)
+        + _price(preofv, 13)
+        + _num(totneg, 5)
+        + _num(quatot, 18)
+        + _price(voltot, 18)
+        + _price(preexe, 13)
+        + _txt(indopc, 1)
+        + _num(datven, 8)
+        + _num(fatcot, 7)
+        + _price(ptoexe, 13)
+        + _txt(codisi, 12)
+        + _num(dismes, 3)
+    )
+
+
+def cotahist_trailer(*, total_registers: int, filename_year: int = 2026, generation_date: str = "20260819") -> str:
+    # O parser só lê TIPREG (line[0:2]) e o total de registros em
+    # line[32:42] (offset fixo confirmado em cotahist.py) -- os demais
+    # campos do trailer não são interpretados, então o preenchimento
+    # entre eles é irrelevante para este teste.
+    return "99" + _txt("", 30) + _num(total_registers, 10) + _txt("", 203)
+
+
+def make_cotahist_zip(
+    tmp_path: Path, lines: list[str], *, entry_name: str = "COTAHIST_D19082026.TXT"
+) -> Path:
+    archive = tmp_path / "COTAHIST_D19082026.ZIP"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr(entry_name, "\n".join(lines) + "\n")
+    return archive
+
+
+def valid_lines(detail_lines: list[str]) -> list[str]:
+    total = len(detail_lines) + 2
+    return [cotahist_header(), *detail_lines, cotahist_trailer(total_registers=total)]
+
+
+# --- Header / trailer / registro válido --------------------------------
+
+
+def test_valid_file_parses_header_detail_trailer(tmp_path):
+    detail = cotahist_detail()
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    records = list(provider.iter_records(archive))
+    assert len(records) == 1
+    record = records[0]
+    assert record.trading_date == date(2026, 8, 19)
+    assert record.trading_symbol == "PETR4"
+    assert record.close_price == Decimal("42.60")
+    assert record.isin == "BRPETRACNPR6"
+
+
+def test_decimal_scaling_is_applied_correctly(tmp_path):
+    detail = cotahist_detail(preult="123.45", voltot="9999999999.99")
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    record = next(provider.iter_records(archive))
+    assert record.close_price == Decimal("123.45")
+    assert record.traded_volume == Decimal("9999999999.99")
+    assert isinstance(record.close_price, Decimal)
+
+
+def test_fatcot_is_preserved_as_official_quote_factor(tmp_path):
+    detail = cotahist_detail(fatcot=1000)
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    record = next(provider.iter_records(archive))
+    assert record.quote_factor == 1000
+
+
+def test_zero_maturity_date_is_treated_as_not_applicable_never_a_fabricated_date(tmp_path):
+    detail = cotahist_detail(datven="00000000")
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    record = next(provider.iter_records(archive))
+    assert record.maturity_date is None
+
+
+def test_real_maturity_date_is_parsed(tmp_path):
+    detail = cotahist_detail(datven="20261218")
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    record = next(provider.iter_records(archive))
+    assert record.maturity_date == date(2026, 12, 18)
+
+
+def test_codbdi_codneg_tpmerc_totneg_quatot_are_extracted_verbatim(tmp_path):
+    detail = cotahist_detail(codbdi="02", codneg="VALE3", tpmerc="010", totneg=31014, quatot=12466800)
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    record = next(provider.iter_records(archive))
+    assert record.codbdi == "02"
+    assert record.trading_symbol == "VALE3"
+    assert record.market_type == "010"
+    assert record.trade_count == 31014
+    assert record.traded_quantity == 12466800
+
+
+# --- Mercado fracionário -------------------------------------------------
+
+
+def test_fractional_market_record_is_recognized_via_official_tpmerc_and_codbdi(tmp_path):
+    detail = cotahist_detail(
+        codneg="PETR4F", tpmerc="020", codbdi="96", preult="42.75", codisi="BRPETRACNPR6"
+    )
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    record = next(provider.iter_records(archive))
+    assert record.trading_symbol == "PETR4F"
+    assert record.is_fractional_market is True
+    assert record.codbdi == "96"
+
+
+def test_standard_and_fractional_records_share_the_same_isin_but_different_price(tmp_path):
+    standard = cotahist_detail(codneg="PETR4", tpmerc="010", codbdi="02", preult="42.60", codisi="BRPETRACNPR6")
+    fractional = cotahist_detail(codneg="PETR4F", tpmerc="020", codbdi="96", preult="42.75", codisi="BRPETRACNPR6")
+    archive = make_cotahist_zip(tmp_path, valid_lines([standard, fractional]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    records = {r.trading_symbol: r for r in provider.iter_records(archive)}
+    assert records["PETR4"].isin == records["PETR4F"].isin
+    assert records["PETR4"].close_price != records["PETR4F"].close_price
+    assert records["PETR4"].is_fractional_market is False
+    assert records["PETR4F"].is_fractional_market is True
+
+
+def test_never_strips_f_globally_a_plain_stock_record_stays_standard(tmp_path):
+    detail = cotahist_detail(codneg="ITUB4", tpmerc="010", codbdi="02")
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    record = next(provider.iter_records(archive))
+    assert record.trading_symbol == "ITUB4"
+    assert record.is_fractional_market is False
+
+
+# --- Registros inválidos / missing != zero ------------------------------
+
+
+def test_truncated_line_raises_parse_error_never_silently_accepted(tmp_path):
+    bad = cotahist_detail()[:-10]  # linha mais curta que 245 bytes
+    archive = make_cotahist_zip(tmp_path, [cotahist_header(), bad, cotahist_trailer(total_registers=3)])
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
+def test_invalid_numeric_character_raises_parse_error(tmp_path):
+    detail = cotahist_detail()
+    # corrompe o campo PREULT (offset 108:121) com caracteres não numéricos
+    corrupted = detail[:108] + "X" * 13 + detail[121:]
+    archive = make_cotahist_zip(tmp_path, valid_lines([corrupted]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
+def test_missing_header_raises_parse_error(tmp_path):
+    detail = cotahist_detail()
+    archive = make_cotahist_zip(tmp_path, [detail, cotahist_trailer(total_registers=2)])
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError, match="header"):
+        list(provider.iter_records(archive))
+
+
+def test_missing_trailer_raises_parse_error(tmp_path):
+    detail = cotahist_detail()
+    archive = make_cotahist_zip(tmp_path, [cotahist_header(), detail])
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError, match="trailer"):
+        list(provider.iter_records(archive))
+
+
+def test_trailer_count_mismatch_raises_parse_error_never_silently_accepted(tmp_path):
+    detail = cotahist_detail()
+    archive = make_cotahist_zip(
+        tmp_path, [cotahist_header(), detail, cotahist_trailer(total_registers=999)]
+    )
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError, match="[Cc]ontagem"):
+        list(provider.iter_records(archive))
+
+
+def test_unknown_critical_record_type_raises_parse_error(tmp_path):
+    detail = cotahist_detail()
+    bogus = "42" + detail[2:]  # TIPREG desconhecido
+    archive = make_cotahist_zip(tmp_path, [cotahist_header(), bogus, cotahist_trailer(total_registers=3)])
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError):
+        list(provider.iter_records(archive))
+
+
+def test_empty_file_raises_parse_error(tmp_path):
+    # Um arquivo com só uma linha em branco (sem header nem detail nem
+    # trailer) não é rejeitado como ZIP malformado -- é rejeitado por não
+    # ter registro de header/trailer, exatamente como um arquivo real
+    # truncado/corrompido seria: nunca aceito silenciosamente.
+    archive = make_cotahist_zip(tmp_path, [])
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ParseError, match="header"):
+        list(provider.iter_records(archive))
+
+
+def test_missing_optional_text_field_is_none_never_a_fabricated_value(tmp_path):
+    detail = cotahist_detail(prazot="")
+    archive = make_cotahist_zip(tmp_path, valid_lines([detail]))
+    provider = CotahistProvider(cache_dir=tmp_path)
+    record = next(provider.iter_records(archive))
+    assert record.forward_term_days is None
+
+
+# --- Segurança de ZIP ------------------------------------------------------
+
+
+def test_zip_with_path_traversal_entry_is_rejected(tmp_path):
+    archive = tmp_path / "evil.zip"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr("../../evil.TXT", "not cotahist data")
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ArchiveError):
+        provider.validate_archive(archive, 10_000_000)
+
+
+def test_zip_with_absolute_path_entry_is_rejected(tmp_path):
+    archive = tmp_path / "evil_abs.zip"
+    with ZipFile(archive, "w") as zf:
+        # zipfile normaliza barras iniciais na escrita; simulamos via
+        # ZipInfo diretamente para forçar um nome absoluto no cabeçalho.
+        from zipfile import ZipInfo
+
+        zf.writestr(ZipInfo("/etc/passwd"), "not cotahist data")
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ArchiveError):
+        provider.validate_archive(archive, 10_000_000)
+
+
+def test_zip_with_unexpected_single_file_is_rejected(tmp_path):
+    archive = tmp_path / "unexpected.zip"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr("readme.txt", "not cotahist data")
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ArchiveError):
+        provider.validate_archive(archive, 10_000_000)
+
+
+def test_zip_with_multiple_cotahist_files_is_rejected(tmp_path):
+    archive = tmp_path / "multi.zip"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr("COTAHIST_A.TXT", cotahist_header())
+        zf.writestr("COTAHIST_B.TXT", cotahist_header())
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ArchiveError):
+        provider.validate_archive(archive, 10_000_000)
+
+
+def test_zip_bomb_uncompressed_limit_is_enforced(tmp_path):
+    archive = tmp_path / "bomb.zip"
+    with ZipFile(archive, "w") as zf:
+        # Um conteúdo pequeno comprimido, mas o limite configurado é
+        # propositalmente menor que o tamanho descompactado real.
+        zf.writestr("COTAHIST_X.TXT", "0" * 5000)
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3SizeLimitError):
+        provider.validate_archive(archive, max_uncompressed_bytes=100)
+
+
+def test_corrupted_zip_is_rejected(tmp_path):
+    archive = tmp_path / "corrupted.zip"
+    archive.write_bytes(b"this is not a zip file at all")
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(B3ArchiveError):
+        provider.validate_archive(archive, 10_000_000)
+
+
+def test_missing_file_raises_download_or_os_error(tmp_path):
+    provider = CotahistProvider(cache_dir=tmp_path)
+    with pytest.raises(Exception):
+        provider.validate_archive(tmp_path / "does_not_exist.zip", 10_000_000)
+
+
+# --- BVBG.186 (EquitiesSimplifiedPriceReport) -----------------------------
+
+
+def _bvbg186_xml(records: list[dict]) -> bytes:
+    entries = ""
+    for r in records:
+        entries += (
+            "<PricRpt>"
+            f"<TradDt><Dt>{r['date']}</Dt></TradDt>"
+            f"<SctyId><TckrSymb>{r['symbol']}</TckrSymb></SctyId>"
+            "<FinInstrmAttrbts>"
+            f"<FrstPric>{r.get('open', '')}</FrstPric>"
+            f"<MaxPric>{r.get('high', '')}</MaxPric>"
+            f"<MinPric>{r.get('low', '')}</MinPric>"
+            f"<TradAvrgPric>{r.get('avg', '')}</TradAvrgPric>"
+            f"<LastPric>{r.get('close', '')}</LastPric>"
+            f"<RglrTxsQty>{r.get('trades', '')}</RglrTxsQty>"
+            f"<FinInstrmQty>{r.get('qty', '')}</FinInstrmQty>"
+            f"<NtlFinVol>{r.get('vol', '')}</NtlFinVol>"
+            "</FinInstrmAttrbts>"
+            "</PricRpt>"
+        )
+    return f"<PriceReport>{entries}</PriceReport>".encode("utf-8")
+
+
+def test_bvbg186_parses_valid_record_with_official_tag_names():
+    xml_bytes = _bvbg186_xml(
+        [
+            {
+                "date": "2026-08-19",
+                "symbol": "PETR4",
+                "open": "42.84",
+                "high": "43.97",
+                "low": "42.84",
+                "avg": "43.20",
+                "close": "43.11",
+                "trades": "46224",
+                "qty": "36838100",
+                "vol": "1575798553.00",
+            }
+        ]
+    )
+    records = B3DailyPriceSource.parse(xml_bytes)
+    assert len(records) == 1
+    record = records[0]
+    assert record.trading_symbol == "PETR4"
+    assert record.reference_date == date(2026, 8, 19)
+    assert record.close_price == Decimal("43.11")
+    assert record.trade_count == 46224
+    assert record.adjusted is False
+
+
+def test_bvbg186_missing_ticker_raises_parse_error():
+    xml_bytes = b"<PriceReport><PricRpt><TradDt><Dt>2026-08-19</Dt></TradDt></PricRpt></PriceReport>"
+    with pytest.raises(B3ParseError):
+        B3DailyPriceSource.parse(xml_bytes)
+
+
+def test_bvbg186_invalid_decimal_raises_parse_error():
+    xml_bytes = _bvbg186_xml(
+        [{"date": "2026-08-19", "symbol": "PETR4", "close": "not-a-number"}]
+    )
+    with pytest.raises(B3ParseError):
+        B3DailyPriceSource.parse(xml_bytes)
+
+
+def test_bvbg186_fetch_without_url_raises_not_configured():
+    source = B3DailyPriceSource(url=None)
+    assert source.is_configured() is False
+    with pytest.raises(B3NotConfiguredError):
+        source.fetch()
+
+
+# --- BVBG.028 (InstrumentReport) ------------------------------------------
+
+
+def _bvbg028_xml(records: list[dict]) -> bytes:
+    entries = ""
+    for r in records:
+        maturity = f"<MtrtyDt>{r['maturity']}</MtrtyDt>" if r.get("maturity") else ""
+        entries += (
+            "<Instrm>"
+            f"<TckrSymb>{r['symbol']}</TckrSymb>"
+            f"<ISIN>{r.get('isin', '')}</ISIN>"
+            f"<MktIdrCd>{r.get('mic', 'BVMF')}</MktIdrCd>"
+            f"<TradgCcy>{r.get('currency', 'BRL')}</TradgCcy>"
+            f"<CFICd>{r.get('cfi', '')}</CFICd>"
+            f"<Sgmt>{r.get('segment', '')}</Sgmt>"
+            f"<Mkt>{r.get('market', '')}</Mkt>"
+            f"{maturity}"
+            "</Instrm>"
+        )
+    return f"<InstrumentReport>{entries}</InstrumentReport>".encode("utf-8")
+
+
+def test_bvbg028_parses_valid_instrument_records():
+    xml_bytes = _bvbg028_xml(
+        [
+            {"symbol": "PETR4", "isin": "BRPETRACNPR6", "cfi": "ESVUFR", "segment": "1", "market": "1"},
+            {"symbol": "PETR4F", "isin": "BRPETRACNPR6", "cfi": "ESVUFR", "segment": "1", "market": "20"},
+            {"symbol": "MXRF11", "isin": "BRMXRFCTF008", "cfi": "CIS", "segment": "1", "market": "1"},
+            {"symbol": "BOVA11", "isin": "BRBOVACTF003", "cfi": "CIS", "segment": "1", "market": "1"},
+        ]
+    )
+    instruments = {i.trading_symbol: i for i in B3InstrumentRegistrySource.parse(xml_bytes)}
+    assert instruments["PETR4"].isin == instruments["PETR4F"].isin
+    assert instruments["PETR4"].is_fractional_market is False
+    assert instruments["PETR4F"].is_fractional_market is True
+    assert instruments["MXRF11"].currency == "BRL"
+    assert instruments["BOVA11"].market_identifier_code == "BVMF"
+
+
+def test_bvbg028_missing_ticker_raises_parse_error():
+    xml_bytes = b"<InstrumentReport><Instrm><ISIN>BR0000000000</ISIN></Instrm></InstrumentReport>"
+    with pytest.raises(B3ParseError):
+        B3InstrumentRegistrySource.parse(xml_bytes)
+
+
+def test_bvbg028_fetch_without_url_raises_not_configured():
+    source = B3InstrumentRegistrySource(url=None)
+    assert source.is_configured() is False
+    with pytest.raises(B3NotConfiguredError):
+        source.fetch()
+
+
+# --- B3OfficialDataProvider: cascata de EOD recente -----------------------
+
+
+class _FakeCotahist:
+    """Fake do CotahistProvider: simula um calendário de pregões com
+    arquivos disponíveis só em determinadas datas, sem rede/disco real."""
+
+    def __init__(self, records_by_date: dict[date, list]):
+        self.records_by_date = records_by_date
+        self.daily_max_uncompressed_bytes = 10_000_000
+        self.annual_max_uncompressed_bytes = 10_000_000
+        self.download_calls: list[date] = []
+
+    def download_daily(self, reference_date: date):
+        self.download_calls.append(reference_date)
+        if reference_date not in self.records_by_date:
+            raise B3ArchiveError("sem pregão nesta data (simulado)")
+        return _FakeDownloadResult(reference_date)
+
+    def iter_records(self, path, max_uncompressed_bytes=None):
+        return iter(self.records_by_date[path.reference_date])
+
+
+class _FakeDownloadResult:
+    def __init__(self, reference_date: date):
+        self.reference_date = reference_date
+        self.path = self
+        self.collected_at = datetime(2026, 8, 19, 21, 0, tzinfo=timezone.utc)
+        self.cache_hit = False
+
+
+def _record(symbol: str, trading_date: date, close: str = "42.60") -> object:
+    from app.providers.b3.models import B3HistoricalRecord
+
+    return B3HistoricalRecord(
+        trading_date=trading_date,
+        codbdi="02",
+        trading_symbol=symbol,
+        market_type="010",
+        issuer_short_name="TEST",
+        specification="PN",
+        forward_term_days=None,
+        currency="R$",
+        open_price=Decimal(close),
+        high_price=Decimal(close),
+        low_price=Decimal(close),
+        average_price=Decimal(close),
+        close_price=Decimal(close),
+        best_bid_price=None,
+        best_ask_price=None,
+        trade_count=100,
+        traded_quantity=1000,
+        traded_volume=Decimal("42600.00"),
+        strike_price=None,
+        correction_indicator=None,
+        maturity_date=None,
+        quote_factor=1,
+        isin="BRTEST0000001",
+        distribution_number=None,
+    )
+
+
+def test_get_recent_eod_finds_symbol_on_anchor_date():
+    anchor = date(2026, 8, 19)
+    fake = _FakeCotahist({anchor: [_record("PETR4", anchor)]})
+    provider = B3OfficialDataProvider(cotahist=fake)
+    result = provider.get_recent_eod("PETR4", anchor_date=anchor)
+    assert isinstance(result, B3EodResult)
+    assert result.record.trading_symbol == "PETR4"
+    assert result.dataset == "cotahist_daily"
+
+
+def test_get_recent_eod_walks_back_over_weekend_and_missing_days():
+    # Anchor numa terça-feira; o pregão só existe na sexta anterior --
+    # segunda/domingo/sábado devem ser pulados corretamente.
+    anchor = date(2026, 8, 18)  # terça-feira
+    friday = date(2026, 8, 14)
+    fake = _FakeCotahist({friday: [_record("VALE3", friday, close="71.55")]})
+    provider = B3OfficialDataProvider(cotahist=fake)
+    result = provider.get_recent_eod("VALE3", anchor_date=anchor)
+    assert result is not None
+    assert result.record.trading_date == friday
+    # Fins de semana nunca contam como tentativa real (nunca baixados).
+    assert date(2026, 8, 16) not in fake.download_calls  # domingo
+    assert date(2026, 8, 15) not in fake.download_calls  # sábado
+
+
+def test_get_recent_eod_returns_none_when_not_found_within_lookback_never_fabricates():
+    anchor = date(2026, 8, 19)
+    fake = _FakeCotahist({})
+    provider = B3OfficialDataProvider(cotahist=fake)
+    result = provider.get_recent_eod("PETR4", anchor_date=anchor, max_lookback_days=3)
+    assert result is None
+
+
+def test_get_recent_eod_continues_past_a_single_bad_day():
+    anchor = date(2026, 8, 19)
+    fake = _FakeCotahist({date(2026, 8, 18): [_record("ITUB4", date(2026, 8, 18))]})
+    provider = B3OfficialDataProvider(cotahist=fake)
+    result = provider.get_recent_eod("ITUB4", anchor_date=anchor)
+    assert result is not None
+    assert result.record.trading_date == date(2026, 8, 18)
