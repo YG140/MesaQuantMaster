@@ -94,12 +94,16 @@ describe("autenticacao", () => {
   });
 
   it("limpa sessao no logout", async () => {
+    // Correção interface: logout saiu do header e passou a viver em
+    // Configurações, seção "Sair da conta" (ver SettingsPage.tsx).
     const user = userEvent.setup();
     sessionStorage.setItem("mesa_quant_session", "test-token");
-    renderWithProviders(<AppRouter />, "/");
-    await screen.findAllByText("Patrimônio", {}, { timeout: 10_000 });
+    renderWithProviders(<AppRouter />, "/configuracoes");
+    // level: 2 desambigua do <h1> do próprio Header, que também mostra
+    // "Configurações" como título de rota (ver routeContext).
+    await screen.findByRole("heading", { name: "Configurações", level: 2 }, { timeout: 10_000 });
 
-    await user.click(screen.getByRole("button", { name: "Sair" }));
+    await user.click(await screen.findByRole("button", { name: "Sair da conta" }));
     expect(await screen.findByRole("heading", { name: /Mesa Quant Master/i })).toBeInTheDocument();
   });
 

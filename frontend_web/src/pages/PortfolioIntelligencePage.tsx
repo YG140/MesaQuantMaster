@@ -1,6 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type ReactNode, type SetStateAction } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { useEffect, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { EmptyState } from "../components/feedback/EmptyState";
 import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
@@ -15,7 +15,15 @@ import { ScoreGauge } from "../components/ui/ScoreGauge";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { useAuth } from "../features/auth/useAuth";
+import {
+  continueOrReviewInvestorProfile,
+  investorProfileActionLabel,
+  investorProfileObjectiveLabel,
+  investorProfileStatusLabel,
+} from "../features/investorProfile/presentation";
+import { ApiError } from "../services/apiClient";
 import { endpoints } from "../services/endpoints/data";
+import { investorProfileEndpoints } from "../services/endpoints/investorProfile";
 import type {
   AssetIntelligenceSnapshot,
   BuildPortfolioResponse,
@@ -81,13 +89,19 @@ export function PortfolioIntelligencePage() {
     enabled: Boolean(token),
   });
 
-  if (intelligence.isLoading) return <LoadingState label="Carregando inteligência da carteira..." />;
-  if (intelligence.error) return <ErrorState message="Não foi possível carregar a inteligência da carteira." />;
-  if (!intelligence.data) return <EmptyState title="Dados insuficientes para calcular." />;
-
+  // Resiliência (Correção interface): o shell da página, as abas, o Perfil
+  // do Investidor e as áreas "Montar carteira"/"Futuro financeiro" NUNCA
+  // dependem de intelligence.data -- cada uma busca (ou não precisa de)
+  // seus próprios dados de forma independente (ver BuildPortfolio, que
+  // agora busca portfolio-policy diretamente em vez de receber via prop;
+  // Strategy/FutureFinancial já eram independentes). Só o conteúdo da aba
+  // "Diagnóstico" que realmente depende de /intelligence/portfolio fica
+  // condicionado ao estado dessa query, isoladamente (ver
+  // IntelligenceDependentSections).
   return (
     <div className={`page-stack planning-prism-page planning-${requestedSection ?? "diagnostico"}`}>
       <SectionHeader eyebrow="Planejar" title="Inteligência de Carteira" description="Diagnóstico, construção de carteira e futuro financeiro em uma única experiência." />
+      <InvestorProfileSummary />
       <div className="tabs intelligence-areas" role="tablist" aria-label="Áreas de inteligência">
         {areas.map((item) => (
           <button key={item} type="button" role="tab" aria-selected={item === area} className={item === area ? "active" : ""} onClick={() => setSearchParams(item === "Montar carteira" ? { secao: "montar-carteira" } : item === "Futuro financeiro" ? { secao: "futuro-financeiro" } : { secao: "diagnostico" })}>
@@ -95,19 +109,95 @@ export function PortfolioIntelligencePage() {
           </button>
         ))}
       </div>
-      {area === "Diagnóstico" ? <div className="intelligence-sections">
-        <details open><summary>Visão geral</summary><Overview data={intelligence.data} /></details>
-        <details><summary>Diagnóstico</summary><Diagnosis data={intelligence.data} /></details>
-        <details><summary>Recomendações</summary><Recommendations data={intelligence.data} /></details>
-        <details><summary>Rebalanceamento</summary><Rebalancing data={intelligence.data} /></details>
-        <details><summary>Oportunidades relacionadas à carteira</summary><MarketOpportunities /></details>
-      </div> : null}
-      {area === "Montar carteira" ? <BuildPortfolio policy={intelligence.data.policy} /> : null}
+      {area === "Diagnóstico" ? <IntelligenceDependentSections intelligence={intelligence} /> : null}
+      {area === "Montar carteira" ? <BuildPortfolio /> : null}
       {area === "Futuro financeiro" ? <div className="intelligence-sections">
         <details open><summary>Minha estratégia</summary><Strategy /></details>
         <details open><summary>Projeções, cenários e liberdade financeira</summary><FutureFinancial /></details>
       </div> : null}
     </div>
+  );
+}
+
+function IntelligenceDependentSections({ intelligence }: { intelligence: UseQueryResult<PortfolioIntelligence, unknown> }) {
+  return (
+    <div className="intelligence-sections">
+      {intelligence.isLoading ? <LoadingState label="Carregando inteligência da carteira..." /> : null}
+      {intelligence.error ? (
+        <ErrorState message={describeIntelligenceError(intelligence.error)}>
+          <Button type="button" variant="secondary" onClick={() => intelligence.refetch()} disabled={intelligence.isFetching}>
+            {intelligence.isFetching ? "Tentando novamente..." : "Tentar novamente"}
+          </Button>
+        </ErrorState>
+      ) : null}
+      {!intelligence.isLoading && !intelligence.error && !intelligence.data ? (
+        <EmptyState title="Dados insuficientes para calcular." />
+      ) : null}
+      {intelligence.data ? (
+        <>
+          <details open><summary>Visão geral</summary><Overview data={intelligence.data} /></details>
+          <details><summary>Diagnóstico</summary><Diagnosis data={intelligence.data} /></details>
+          <details><summary>Recomendações</summary><Recommendations data={intelligence.data} /></details>
+          <details><summary>Rebalanceamento</summary><Rebalancing data={intelligence.data} /></details>
+        </>
+      ) : null}
+      {/* Oportunidades gerencia seu próprio estado (query independente, ver
+          MarketOpportunities) -- nunca escondida só porque o restante do
+          diagnóstico falhou. */}
+      <details><summary>Oportunidades relacionadas à carteira</summary><MarketOpportunities /></details>
+    </div>
+  );
+}
+
+function describeIntelligenceError(error: unknown): string {
+  if (!(error instanceof ApiError)) return "Não foi possível conectar à API. Verifique sua conexão e tente novamente.";
+  if (error.code === "VALIDATION") return `Há um problema nos dados da sua carteira: ${error.message}`;
+  if (error.code === "NOT_FOUND") return "Não encontramos as informações necessárias para calcular sua carteira.";
+  if (error.code === "TIMEOUT") return "A consulta demorou mais que o esperado. Tente novamente.";
+  if (error.code === "NETWORK") return "Não foi possível conectar à API. Verifique sua conexão.";
+  if (error.code === "SERVER" || error.code === "BAD_GATEWAY") return "Ocorreu um erro interno ao calcular sua carteira. Tente novamente em instantes.";
+  if (error.code === "UNAUTHORIZED") return "Sua sessão expirou. Entre novamente.";
+  return "Não foi possível carregar a inteligência da carteira agora.";
+}
+
+function InvestorProfileSummary() {
+  const { token } = useAuth();
+  const navigate = useNavigate();
+  const investorProfile = useQuery({
+    queryKey: ["investor-profile", token],
+    queryFn: () => investorProfileEndpoints.get(token!),
+    enabled: Boolean(token),
+  });
+
+  async function continueOrReview() {
+    if (!token) return;
+    await continueOrReviewInvestorProfile(token, investorProfile.data?.status, navigate);
+  }
+
+  return (
+    <Card title="Perfil do Investidor" className="investor-profile-summary">
+      {investorProfile.isLoading ? <LoadingState label="Consultando seu perfil..." /> : null}
+      {investorProfile.error ? (
+        <ErrorState message="Não foi possível consultar seu perfil agora.">
+          <Button type="button" variant="secondary" onClick={() => investorProfile.refetch()} disabled={investorProfile.isFetching}>
+            {investorProfile.isFetching ? "Tentando novamente..." : "Tentar novamente"}
+          </Button>
+        </ErrorState>
+      ) : null}
+      {investorProfile.data ? (
+        <>
+          <dl className="settings-facts">
+            <div><dt>Status</dt><dd>{investorProfileStatusLabel(investorProfile.data.status)}</dd></div>
+            <div><dt>Classificação</dt><dd>{investorProfile.data.dimensions?.overall_classification ?? "Ainda não calculada"}</dd></div>
+            <div><dt>Objetivo</dt><dd>{investorProfileObjectiveLabel(investorProfile.data.primary_objective)}</dd></div>
+            <div><dt>Última revisão</dt><dd>{formatDateTimeBR(investorProfile.data.last_reviewed_at ?? investorProfile.data.confirmed_at ?? undefined)}</dd></div>
+          </dl>
+          <button className="button button-secondary" type="button" onClick={continueOrReview}>
+            {investorProfileActionLabel(investorProfile.data.status)}
+          </button>
+        </>
+      ) : null}
+    </Card>
   );
 }
 
@@ -428,17 +518,31 @@ function Rebalancing({ data }: { data: PortfolioIntelligence }) {
   );
 }
 
-function BuildPortfolio({ policy }: { policy: PortfolioPolicy | null }) {
+function BuildPortfolio() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
+  // "Montar carteira" busca a política diretamente (mesma query/endpoint
+  // que Strategy usa: portfolio-policy -> GET /intelligence/policy) em vez
+  // de receber via prop de intelligence.data.policy -- desacopla esta
+  // área de uma eventual falha de /intelligence/portfolio (Correção
+  // interface, resiliência). Ausência/erro de política nunca bloqueia o
+  // formulário: os campos simplesmente seguem com os defaults abaixo até
+  // (se) a política real chegar.
+  const policyQuery = useQuery({
+    queryKey: ["portfolio-policy", token],
+    queryFn: () => endpoints.portfolioPolicy(token!),
+    enabled: Boolean(token),
+  });
+  const policy = policyQuery.data ?? null;
+  const appliedPolicyDefaults = useRef(false);
   const [availableAmount, setAvailableAmount] = useState("10000");
-  const [monthlyContribution, setMonthlyContribution] = useState(String(policy?.monthly_contribution ?? "0"));
-  const [objective, setObjective] = useState(policy?.objective ?? "crescimento patrimonial");
-  const [horizon, setHorizon] = useState(policy?.investment_horizon ?? "médio prazo");
-  const [riskProfile, setRiskProfile] = useState(policy?.risk_profile ?? "moderado");
-  const [liquidity, setLiquidity] = useState(policy?.liquidity_need ?? "média");
+  const [monthlyContribution, setMonthlyContribution] = useState("0");
+  const [objective, setObjective] = useState("crescimento patrimonial");
+  const [horizon, setHorizon] = useState("médio prazo");
+  const [riskProfile, setRiskProfile] = useState("moderado");
+  const [liquidity, setLiquidity] = useState("média");
   const [maxAssets, setMaxAssets] = useState("10");
-  const [maxAsset, setMaxAsset] = useState(String(policy?.maximum_weight_per_asset ?? "20"));
+  const [maxAsset, setMaxAsset] = useState("20");
   const [maxClass, setMaxClass] = useState("40");
   const [income, setIncome] = useState("");
   const [essentialExpenses, setEssentialExpenses] = useState("");
@@ -448,8 +552,20 @@ function BuildPortfolio({ policy }: { policy: PortfolioPolicy | null }) {
   const [currentAssets, setCurrentAssets] = useState("");
   const [desiredIncome, setDesiredIncome] = useState("");
   const [projectionYears, setProjectionYears] = useState("20");
-  const [allowed, setAllowed] = useState<string[]>(policy?.allocations.filter((item) => item.enabled).map((item) => item.asset_class) ?? []);
+  const [allowed, setAllowed] = useState<string[]>([]);
   const [prohibited, setProhibited] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (appliedPolicyDefaults.current || policyQuery.isLoading || !policy) return;
+    appliedPolicyDefaults.current = true;
+    setMonthlyContribution(String(policy.monthly_contribution ?? "0"));
+    setObjective(policy.objective ?? "crescimento patrimonial");
+    setHorizon(policy.investment_horizon ?? "médio prazo");
+    setRiskProfile(policy.risk_profile ?? "moderado");
+    setLiquidity(policy.liquidity_need ?? "média");
+    setMaxAsset(String(policy.maximum_weight_per_asset ?? "20"));
+    setAllowed(policy.allocations.filter((item) => item.enabled).map((item) => item.asset_class));
+  }, [policy, policyQuery.isLoading]);
   const toggleClass = (assetClass: string, target: "allowed" | "prohibited") => {
     const setter = target === "allowed" ? setAllowed : setProhibited;
     const otherSetter = target === "allowed" ? setProhibited : setAllowed;
@@ -486,6 +602,14 @@ function BuildPortfolio({ policy }: { policy: PortfolioPolicy | null }) {
     }),
     onSuccess: (data) => queryClient.setQueryData(["portfolio-projection", token], data),
   });
+
+  // Mesmo padrão de Strategy: aguarda a própria política resolver antes de
+  // expor o formulário, garantindo que os defaults (allowed/objective/
+  // etc., aplicados pelo useEffect acima) já estejam corretos quando o
+  // formulário aparece -- nunca depende de /intelligence/portfolio, só da
+  // própria política (portfolio-policy), independente e rápida.
+  if (policyQuery.isLoading) return <LoadingState label="Carregando dados para montar a carteira..." />;
+
   return (
     <div className="page-stack smart-portfolio-flow">
       <Card title="Monte uma carteira para o seu momento">
