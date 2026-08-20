@@ -14,3 +14,57 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+    groups:
+      vite-toolchain:
+        patterns:
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "vitest"
+          - "@vitest/*"
+        update-types:
+          - "minor"
+          - "patch"
+      typescript-toolchain:
+        patterns:
+          - "typescript"
+          - "typescript-eslint"
+          - "@typescript-eslint/*"
+          - "eslint"
+          - "@eslint/*"
+        update-types:
+          - "minor"
+          - "patch"
+      testing-library:
+        patterns:
+          - "@testing-library/*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Pacotes fortemente acoplados entre si (peer dependencies cruzadas
+      # confirmadas na auditoria de reprodutibilidade): um major isolado em
+      # qualquer um deles pode quebrar `npm ci` sem aviso (ver histórico:
+      # @vitejs/plugin-react 6.x vs vite 7.x, TypeScript 7.x vs
+      # typescript-eslint 8.x). Major upgrade dessa toolchain precisa virar
+      # tarefa explícita, revisando o grupo inteiro de uma vez -- nunca um
+      # bump automático isolado de um único pacote.
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitest/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript-eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@typescript-eslint/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@eslint/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@testing-library/*"
+        update-types: ["version-update:semver-major"]
