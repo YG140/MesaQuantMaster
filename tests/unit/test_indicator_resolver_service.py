@@ -44,6 +44,9 @@ from app.services.indicator_resolver_service import (
     _fiscal_year_end_for_period,
     _next_cvm_report_deadline,
 )
+from app.providers.b3.exceptions import B3ParseError
+from app.providers.b3.models import B3HistoricalRecord
+from app.providers.b3_official_provider import B3EodResult
 from app.schemas.market import MarketProfileResponse
 from app.services.market_service import MarketService
 from app.services.symbol_identity import B3_MARKET
@@ -3195,3 +3198,518 @@ def test_treasury_index_lookup_is_exact_never_fuzzy():
     )
     assert result.value is None
     assert result.status != IndicatorStatus.AVAILABLE
+
+
+# --- Cascata B3 EOD oficial (COTAHIST) para current_price/volume ----------
+#
+# Correção 3 (dados oficiais B3): _apply_b3_official_eod só pode preencher
+# current_price/volume quando (a) ainda estão pendentes -- nunca sobrescreve
+# uma cotação BRAPI live já resolvida ANTES de resolve_asset ser chamado --
+# e (b) o contexto de mercado do provider REALMENTE em uso é comprovadamente
+# B3 (nunca assumido) e a classe do ativo é elegível (nunca TREASURY, cujo
+# "preço" tem semântica totalmente diferente e fonte própria). Os testes
+# abaixo provam essas garantias estruturalmente, não só pelo valor final.
+
+
+class _FakeB3Provider:
+    """Espiona quantas vezes/com qual símbolo get_recent_eod foi chamado,
+    sem nunca tocar rede/disco -- prova as regras de gating (mercado B3
+    comprovado, classe elegível, indicador ainda pendente) sem depender do
+    CotahistProvider real."""
+
+    def __init__(self, result: B3EodResult | None = None, error: Exception | None = None):
+        self.result = result
+        self.error = error
+        self.calls: list[str] = []
+
+    def get_recent_eod(self, trading_symbol: str, **kwargs):
+        self.calls.append(trading_symbol)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _b3_record(
+    *,
+    symbol: str = "PETR4",
+    # NOW = 2026-07-20 (mesmo dia) fica DENTRO da validade de 2 dias do
+    # catálogo (ver indicator_temporal_validity_days) -- default "fresco"
+    # para não exigir que todo teste que só quer um registro válido
+    # precise se preocupar com a política temporal; testes de Bloqueador
+    # 2 passam trading_date explicitamente antigo.
+    trading_date: date = date(2026, 7, 20),
+    close: str = "42.60",
+    quantity: int | None = 1000,
+    # QUATOT (quantidade) e VOLTOT (financeiro) propositalmente bem
+    # diferentes por padrão, para que qualquer teste que troque um pelo
+    # outro por engano quebre imediatamente (ver Bloqueador 1).
+    financial_volume: str | None = "1575798553.00",
+    market_type: str = "010",
+    quote_factor: int = 1,
+) -> B3HistoricalRecord:
+    return B3HistoricalRecord(
+        trading_date=trading_date,
+        codbdi="02",
+        trading_symbol=symbol,
+        market_type=market_type,
+        issuer_short_name="PETROBRAS",
+        specification="PN",
+        forward_term_days=None,
+        currency="R$",
+        open_price=Decimal(close),
+        high_price=Decimal(close),
+        low_price=Decimal(close),
+        average_price=Decimal(close),
+        close_price=Decimal(close),
+        best_bid_price=None,
+        best_ask_price=None,
+        trade_count=100,
+        traded_quantity=quantity,
+        traded_volume=Decimal(financial_volume) if financial_volume is not None else None,
+        strike_price=None,
+        correction_indicator=None,
+        maturity_date=None,
+        quote_factor=quote_factor,
+        isin="BRPETRACNPR6",
+        distribution_number=None,
+    )
+
+
+def _b3_eod_result(
+    record: B3HistoricalRecord, *, download_collected_at: datetime = NOW
+) -> B3EodResult:
+    return B3EodResult(
+        record=record,
+        dataset="cotahist_daily",
+        collected_at=download_collected_at,
+        cache_hit=False,
+    )
+
+
+def _b3_market_fake(payload=None):
+    market = FakeMarket(payload=payload or {})
+    market.provider = SimpleNamespace(market=B3_MARKET, provider_name="BRAPI")
+    return market
+
+
+def test_b3_eod_never_overrides_an_already_resolved_brapi_live_price():
+    """Caso A: current_price já AVAILABLE (cotação BRAPI live resolvida
+    ANTES de resolve_asset ser chamado, ver comentário em
+    _apply_b3_official_eod) -- o estágio B3 nem chega a ser consultado,
+    por construção (não é uma checagem extra: a chave já não está mais em
+    `pending`)."""
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(_b3_record()))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [available_indicator("current_price", "43.50")],
+    )
+
+    assert result.value == Decimal("43.50")
+    assert result.source == "BRAPI"
+    assert fake_b3.calls == []
+
+
+def test_b3_eod_fills_current_price_when_still_pending_and_fresh():
+    """Caso B (preço): current_price ainda pendente (nenhuma cotação
+    BRAPI live resolvida) + contexto B3 comprovado + COTAHIST tem o
+    pregão, dentro da validade -- preenche com fechamento oficial,
+    marcando fonte/tipo/competência econômica real (nunca a data de
+    hoje) e a semântica EOD não ajustada de forma honesta na
+    provenance."""
+    record = _b3_record(symbol="PETR4", trading_date=date(2026, 7, 20))
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert fake_b3.calls == ["PETR4"]
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.value == Decimal("42.60")
+    assert result.source == "B3"
+    assert result.source_type == "official"
+    # reference_date É a data real do pregão -- nunca vira collected_at
+    # nem "hoje" (Bloqueador 2, caso D; ver teste dedicado abaixo para um
+    # trading_date que difere de NOW).
+    assert result.reference_date == datetime(2026, 7, 20, tzinfo=timezone.utc)
+    assert result.provenance["price_kind"] == "official_eod_close"
+    assert result.provenance["adjusted"] is False
+    assert result.provenance["dataset"] == "cotahist_daily"
+    assert result.provenance["field"] == "PREULT"
+
+
+# --- Bloqueador 1 (Correção 3, Prompt 3): volume = QUATOT, nunca VOLTOT ---
+
+
+def test_b3_eod_volume_indicator_uses_traded_quantity_never_traded_volume():
+    """O indicador interno `volume` é contratualmente QUANTIDADE (ver
+    IndicatorNormalizationService._value_for_key: `Decimal(quote.volume)`
+    com unit="quantity" no catálogo, e liquidity = price * volume) --
+    nunca o volume financeiro em R$ (VOLTOT/traded_volume). QUATOT e
+    VOLTOT são propositalmente muito diferentes aqui (12345 x 999999.99)
+    para que qualquer troca entre os dois quebre este teste
+    imediatamente."""
+    record = _b3_record(
+        symbol="PETR4",
+        trading_date=date(2026, 7, 20),
+        quantity=12345,
+        financial_volume="999999.99",
+    )
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("volume")],
+    )
+
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.value == Decimal("12345")
+    assert result.value != Decimal("999999.99")
+    # unit não é tocado pelo estágio B3 -- continua exatamente o que o
+    # template de entrada já trazia (na produção real, "quantity", ver
+    # catálogo; aqui o fixture `indicator()` usa "ratio" só para não
+    # depender do catálogo real neste teste unitário).
+    assert result.unit == "ratio"
+    assert result.provenance["field"] == "QUATOT"
+
+
+def test_b3_eod_missing_traded_quantity_never_falls_back_to_traded_volume():
+    """missing != zero: se QUATOT vier ausente no registro (nunca deveria
+    ocorrer em um pregão real -- ver CotahistProvider._parse_int, que só
+    retorna None para um campo QUATOT em branco), o estágio NUNCA usa
+    traded_volume como substituto -- o indicador simplesmente permanece
+    pendente, nunca um valor fabricado a partir de outro campo."""
+    record = _b3_record(
+        symbol="PETR4",
+        trading_date=date(2026, 7, 20),
+        quantity=None,
+        financial_volume="999999.99",
+    )
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("volume")],
+    )
+
+    assert result.value is None
+    assert result.status != IndicatorStatus.AVAILABLE
+
+
+# --- Bloqueador 2 (Correção 3, Prompt 3): validade ancorada em ------------
+# --- reference_date (competência real), nunca em collected_at -----------
+
+
+def test_b3_eod_recent_record_within_catalog_validity_is_available_and_current():
+    """Caso A: registro B3 recente (dentro da política de 2 dias do
+    catálogo para current_price/volume, ver
+    indicator_temporal_validity_days) -> AVAILABLE/"current"."""
+    record = _b3_record(symbol="PETR4", trading_date=date(2026, 7, 20))
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.freshness_status == "current"
+    assert result.valid_until == datetime(2026, 7, 22, tzinfo=timezone.utc)
+
+
+def test_b3_eod_old_record_beyond_catalog_validity_never_becomes_available_current():
+    """Caso B: registro B3 além da política de validade do catálogo (2
+    dias) a partir de sua PRÓPRIA competência econômica -> NÃO pode virar
+    AVAILABLE/"current" fabricado. NOW=2026-07-20; trading_date=
+    2026-07-10 está 10 dias atrás, muito além dos 2 dias permitidos."""
+    record = _b3_record(symbol="PETR4", trading_date=date(2026, 7, 10))
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert fake_b3.calls == ["PETR4"]
+    assert result.status != IndicatorStatus.AVAILABLE
+    # freshness_status="current" é o default do próprio schema quando
+    # nada preenche o indicador (ver NormalizedIndicator.freshness_status)
+    # -- não é evidência de fabricação por si só; a prova real é que
+    # nenhum valor foi escrito e o status não é AVAILABLE.
+    assert result.value is None
+    assert result.source == "BRAPI"  # source do template baseline, nunca sobrescrito para "B3"
+
+
+def test_b3_eod_download_timestamp_never_rejuvenates_an_old_trading_date():
+    """Casos C/E: baixar HOJE um fechamento antigo não pode "rejuvenescer"
+    sua validade -- nem mesmo se o timestamp de coleta do download
+    (`B3EodResult.collected_at`) for muito mais recente que a própria
+    competência econômica do registro (`record.trading_date`). A
+    validade é ancorada exclusivamente em `reference_date`
+    (=record.trading_date), nunca em quando o arquivo foi baixado nem em
+    quando a resolução foi chamada."""
+    record = _b3_record(symbol="PETR4", trading_date=date(2026, 7, 10))
+    # Download feito "agora", bem depois da competência do registro --
+    # isso NUNCA pode dar mais dois dias de vida extra ao dado antigo.
+    fake_b3 = _FakeB3Provider(
+        result=_b3_eod_result(record, download_collected_at=NOW)
+    )
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status != IndicatorStatus.AVAILABLE
+    assert result.value is None
+
+
+def test_b3_eod_reference_date_never_becomes_collected_at():
+    """Caso D: mesmo quando o preenchimento é bem-sucedido,
+    `reference_date` permanece a data real do pregão -- nunca é
+    substituído por `collected_at` (nem o do download, nem o momento da
+    resolução)."""
+    record = _b3_record(symbol="PETR4", trading_date=date(2026, 7, 20))
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.reference_date == datetime(2026, 7, 20, tzinfo=timezone.utc)
+    assert result.collected_at == NOW  # collected_at do download (ver _b3_eod_result)
+
+
+def test_b3_eod_weekend_gap_follows_the_existing_flat_catalog_policy_no_new_rule():
+    """Caso F: comportamento em torno de um fim de semana segue
+    EXATAMENTE a mesma política plana de 2 dias já existente no catálogo
+    -- nenhuma regra nova de calendário/feriado é inventada aqui. NOW
+    (2026-07-20) é uma segunda-feira; o pregão de sexta-feira anterior
+    (2026-07-17, o último antes do fim de semana) já está a 3 dias de
+    distância da sua própria competência, além dos 2 dias permitidos --
+    mesmo sendo o fechamento mais recente disponível, não recebe nenhuma
+    extensão especial por causa do fim de semana."""
+    record = _b3_record(symbol="PETR4", trading_date=date(2026, 7, 17))
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status != IndicatorStatus.AVAILABLE
+
+
+def test_b3_eod_not_found_leaves_current_price_for_downstream_fallbacks():
+    """Caso C: BRAPI e B3 ambos sem dado (get_recent_eod retorna None,
+    nunca fabricado) -- current_price permanece pendente para os estágios
+    seguintes da cascata (snapshot stale/manual), nunca vira zero nem
+    qualquer valor inventado."""
+    fake_b3 = _FakeB3Provider(result=None)
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.value is None
+    assert result.status != IndicatorStatus.AVAILABLE
+    assert fake_b3.calls == ["PETR4"]
+
+
+def test_b3_eod_parse_error_never_crashes_and_never_fabricates_a_value():
+    """Caso E: um registro COTAHIST corrompido (B3ParseError) nunca
+    propaga como crash do resolver nem faz o estágio inventar um valor --
+    é tratado exatamente como "não encontrado", deixando o indicador
+    pendente para os estágios seguintes."""
+    fake_b3 = _FakeB3Provider(error=B3ParseError("registro corrompido (simulado)"))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.value is None
+    assert result.status != IndicatorStatus.AVAILABLE
+
+
+def test_b3_eod_never_runs_outside_a_proven_b3_market_context():
+    """FakeMarket sem `.provider` -> _market_context() retorna None (nunca
+    "B3" assumido) -- o estágio B3 nem tenta consultar o provider oficial,
+    mesmo com current_price pendente e um resultado válido disponível."""
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(_b3_record()))
+
+    resolve_symbol(
+        resolver(market=FakeMarket(payload={}), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert fake_b3.calls == []
+
+
+def test_b3_eod_never_runs_for_treasury_even_in_a_proven_b3_market_context():
+    """TREASURY nunca está em _B3_EOD_ELIGIBLE_CLASSES -- "preço" de
+    Tesouro Direto (PU de compra) é um conceito totalmente diferente do
+    fechamento de bolsa B3, com fonte própria (Tesouro Transparente)."""
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(_b3_record()))
+
+    resolve_symbol(
+        resolver(
+            market=_b3_market_fake(),
+            b3_provider=fake_b3,
+            treasury_provider=FakeTreasuryProvider(),
+        ),
+        "TESOURO-SELIC-01032031",
+        [indicator("current_price")],
+        asset_class=InvestmentClass.TREASURY,
+    )
+
+    assert fake_b3.calls == []
+
+
+# --- FATCOT (Correção 3, Prompt 3, revisão final): PREULT NUNCA dividido -
+# --- por quote_factor, apesar do layout oficial descrever FATCOT='1000' -
+# --- como "quote per lot of a thousand shares" --------------------------
+
+
+def test_b3_eod_current_price_uses_preult_directly_never_divided_by_fatcot_1000():
+    """Confirmado por evidência real cruzada durante esta revisão: papéis
+    reais com FATCOT=1000 no COTAHIST oficial (FNAM11, FNOR11, GOLL54)
+    têm PREULT bruto batendo EXATAMENTE com a cotação publicada por
+    agregadores de mercado independentes na mesma data (ex.: FNAM11
+    PREULT=0.36 em 19/08/2026 == brapi.dev, mesma data, R$0,36) --
+    dividir por FATCOT produziria um preço ~1000x menor que o preço real
+    negociado. Por isso current_price usa PREULT diretamente, mesmo com
+    FATCOT != 1 (ver docstring de _apply_b3_eod_field para a evidência
+    completa)."""
+    record = _b3_record(symbol="FNAM11", close="0.36", quote_factor=1000)
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "FNAM11",
+        [indicator("current_price")],
+    )
+
+    assert result.status == IndicatorStatus.AVAILABLE
+    assert result.value == Decimal("0.36")
+    assert result.value != Decimal("0.36") / Decimal(1000)
+
+
+def test_b3_eod_current_price_trivial_fatcot_1_stays_unchanged():
+    """Caso trivial explícito (FATCOT=1, cotação unitária): current_price
+    é exatamente PREULT, sem qualquer transformação -- comportamento
+    inalterado por esta revisão."""
+    record = _b3_record(symbol="PETR4", close="43.11", quote_factor=1)
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.value == Decimal("43.11")
+
+
+def test_b3_eod_provenance_always_preserves_quote_factor():
+    """FATCOT é preservado em provenance (nunca descartado) para
+    auditoria/revisão futura, mesmo sem nenhuma transformação aplicada a
+    current_price."""
+    record = _b3_record(symbol="FNAM11", close="0.36", quote_factor=1000)
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "FNAM11",
+        [indicator("current_price")],
+    )
+
+    assert result.provenance["quote_factor"] == 1000
+
+
+# --- STALE (Correção 3, Prompt 3, revisão final): registro B3 real porém -
+# --- vencido nunca vira NOT_REPORTED na tentativa registrada -------------
+
+
+def test_b3_eod_stale_record_records_stale_not_not_reported():
+    """Bloqueador 4: quando o COTAHIST tem um registro REAL para o
+    símbolo mas ele já está fora da validade temporal (ver
+    test_b3_eod_old_record_beyond_catalog_validity_never_becomes_available_current),
+    a tentativa B3 registrada em resolution_attempts nunca pode ser
+    NOT_REPORTED -- o dado FOI reportado pela B3, só não estava mais
+    válido. A razão refletida no indicador (via _reconcile_failure_reasons)
+    deve ser STALE, e a tentativa carrega a reference_date real do
+    pregão (nunca None, nunca "hoje")."""
+    record = _b3_record(symbol="PETR4", trading_date=date(2026, 7, 10))
+    fake_b3 = _FakeB3Provider(result=_b3_eod_result(record))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status != IndicatorStatus.AVAILABLE
+    assert result.provider_failure_reason == ProviderFailureReason.STALE
+    b3_attempts = [a for a in result.resolution_attempts if a.provider == "B3"]
+    assert len(b3_attempts) == 1
+    attempt = b3_attempts[0]
+    assert attempt.outcome == ResolutionOutcome.FAILURE
+    assert attempt.provider_failure_reason == ProviderFailureReason.STALE
+    assert attempt.provider_failure_reason != ProviderFailureReason.NOT_REPORTED
+    assert attempt.reference_date == datetime(2026, 7, 10, tzinfo=timezone.utc)
+
+
+def test_b3_eod_genuinely_missing_record_still_records_not_reported():
+    """Guarda de regressão: um registro genuinamente AUSENTE (get_recent_eod
+    retorna None -- ticker não encontrado em nenhum pregão do intervalo)
+    continua sendo NOT_REPORTED -- a correção do Bloqueador 4 é
+    localizada ao caso "valor real porém stale", nunca generaliza para
+    "ausência real"."""
+    fake_b3 = _FakeB3Provider(result=None)
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status != IndicatorStatus.AVAILABLE
+    b3_attempts = [a for a in result.resolution_attempts if a.provider == "B3"]
+    assert len(b3_attempts) == 1
+    assert b3_attempts[0].provider_failure_reason == ProviderFailureReason.NOT_REPORTED
+
+
+def test_b3_eod_parse_error_still_classified_from_the_real_exception_never_stale():
+    """Guarda de regressão: um B3ParseError (arquivo corrompido) continua
+    classificado a partir da exceção real -- nunca "finge" STALE (a
+    correção do Bloqueador 4 só se aplica quando o provider de fato
+    retornou um valor real e válido, porém vencido)."""
+    fake_b3 = _FakeB3Provider(error=B3ParseError("registro corrompido (simulado)"))
+
+    result = resolve_symbol(
+        resolver(market=_b3_market_fake(), b3_provider=fake_b3),
+        "PETR4",
+        [indicator("current_price")],
+    )
+
+    assert result.status != IndicatorStatus.AVAILABLE
+    b3_attempts = [a for a in result.resolution_attempts if a.provider == "B3"]
+    assert len(b3_attempts) == 1
+    assert b3_attempts[0].provider_failure_reason != ProviderFailureReason.STALE

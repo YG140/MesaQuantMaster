@@ -84,6 +84,39 @@ class Settings(BaseSettings):
     CVM_FII_MAX_DOWNLOAD_BYTES: int = 41943040
     CVM_FII_MAX_UNCOMPRESSED_BYTES: int = 536870912
     CVM_FII_CACHE_TTL_HOURS: int = 24
+    # Fonte oficial B3 (COTAHIST) para fechamento/histórico não ajustado --
+    # confirmado vigente por auditoria direta (HTTP HEAD real, sem
+    # autenticação) antes desta implementação. Layout público "PUBLIC
+    # INFORMATION" (b3.com.br). Ver B3_EOD_BASE_URL abaixo para o arquivo
+    # diário (COTAHIST_D<DDMMAAAA>.ZIP) usado como fallback de fechamento
+    # recente, e B3_HISTORICAL_BASE_URL para o arquivo anual
+    # (COTAHIST_A<AAAA>.ZIP) usado para histórico multi-ano.
+    B3_COTAHIST_BASE_URL: str = "https://bvmf.bmfbovespa.com.br/InstDados/SerHist"
+    B3_CACHE_DIR: str = ".cache/b3"
+    B3_TIMEOUT_SECONDS: float = 60
+    # ~2 MiB: o arquivo diário observado tem ~0,5 MiB; a margem suporta
+    # pregões de maior volume sem permitir download ilimitado.
+    B3_DAILY_MAX_DOWNLOAD_BYTES: int = 2097152
+    B3_DAILY_MAX_UNCOMPRESSED_BYTES: int = 20971520
+    # ~100 MiB: o arquivo anual observado tem ~85 MiB.
+    B3_ANNUAL_MAX_DOWNLOAD_BYTES: int = 104857600
+    B3_ANNUAL_MAX_UNCOMPRESSED_BYTES: int = 1073741824
+    # 20h: um único pregão por dia útil -- folga generosa sobre a janela de
+    # publicação noturna do arquivo diário, sem redownload a cada request.
+    B3_CACHE_TTL_HOURS: int = 20
+    # BVBG.186 (EquitiesSimplifiedPriceReport) e BVBG.028 (InstrumentReport)
+    # são produtos do "Legacy Channel" da B3 (UP2DATA), que a documentação
+    # oficial (b3.com.br/en_us/market-data-and-indices/data-services/
+    # up2data/available-data/) descreve como exigindo "contracted access" --
+    # nenhuma URL pública determinística e estável foi confirmada durante a
+    # auditoria (ver relatório). Strings vazias (default) mantêm os
+    # adaptadores B3DailyPriceSource/B3InstrumentRegistrySource
+    # estruturalmente prontos (parser testado com fixtures do schema
+    # oficial), mas retornando NOT_CONFIGURED em vez de simular suporte.
+    # Preencher aqui SOMENTE se uma URL pública real for confirmada, ou via
+    # variável de ambiente local -- nunca um valor inventado.
+    B3_BVBG186_URL: str = ""
+    B3_BVBG028_URL: str = ""
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-5-mini"
     AI_AGENT_ENABLED: bool = False

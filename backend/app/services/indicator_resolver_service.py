@@ -11,6 +11,8 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.engines.derived_indicator_engine import DerivedIndicatorEngine
 from app.engines.indicator_catalog import indicator_temporal_validity_days
+from app.providers.b3.exceptions import B3ProviderError
+from app.providers.b3_official_provider import B3OfficialDataProvider
 from app.providers.bcb_sgs_provider import BcbSgsProvider
 from app.providers.cvm_open_data_provider import CvmOpenDataProvider
 from app.providers.tesouro_transparente_provider import TesouroTransparenteProvider
@@ -37,7 +39,27 @@ from app.services.indicator_normalization_service import (
     sanitize_failure_detail,
 )
 from app.services.market_service import MarketService
-from app.services.symbol_identity import market_context_of, resolve_symbol_identity
+from app.services.symbol_identity import (
+    B3_MARKET,
+    market_context_of,
+    resolve_symbol_identity,
+)
+
+# Indicadores para os quais o fechamento oficial B3 (COTAHIST diário) pode
+# servir de fallback quando BRAPI não fornecer cotação live -- nunca
+# indicadores fundamentalistas (esses continuam BRAPI/CVM, ver Prompt 2
+# seção 6/26 da tarefa B3 oficial). Somente classes onde negociação em
+# bolsa B3 é o conceito real: nunca TREASURY (Tesouro Transparente é
+# authoritative) nem classes fora do escopo B3.
+_B3_EOD_INDICATOR_KEYS = frozenset({"current_price", "volume"})
+_B3_EOD_ELIGIBLE_CLASSES = frozenset(
+    {
+        InvestmentClass.STOCK,
+        InvestmentClass.FII,
+        InvestmentClass.ETF,
+        InvestmentClass.BDR,
+    }
+)
 
 
 # Validade temporal de dado CVM = prazo esperado para o PRÓXIMO reporte
@@ -292,6 +314,7 @@ class IndicatorResolverService:
         cvm_link_session_factory=None,
         cvm_fii_repository: CvmFiiRepository | None = None,
         fii_link_session_factory=None,
+        b3_provider: B3OfficialDataProvider | None = None,
     ):
         self.market_service = market_service
         self.normalizer = normalizer
@@ -300,6 +323,10 @@ class IndicatorResolverService:
         self.bcb_provider = bcb_provider or BcbSgsProvider()
         self.treasury_provider = treasury_provider or self._default_treasury_provider()
         self.cvm_provider = cvm_provider or CvmOpenDataProvider()
+        # Fonte oficial B3 (COTAHIST) -- fallback de current_price/volume
+        # quando BRAPI live não resolver (ver _apply_b3_official_eod).
+        # Nunca substitui BRAPI, CVM, CVM FII ou Tesouro Transparente.
+        self.b3_provider = b3_provider or B3OfficialDataProvider()
         self.cvm_repository = cvm_repository
         # Fábrica de sessão usada SOMENTE para persistir o vínculo automático
         # ativo<->emissor CVM (ver _persist_cvm_link_isolated) — nunca para
@@ -346,6 +373,15 @@ class IndicatorResolverService:
         # corretamente, só para ser honesto na provenance).
         identity = resolve_symbol_identity(symbol, market=self._market_context())
         self._apply_snapshots(resolved, symbol, collected_at)
+
+        # Fallback de current_price/volume via fechamento oficial B3 --
+        # só toca o que ainda estiver pendente (BRAPI live já resolvido
+        # antes de resolve_asset ser chamado permanece intocado; ver
+        # _apply_b3_official_eod). Roda antes dos estágios de fundamentos
+        # abaixo porque não compete com eles (nenhum dos outros estágios
+        # resolve current_price/volume).
+        if self._has_unresolved(resolved):
+            self._apply_b3_official_eod(resolved, identity, asset_class, collected_at)
 
         if self._has_unresolved(resolved):
             pending = self._unresolved_keys(resolved)
@@ -551,6 +587,176 @@ class IndicatorResolverService:
                     ),
                 }
             )
+
+    def _apply_b3_official_eod(
+        self,
+        resolved: dict[str, NormalizedIndicator],
+        identity,
+        asset_class: InvestmentClass,
+        collected_at: datetime,
+    ) -> None:
+        """Fallback de current_price/volume via fechamento oficial B3
+        (COTAHIST diário) -- SOMENTE quando BRAPI live não os resolveu
+        (baseline já populado antes de resolve_asset ser chamado; aqui só
+        tocamos chaves ainda pendentes) e SOMENTE em contexto B3
+        comprovado pelo provider de mercado realmente em uso (nunca "B3"
+        assumido). Nunca fabrica live: reference_date é a DATA DO PREGÃO
+        real do arquivo oficial (nunca hoje só porque foi baixado hoje),
+        e a provenance registra price_kind="official_eod_close" +
+        adjusted=False para que nenhum consumidor confunda isto com
+        cotação intraday nem com série ajustada por proventos.
+        """
+        if self._market_context() != B3_MARKET:
+            return
+        if asset_class not in _B3_EOD_ELIGIBLE_CLASSES:
+            return
+        pending = self._unresolved_keys(resolved) & _B3_EOD_INDICATOR_KEYS
+        if not pending:
+            return
+
+        result = None
+        outcome_exc: Exception | None = None
+        try:
+            result = self.b3_provider.get_recent_eod(identity.trading_symbol)
+        except B3ProviderError as exc:
+            outcome_exc = exc
+
+        reference: datetime | None = None
+        stale_keys: set[str] = set()
+        if result is not None:
+            record = result.record
+            reference = datetime.combine(record.trading_date, time.min, tzinfo=timezone.utc)
+            base_provenance = {
+                "provider": "b3",
+                "dataset": result.dataset,
+                "price_kind": "official_eod_close",
+                "adjusted": record.adjusted,
+                "trading_symbol": record.trading_symbol,
+                "market_type": record.market_type,
+                "isin": record.isin,
+                # FATCOT preservado em provenance para auditoria/futura
+                # revisão -- NUNCA aplicado como divisor/multiplicador de
+                # PREULT aqui (ver _apply_b3_eod_field, docstring: dado real
+                # cruzado com cotação de mercado independente prova que
+                # PREULT já é o preço por unidade mesmo com FATCOT != 1).
+                "quote_factor": record.quote_factor,
+            }
+            if "current_price" in pending and record.close_price is not None:
+                # PREULT usado DIRETAMENTE, nunca dividido/multiplicado por
+                # FATCOT -- ver docstring de _apply_b3_eod_field para a
+                # evidência real que fundamenta esta decisão.
+                if not self._apply_b3_eod_field(
+                    resolved,
+                    key="current_price",
+                    value=record.close_price,
+                    reference=reference,
+                    collected_at=collected_at,
+                    provider_collected_at=result.collected_at,
+                    provenance={**base_provenance, "field": "PREULT"},
+                ):
+                    stale_keys.add("current_price")
+            # QUATOT (quantidade total negociada), nunca VOLTOT (volume
+            # financeiro) -- o indicador interno `volume` é contratualmente
+            # "quantity" (ver IndicatorNormalizationService._value_for_key
+            # e o catálogo: unit="quantity", usado por `liquidity` =
+            # price * volume). VOLTOT é um conceito diferente (R$
+            # negociados) que esta tarefa não introduz como indicador
+            # separado -- ver B3HistoricalRecord.traded_volume, preservado
+            # apenas para uso futuro (ex.: um eventual `financial_volume`).
+            if "volume" in pending and record.traded_quantity is not None:
+                if not self._apply_b3_eod_field(
+                    resolved,
+                    key="volume",
+                    value=Decimal(record.traded_quantity),
+                    reference=reference,
+                    collected_at=collected_at,
+                    provider_collected_at=result.collected_at,
+                    provenance={**base_provenance, "field": "QUATOT"},
+                ):
+                    stale_keys.add("volume")
+
+        self._record_stage_attempts(
+            resolved,
+            pending_before=pending,
+            provider="B3",
+            source_type="official",
+            dataset_outcomes=[("cotahist_daily", result is not None, outcome_exc)],
+            attempted_at=collected_at,
+            stale_keys=frozenset(stale_keys),
+            stale_reference=reference,
+        )
+
+    def _apply_b3_eod_field(
+        self,
+        resolved: dict[str, NormalizedIndicator],
+        *,
+        key: str,
+        value: Decimal,
+        reference: datetime,
+        collected_at: datetime,
+        provider_collected_at: datetime,
+        provenance: dict,
+    ) -> bool:
+        """Preenche um indicador com um valor EOD B3, com validade ANCORADA
+        na competência econômica real (`reference` = data do pregão),
+        nunca em `collected_at` (o momento em que este resolve_asset foi
+        chamado) -- baixar hoje um fechamento de vários pregões atrás
+        (ver max_lookback_days em get_recent_eod) nunca pode "rejuvenescer"
+        sua validade. Usa a MESMA política temporal do catálogo já
+        aplicada a este indicador em qualquer outra fonte (ver
+        _valid_until), não uma janela arbitrária nova.
+
+        Se a validade (calculada a partir da própria competência do
+        registro) já expirou no momento desta resolução, o indicador é
+        deixado PENDENTE -- nunca marcado como AVAILABLE/"current" (isso
+        fabricaria uma aparência de dado atual que ele não tem) e o status
+        do indicador em si nunca vira STALE aqui (um estágio B3 novo no
+        MEIO da cascata assumindo STALE poderia ser sobrescrito de forma
+        não intencional pelo estágio de stale snapshot, que roda depois e
+        não foi desenhado para ceder a uma fonte de maior prioridade já
+        stale). Os estágios seguintes da cascata (snapshot stale, manual)
+        continuam livres para tentar preencher esta chave normalmente.
+        Retorna False nesse caso -- o chamador usa isso para registrar a
+        tentativa como STALE (nunca NOT_REPORTED: o dado FOI reportado
+        pela B3, só estava vencido -- ver _apply_b3_official_eod).
+
+        `value` (PREULT para current_price) é usado DIRETAMENTE, nunca
+        dividido/multiplicado por FATCOT (`record.quote_factor`), apesar
+        do layout oficial descrever FATCOT='1000' como "quote per lot of
+        one thousand shares". Confirmado por evidência real cruzada
+        durante esta correção: no arquivo diário e anual oficiais de
+        2026, papéis reais com FATCOT=1000 (FNAM11, FNOR11, GOLL54) e
+        FATCOT=10000/1000000 (AZUL54, AZUL53) têm PREULT bruto batendo
+        EXATAMENTE com a cotação publicada por agregadores de mercado
+        independentes na mesma data (ex.: FNAM11 PREULT=0.36 em
+        19/08/2026 == brapi.dev "closing date 2026-08-19" == R$0,36) --
+        dividir por FATCOT produziria um preço ~1000x menor que o preço
+        real negociado. FATCOT é preservado em provenance (nunca
+        descartado) para auditoria e para uma eventual revisão futura com
+        mais evidência, mas nenhuma transformação é aplicada aqui.
+        """
+        valid_until = self._valid_until(key, reference, source_type="official")
+        if collected_at > valid_until:
+            return False
+        current = resolved[key]
+        resolved[key] = current.model_copy(
+            update={
+                "value": value,
+                "display_value": display_value(value, current.unit, None),
+                "status": IndicatorStatus.AVAILABLE,
+                "source": "B3",
+                "source_type": "official",
+                "reference_date": reference,
+                "collected_at": provider_collected_at,
+                "valid_until": valid_until,
+                "freshness_status": "current",
+                "confidence": ConfidenceLevel.HIGH,
+                "unavailable_reason": None,
+                "provider_failure_reason": None,
+                "provenance": provenance,
+            }
+        )
+        return True
 
     def _load_brapi_free(
         self, symbol: str, asset_class: InvestmentClass
@@ -1046,12 +1252,25 @@ class IndicatorResolverService:
         source_type: str,
         dataset_outcomes: list[tuple[str, bool, Exception | None]],
         attempted_at: datetime,
+        stale_keys: frozenset[str] = frozenset(),
+        stale_reference: datetime | None = None,
     ) -> None:
         """Anexa uma tentativa estruturada por indicador ainda pendente antes do estágio.
 
         Indicadores resolvidos neste estágio recebem uma tentativa de sucesso;
         os que continuam pendentes recebem uma tentativa de falha com o motivo
         classificado a partir da exceção tipada real (nunca inventado).
+
+        `stale_keys` é um mecanismo aditivo, opcional e localizado ao
+        estágio B3 (ver _apply_b3_official_eod): chaves cujo valor real
+        FOI obtido do provider mas ficou pendente por estar vencido (fora
+        da validade temporal ancorada em reference_date, nunca por
+        collected_at -- ver _apply_b3_eod_field). Sem isso, o dado
+        reportado-porém-stale cairia no branch genérico abaixo e viraria
+        NOT_REPORTED, o que é factualmente falso (o provider REPORTOU um
+        valor real; só não estava mais válido). Nenhum outro estágio
+        chamador passa este parâmetro, então o comportamento genérico
+        para todos os outros providers permanece idêntico.
         """
         if not pending_before or not dataset_outcomes:
             return
@@ -1095,14 +1314,23 @@ class IndicatorResolverService:
             item = resolved.get(key)
             if item is None:
                 continue
+            if key in stale_keys:
+                key_reason = ProviderFailureReason.STALE
+                key_reference = stale_reference
+                key_detail = None
+            else:
+                key_reason = reason
+                key_reference = None
+                key_detail = detail
             attempt = ProviderResolutionAttempt(
                 provider=provider,
                 source_type=source_type,
                 dataset=dataset_label,
                 outcome=ResolutionOutcome.FAILURE,
-                provider_failure_reason=reason,
+                provider_failure_reason=key_reason,
                 attempted_at=attempted_at,
-                detail=detail,
+                reference_date=key_reference,
+                detail=key_detail,
             )
             resolved[key] = item.model_copy(
                 update={"resolution_attempts": [*item.resolution_attempts, attempt]}

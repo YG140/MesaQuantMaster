@@ -21,6 +21,7 @@ __pycache__/
 **/.cache/cvm/
 **/.cache/cvm_fii/
 **/.cache/tesouro_transparente/
+**/.cache/b3/
 .coverage
 htmlcov/
 test_mesa_quant_master.db
