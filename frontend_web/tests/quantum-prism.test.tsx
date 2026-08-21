@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AppRouter } from "../src/app/router";
 import { renderWithProviders } from "./render";
 import { server } from "./testServer";
@@ -27,8 +27,10 @@ describe("Quantum Prism", () => {
     );
     const user = await openAuthenticated("/ativos");
     const search = await screen.findByPlaceholderText("PETR4 ou Petrobras");
-    await user.type(search,"PETR4"); await user.click(await screen.findByRole("button",{name:/PETR4/}));
-    await user.clear(search); await user.type(search,"VALE3"); await user.click(await screen.findByRole("button",{name:/VALE3/}));
+    // timeout maior: SearchAutocomplete agora tem debounce real (~300ms,
+    // ver Correção interface) antes de disparar a busca.
+    await user.type(search,"PETR4"); await user.click(await screen.findByRole("button",{name:/PETR4/}, {timeout:10_000}));
+    await user.clear(search); await user.type(search,"VALE3"); await user.click(await screen.findByRole("button",{name:/VALE3/}, {timeout:10_000}));
     await user.click(screen.getByRole("button",{name:"Comparar ativos"}));
     expect(await screen.findByRole("cell",{name:"PETR4"})).toBeInTheDocument();
     expect(screen.getByRole("cell",{name:"VALE3"})).toBeInTheDocument();
@@ -50,10 +52,18 @@ describe("Quantum Prism", () => {
 
   it("descarta preferências visuais inválidas do storage", async () => {
     localStorage.setItem("mesa_quant_visual_preferences_v1", JSON.stringify({ profile: "inexistente", reducedMotion: "não" }));
-    server.use(http.get(`${api}/market/provider-capabilities`, () => HttpResponse.json({ provider: "hybrid", configured: false, reachable: null, supported_domains: [], accessible_domains: [], restricted_domains: [], last_checked_at: "2026-08-14T01:00:00Z" })));
     await openAuthenticated("/configuracoes");
     expect(await screen.findByLabelText("Perfil visual")).toHaveValue("workstation");
-    expect(screen.getByText("Não monitorado")).toBeInTheDocument();
+  });
+
+  it("descarta um perfil visual legado 'analytical' (removido da UI) com segurança", async () => {
+    // Correção interface: "Analítico" nunca teve efeito CSS real (controle
+    // falso) e foi removido das opções -- um valor legado salvo por um
+    // usuário antigo precisa cair para o default, nunca quebrar o parse.
+    localStorage.setItem("mesa_quant_visual_preferences_v1", JSON.stringify({ profile: "analytical" }));
+    await openAuthenticated("/configuracoes");
+    expect(await screen.findByLabelText("Perfil visual")).toHaveValue("workstation");
+    expect(screen.queryByRole("option", { name: "Analítico" })).not.toBeInTheDocument();
   });
 
   it("expõe a navegação principal e o contexto do dashboard", async () => {
@@ -110,7 +120,10 @@ describe("Quantum Prism", () => {
   it("redireciona Investir para a seção canônica de montagem", async () => {
     await openAuthenticated("/investir");
     expect(await screen.findByRole("tab", { name: "Montar carteira" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getAllByRole("button", { name: "Montar minha carteira" })).toHaveLength(1);
+    // Correção interface: "Montar carteira" busca sua própria política de
+    // forma independente e assíncrona -- o botão só aparece depois que
+    // essa busca (rápida, mockada) resolve.
+    expect(await screen.findAllByRole("button", { name: "Montar minha carteira" })).toHaveLength(1);
   });
 
   it("limita a inteligência a três áreas principais", async () => {
@@ -119,6 +132,28 @@ describe("Quantum Prism", () => {
     expect(screen.getByRole("tab", { name: "Diagnóstico" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Montar carteira" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Futuro financeiro" })).toBeInTheDocument();
+  });
+
+  it("header reorganizado: sem badge API FastAPI, sem Mesa IA/Sair redundantes, com ação Prisma do usuário", async () => {
+    await openAuthenticated();
+    const topbar = document.querySelector<HTMLElement>(".topbar")!;
+    expect(within(topbar).queryByText("API FastAPI")).not.toBeInTheDocument();
+    expect(within(topbar).queryByRole("button", { name: /Mesa IA/i })).not.toBeInTheDocument();
+    expect(within(topbar).queryByRole("button", { name: "Sair" })).not.toBeInTheDocument();
+    // Mesa IA nunca desaparece -- continua acessível pelo Sidebar (desktop e mobile).
+    expect(screen.getAllByRole("button", { name: /Mesa IA/i }).length).toBeGreaterThan(0);
+    // Ação Prisma do usuário: nome real, leva a /configuracoes#conta.
+    const userLink = within(topbar).getByRole("link", { name: /Abrir conta e perfil/i });
+    expect(userLink).toHaveAttribute("href", "/configuracoes#conta");
+    expect(userLink).toHaveTextContent("Ana Quant");
+  });
+
+  it("deep link #conta rola a seção Conta e Perfil para a visão", async () => {
+    const scrollSpy = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollSpy;
+    await openAuthenticated("/configuracoes#conta");
+    expect(await screen.findByRole("heading", { name: "Configurações", level: 2 })).toBeInTheDocument();
+    expect(scrollSpy).toHaveBeenCalled();
   });
 
   it.each(["/inteligencia-carteira", "/analisar", "/analises", "/simulador-historico"])("mantém a rota histórica %s", async (path) => {

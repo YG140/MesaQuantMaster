@@ -280,7 +280,11 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("heading", { name: "Mercado e ativos", exact: true })).toBeVisible();
   await expect(page.getByText(/JSON|undefined|null|NaN/)).not.toBeVisible();
-  await page.getByRole("button", { name: "Sair" }).click();
+  // Correção interface: logout saiu do header e passou a viver em
+  // Configurações, seção "Sair da conta".
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/configuracoes");
+  await page.getByRole("button", { name: "Sair da conta" }).click();
   await expect(page.getByRole("heading", { name: "Mesa Quant Master" })).toBeVisible();
 });
 

@@ -331,7 +331,8 @@ describe("paginas autenticadas", () => {
   it("pesquisa PETR4 e Petrobras, separa preco atual de preco de compra e salva", async () => {
     const user = await login("/investimentos/novo");
     await user.type(await screen.findByLabelText("Ativo ou empresa"), "PETR4");
-    await user.click(await screen.findByText("PETR4"));
+    // timeout maior: SearchAutocomplete agora tem debounce real (~300ms).
+    await user.click(await screen.findByText("PETR4", {}, { timeout: 10_000 }));
     expect(screen.getByText("Última cotação disponível")).toBeInTheDocument();
     expect(screen.getByText("Variação")).toBeInTheDocument();
     expect(screen.queryByText("STOCK")).not.toBeInTheDocument();
@@ -440,7 +441,7 @@ describe("paginas autenticadas", () => {
     const user = await login("/investimentos/novo");
     await user.type(await screen.findByLabelText("Ativo ou empresa"), "PETR4");
 
-    expect(await screen.findByText(/Limite de consultas ao mercado atingido/)).toBeInTheDocument();
+    expect(await screen.findByText(/Limite de consultas ao mercado atingido/, {}, { timeout: 10_000 })).toBeInTheDocument();
   });
 
   it("importa carteira com revisao de linhas", async () => {
@@ -480,9 +481,13 @@ describe("paginas autenticadas", () => {
   });
 
   it("monta carteira com dados determinísticos", async () => {
+    // Correção interface: "Montar carteira" busca sua própria política
+    // (portfolio-policy) de forma independente e assíncrona, em vez de
+    // recebê-la já resolvida via prop -- o botão de submit só aparece
+    // depois que essa política própria (rápida, mockada) resolve.
     const user = await login("/planejar?secao=montar-carteira");
     await user.click(await screen.findByRole("tab", { name: "Montar carteira" }));
-    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    await user.click(await screen.findByRole("button", { name: "Montar minha carteira" }));
 
     expect(await screen.findByRole("heading", { name: "Sua carteira recomendada" })).toBeInTheDocument();
     await user.click(screen.getByText("Distribuição por classe"));

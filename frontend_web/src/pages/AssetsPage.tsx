@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { SearchAutocomplete } from "../components/forms/SearchAutocomplete";
 import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
@@ -14,10 +15,39 @@ import { MarketOpportunities } from "./PortfolioIntelligencePage";
 export function AssetsPage() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkTicker = searchParams.get("ativo");
+  const appliedDeepLinkTicker = useRef<string | null>(null);
   const [query, setQuery] = useState("");
   const [asset, setAsset] = useState<MarketAsset | null>(null);
   const [comparison, setComparison] = useState<string[]>([]);
   const assets = useQuery({ queryKey: ["assets"], queryFn: () => endpoints.assets(token!) });
+
+  // Seleção via URL (?ativo=PETR4) -- alimentada pela busca global do
+  // header (ver GlobalSearchDialog): compartilhável, restaurável e
+  // compatível com refresh, sem precisar de estado global. Roda uma
+  // única vez por valor distinto de `ativo` na URL (guardado por ref,
+  // não por `asset` no array de dependências, para nunca refazer a busca
+  // depois que o ativo já foi selecionado).
+  useEffect(() => {
+    if (!deepLinkTicker || !token) return;
+    if (appliedDeepLinkTicker.current === deepLinkTicker) return;
+    appliedDeepLinkTicker.current = deepLinkTicker;
+    const normalized = deepLinkTicker.toUpperCase();
+    endpoints
+      .marketSearch(token, deepLinkTicker)
+      .then((results) => {
+        const match = results.find((item) => item.ticker.toUpperCase() === normalized) ?? results[0] ?? null;
+        if (!match) return;
+        setAsset(match);
+        setQuery(match.ticker);
+        setComparison((items) => (items.includes(match.ticker) || items.length >= 5 ? items : [...items, match.ticker]));
+      })
+      .catch(() => {
+        // Falha silenciosa: o usuário permanece na página de Mercado com a
+        // busca vazia, nunca um erro bloqueante por causa de um deep link.
+      });
+  }, [deepLinkTicker, token]);
   const createAsset = useMutation({
     mutationFn: () => {
       if (!asset) throw new Error("Selecione um ativo.");
@@ -35,7 +65,25 @@ export function AssetsPage() {
   });
   const intelligence = useQuery({ queryKey: ["asset-intelligence", asset?.ticker], queryFn: () => endpoints.assetIntelligence(token!, asset!.ticker), enabled: Boolean(asset) });
   const analysis = useMutation({ mutationFn: () => endpoints.analyzeAssets(token!, comparison) });
-  const selectAsset = (next: MarketAsset) => { setAsset(next); setComparison((items) => items.includes(next.ticker) || items.length >= 5 ? items : [...items, next.ticker]); };
+  const selectAsset = (next: MarketAsset) => {
+    // Marca o ref ANTES de atualizar a URL abaixo: sem isso, a mudança de
+    // ?ativo= disparada por setSearchParams reativaria o efeito de deep
+    // link (mesmo valor, dependência mudou de referência) e refaria uma
+    // busca de rede redundante para um ativo que o usuário acabou de
+    // selecionar aqui mesmo (Correção interface, revisão: mantém a URL em
+    // sincronia com a seleção real sem criar um loop efeito<->URL).
+    appliedDeepLinkTicker.current = next.ticker;
+    setAsset(next);
+    setComparison((items) => items.includes(next.ticker) || items.length >= 5 ? items : [...items, next.ticker]);
+    setSearchParams(
+      (params) => {
+        const updated = new URLSearchParams(params);
+        updated.set("ativo", next.ticker);
+        return updated;
+      },
+      { replace: true },
+    );
+  };
 
   if (assets.isLoading) return <LoadingState />;
   if (assets.error) return <ErrorState message="Não foi possível carregar ativos." />;

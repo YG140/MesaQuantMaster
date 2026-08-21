@@ -128,7 +128,15 @@ def get_portfolio_intelligence(
     current_user: User = Depends(get_current_active_user),
 ):
     service = get_service(db)
-    return service.get_portfolio_intelligence(current_user.id)
+    try:
+        return service.get_portfolio_intelligence(current_user.id)
+    except ValueError as exc:
+        # Inconsistencia de dominio na carteira (ex.: venda registrada acima
+        # da quantidade acumulada comprada) -- nunca deve chegar como 500
+        # generico. A mensagem do ValueError ja e de dominio (ver
+        # PortfolioEngine.calculate_positions), sem stack trace/SQL/detalhe
+        # interno, entao e reaproveitada diretamente.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/diagnosis", response_model=PortfolioDiagnosis)
@@ -137,7 +145,10 @@ def get_portfolio_diagnosis(
     current_user: User = Depends(get_current_active_user),
 ):
     service = get_service(db)
-    return service.get_portfolio_intelligence(current_user.id).diagnosis
+    try:
+        return service.get_portfolio_intelligence(current_user.id).diagnosis
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/policy", response_model=PortfolioPolicyRead | None)
