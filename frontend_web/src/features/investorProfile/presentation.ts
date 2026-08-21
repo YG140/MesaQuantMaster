@@ -35,7 +35,12 @@ export function investorProfileObjectiveLabel(objective?: string | null): string
 }
 
 export function investorProfileActionLabel(status?: string | null): string {
-  return status === "complete" ? "Refazer avaliação" : "Continuar onboarding";
+  if (status === "complete") return "Refazer avaliação";
+  // "needs_review" já executa o fluxo de revisão (ver REVIEWABLE_STATUSES
+  // abaixo) -- o rótulo precisa indicar isso, não o mesmo texto genérico
+  // usado para quem ainda nem começou o questionário.
+  if (status === "needs_review") return "Revisar perfil";
+  return "Continuar questionário";
 }
 
 const REVIEWABLE_STATUSES = new Set(["complete", "needs_review"]);

@@ -3,6 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AppRouter } from "../src/app/router";
+import { investorProfileActionLabel } from "../src/features/investorProfile/presentation";
 import { renderWithProviders } from "./render";
 import { server } from "./testServer";
 
@@ -160,4 +161,21 @@ describe("Quantum Prism", () => {
     await openAuthenticated(path);
     expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
   });
+});
+
+describe("investorProfileActionLabel", () => {
+  it("indica revisão (não 'Continuar onboarding') para needs_review, já que esse status já dispara o fluxo de revisão", () => {
+    expect(investorProfileActionLabel("needs_review")).toBe("Revisar perfil");
+  });
+
+  it("mantém 'Refazer avaliação' para complete", () => {
+    expect(investorProfileActionLabel("complete")).toBe("Refazer avaliação");
+  });
+
+  it.each(["needs_onboarding", "in_progress", "pending_confirmation", null, undefined])(
+    "usa 'Continuar questionário' para estado incompleto (%s)",
+    (status) => {
+      expect(investorProfileActionLabel(status)).toBe("Continuar questionário");
+    },
+  );
 });

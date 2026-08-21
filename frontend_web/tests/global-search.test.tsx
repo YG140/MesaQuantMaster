@@ -84,6 +84,23 @@ describe("busca global do header", () => {
     expect(await screen.findByRole("option", { name: /PETR4/ }, { timeout: 10_000 })).toBeInTheDocument();
   });
 
+  it("mostra 'Nenhum ativo encontrado' quando a busca não retorna resultados", async () => {
+    // Regressão: results.length > 0 não pode ser pré-requisito para
+    // mostrar o feedback de busca vazia -- do contrário o estado nunca
+    // aparece (results.length === 0 sempre implica painel fechado).
+    server.use(http.get(`${api}/market/search`, () => HttpResponse.json([])));
+    const user = await openAuthenticated();
+    await user.click(screen.getByRole("button", { name: "Pesquisar" }));
+    const input = await screen.findByLabelText("Ativo ou empresa");
+    await user.type(input, "ZZZZ9");
+
+    expect(await screen.findByText("Nenhum ativo encontrado.", {}, { timeout: 10_000 })).toBeInTheDocument();
+    // Sem listbox real: nenhuma role="option" e aria-expanded coerente
+    // com a ausência de popup, mesmo com o feedback textual visível.
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("navega os resultados com as setas e seleciona com Enter", async () => {
     server.use(
       http.get(`${api}/market/search`, () => HttpResponse.json([asset("PETR4", "Petrobras PN"), asset("PETR3", "Petrobras ON")])),
