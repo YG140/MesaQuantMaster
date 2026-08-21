@@ -41,6 +41,17 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
       },
     });
   });
+  await page.route("**/investor-profile/status", async (route) => {
+    await route.fulfill({
+      json: {
+        status: "complete",
+        version: 1,
+        last_reviewed_at: "2026-07-16T18:30:00Z",
+        confirmed_at: "2026-07-16T18:30:00Z",
+        updated_at: "2026-07-16T18:30:00Z",
+      },
+    });
+  });
   await page.route("**/dashboard", async (route) => {
     await route.fulfill({ json: { patrimonio_total: "0", valor_investido: "0", lucro_prejuizo: "0", rentabilidade: "0", ativos: 0, operacoes: 0, caixa: "0", proventos: "0", market_data_status: "unavailable", quote_updated_at: null, unpriced_symbols: [] } });
   });
@@ -248,7 +259,10 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await page.getByRole("button", { name: "Entrar" }).click();
   await expect(page.getByRole("heading", { name: /In.cio/ })).toBeVisible();
   await page.getByTestId("desktop-primary-navigation").getByRole("link", { name: "Carteira" }).click();
-  await expect(page.getByRole("heading", { name: "Minha carteira" })).toBeVisible();
+  // level: 2 desambigua do <h1> global do Header, que também mostra
+  // "Minha carteira" como título de rota (ver navigation.ts) -- o alvo
+  // real aqui é o <h2> próprio de PortfolioPage.tsx.
+  await expect(page.getByRole("heading", { name: "Minha carteira", level: 2 })).toBeVisible();
   await expect(page.getByText(/Sua carteira ainda.*vazia/)).toBeVisible();
   await page.goto("/planejar");
   await expect(page.getByRole("heading", { name: /Intelig.ncia de Carteira/ })).toBeVisible();

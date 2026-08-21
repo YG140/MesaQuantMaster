@@ -52,7 +52,16 @@ export function SearchAutocomplete({
 
   const results = search.data ?? [];
   const hasQuery = debouncedQuery.trim().length >= 2;
-  const isOpen = hasQuery && !dismissed && (search.isLoading || Boolean(search.error) || results.length > 0);
+  // Painel de feedback (loading, erro, resultados OU "nenhum encontrado")
+  // -- controla o Escape em 2 estágios e o que é renderizado abaixo do
+  // campo. Independente de haver resultados: sem isso, o estado vazio
+  // nunca conseguiria aparecer (results.length > 0 não pode ser
+  // pré-requisito para mostrar que a busca terminou sem resultados).
+  const showPanel = hasQuery && !dismissed;
+  // A listbox de fato (role="listbox") só existe quando há resultados --
+  // é isso, e não "há algum painel visível", que aria-expanded/navegação
+  // por teclado precisam refletir.
+  const hasListbox = showPanel && !search.isLoading && !search.error && results.length > 0;
   const activeOptionId = activeIndex >= 0 ? `${listboxId}-option-${activeIndex}` : undefined;
 
   function selectAsset(asset: MarketAsset) {
@@ -63,11 +72,10 @@ export function SearchAutocomplete({
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") {
-      // Só intercepta (fecha as sugestões) quando há algo aberto para
-      // fechar -- do contrário deixa o evento propagar, para que um
-      // diálogo pai (ex.: busca global) possa tratar Escape para fechar a
-      // si mesmo.
-      if (isOpen) {
+      // Só intercepta (fecha o painel) quando há algo aberto para fechar
+      // -- do contrário deixa o evento propagar, para que um diálogo pai
+      // (ex.: busca global) possa tratar Escape para fechar a si mesmo.
+      if (showPanel) {
         event.preventDefault();
         event.stopPropagation();
         setDismissed(true);
@@ -75,7 +83,7 @@ export function SearchAutocomplete({
       }
       return;
     }
-    if (!isOpen || results.length === 0) return;
+    if (!hasListbox) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setActiveIndex((prev) => (prev + 1) % results.length);
@@ -104,21 +112,21 @@ export function SearchAutocomplete({
             placeholder="PETR4 ou Petrobras"
             role="combobox"
             aria-autocomplete="list"
-            aria-expanded={isOpen}
+            aria-expanded={hasListbox}
             aria-controls={listboxId}
             aria-activedescendant={activeOptionId}
           />
         </div>
       </label>
-      {isOpen && search.isLoading ? <LoadingState label="Buscando ativos..." /> : null}
-      {isOpen && search.error ? (
+      {showPanel && search.isLoading ? <LoadingState label="Buscando ativos..." /> : null}
+      {showPanel && search.error ? (
         <p className="helper error-text" role="alert">
           {search.error instanceof Error
             ? search.error.message
             : "Não foi possível consultar o mercado agora."}
         </p>
       ) : null}
-      {isOpen && results.length ? (
+      {hasListbox ? (
         <ul id={listboxId} className="suggestions" role="listbox">
           {results.map((asset, index) => (
             <li key={asset.ticker} id={`${listboxId}-option-${index}`} role="option" aria-selected={index === activeIndex}>
@@ -142,7 +150,7 @@ export function SearchAutocomplete({
           ))}
         </ul>
       ) : null}
-      {isOpen && hasQuery && !search.isLoading && !search.error && results.length === 0 ? (
+      {showPanel && !search.isLoading && !search.error && results.length === 0 ? (
         <p className="helper">Nenhum ativo encontrado.</p>
       ) : null}
     </div>
