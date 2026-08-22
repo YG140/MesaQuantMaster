@@ -15,12 +15,32 @@ async function renderPreview() {
 describe("Quantum Prism preview", () => {
   it("usa dashboard e portfolio e mantém Mesa IA pausada", async () => {
     let aiCalls = 0;
-    server.use(http.post(`${api}/ai-agent/chat`, () => { aiCalls += 1; return HttpResponse.json({}); }));
+    server.use(
+      http.get(`${api}/users/me`, () => HttpResponse.json({ id: "user-1", name: "  Yury   Gabriel  ", email: "yury@example.com", is_active: true, is_superuser: false, created_at: "2026-07-15T00:00:00" })),
+      http.post(`${api}/ai-agent/chat`, () => { aiCalls += 1; return HttpResponse.json({}); }),
+    );
     await renderPreview();
     expect(await screen.findByRole("heading", { name: "O que você quer fazer hoje?" }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Avatar do usuário autenticado: YG")).toHaveTextContent("YG");
+    expect(screen.queryByText("Dados atualizados")).not.toBeInTheDocument();
+    expect(screen.getByText(/Confirmado em 16\/07\/2026/)).toBeInTheDocument();
     expect(screen.getAllByText("Mesa IA — pausada").length).toBeGreaterThan(0);
     expect(screen.getByRole("img", { name: /Prisma patrimonial informativo/ })).toBeInTheDocument();
     expect(aiCalls).toBe(0);
+  });
+
+  it("usa uma inicial quando o usuário possui nome único", async () => {
+    server.use(http.get(`${api}/users/me`, () => HttpResponse.json({ id: "user-1", name: " Yury ", email: "yury@example.com", is_active: true, is_superuser: false, created_at: "2026-07-15T00:00:00" })));
+    await renderPreview();
+    expect(await screen.findByLabelText("Avatar do usuário autenticado: Y")).toHaveTextContent("Y");
+  });
+
+  it("usa ícone neutro quando o nome está ausente", async () => {
+    server.use(http.get(`${api}/users/me`, () => HttpResponse.json({ id: "user-1", name: "   ", email: "yury@example.com", is_active: true, is_superuser: false, created_at: "2026-07-15T00:00:00" })));
+    await renderPreview();
+    const avatar = await screen.findByLabelText("Avatar do usuário autenticado");
+    expect(avatar).toHaveTextContent("");
+    expect(avatar.querySelector("svg")).toBeInTheDocument();
   });
 
   it("trata carteira vazia sem apresentar patrimônio zero", async () => {
@@ -46,8 +66,7 @@ describe("Quantum Prism preview", () => {
       http.get(`${api}/portfolio`, () => HttpResponse.json({ total_invested: "521", total_market_value: "521", total_profit: null, profitability: null, allocation: [{ ticker: "PETR4", allocation: "71.05" }], market_data_status: "partial", quote_updated_at: null, unpriced_symbols: ["VALE3"], positions: [{ asset_id: "asset-1", ticker: "PETR4", asset_name: "Petrobras PN", quantity: "10", average_price: "37.10", invested_amount: "371", current_price: null, market_value: null, unrealized_profit: null, unrealized_profit_percent: null, allocation: "71.05", weight: "71.05", valuation_basis: "invested_amount" }] })),
     );
     await renderPreview();
-    expect(await screen.findByText("Dados parciais")).toBeInTheDocument();
-    expect(screen.getByText(/Sem cotação: VALE3/)).toBeInTheDocument();
+    expect(await screen.findByText(/Sem cotação: VALE3/)).toBeInTheDocument();
     expect(screen.getAllByText(/informado/i).length).toBeGreaterThan(0);
   });
 

@@ -34,7 +34,7 @@ const portfolio = {
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem("mesa_quant_session", "visual-token"));
-  await page.route("**/users/me", route => route.fulfill({ json: { id: "user-1", name: "Ana Quant", email: "ana@example.com", is_active: true, is_superuser: false, created_at: "2026-07-15T00:00:00" } }));
+  await page.route("**/users/me", route => route.fulfill({ json: { id: "user-1", name: "Yury Gabriel", email: "yury@example.com", is_active: true, is_superuser: false, created_at: "2026-07-15T00:00:00" } }));
   await page.route("**/investor-profile/status", route => route.fulfill({ json: { status: "complete", version: 1, last_reviewed_at: null, confirmed_at: "2026-07-16T18:30:00Z", updated_at: "2026-07-16T18:30:00Z" } }));
   await page.route("**/dashboard", route => route.fulfill({ json: dashboard }));
   await page.route("**/portfolio", route => route.fulfill({ json: portfolio }));
@@ -51,6 +51,15 @@ for (const viewport of [
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto("/prisma-preview", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByRole("heading", { name: "O que você quer fazer hoje?" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByLabel("Avatar do usuário autenticado: YG")).toHaveText("YG");
+    await expect(page.locator(".qp-topbar")).not.toContainText("Dados atualizados");
+    const titleBox = await page.locator(".qp-topbar h1").boundingBox();
+    const avatarBox = await page.locator(".qp-user-avatar").boundingBox();
+    expect(titleBox).not.toBeNull();
+    expect(avatarBox).not.toBeNull();
+    const headerElementsOverlap = titleBox!.x < avatarBox!.x + avatarBox!.width && titleBox!.x + titleBox!.width > avatarBox!.x && titleBox!.y < avatarBox!.y + avatarBox!.height && titleBox!.y + titleBox!.height > avatarBox!.y;
+    expect(headerElementsOverlap).toBe(false);
+    expect(avatarBox!.x + avatarBox!.width).toBeLessThanOrEqual(viewport.width);
     await expect(page.getByText("Mesa IA — pausada")).toBeVisible();
     await expect(page.getByLabel("Mesa IA pausada")).toHaveAttribute("aria-disabled", "true");
     if (viewport.name === "mobile") {
