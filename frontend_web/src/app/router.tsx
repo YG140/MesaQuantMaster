@@ -18,6 +18,7 @@ const AssetsPage = lazy(() => import("../pages/AssetsPage").then(module => ({ de
 const PortfolioIntelligencePage = lazy(() => import("../pages/PortfolioIntelligencePage").then(module => ({ default: module.PortfolioIntelligencePage })));
 const SettingsPage = lazy(() => import("../pages/SettingsPage").then(module => ({ default: module.SettingsPage })));
 const OnboardingPage = lazy(() => import("../pages/OnboardingPage").then(module => ({ default: module.OnboardingPage })));
+const PrismaPreviewPage = lazy(() => import("../workstation/pages/PrismaPreviewPage").then(module => ({ default: module.PrismaPreviewPage })));
 
 export function AppRouter() {
   return (
@@ -38,6 +39,7 @@ export function AppRouter() {
           }
         />
         <Route element={<OnboardingGate />}>
+          <Route path="/prisma-preview" element={<Suspense fallback={<LoadingState label="Preparando workstation Quantum Prism…"/>}><PrismaPreviewPage /></Suspense>} />
           <Route element={<AppShell />}>
             <Route index element={<DashboardPage />} />
             <Route path="/carteira" element={<PortfolioPage />} />
