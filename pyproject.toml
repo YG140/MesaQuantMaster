@@ -17,7 +17,7 @@ dependencies = [
 
     # Banco de Dados
     "sqlalchemy==2.0.43",
-    "alembic==1.16.4",
+    "alembic==1.19.1",
     "psycopg2-binary==2.9.10",
 
     # Configurações
