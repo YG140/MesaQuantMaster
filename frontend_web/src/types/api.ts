@@ -543,10 +543,13 @@ export type BuildPortfolioResponse = {
     reference_price: string | number | null; executable_quantity: string | number | null;
     executable_amount: string | number; effective_percentage: string | number;
     target_gap: string | number; execution_impediments: string[];
+    trading_symbol?: string | null; economic_identity?: string | null;
+    market_segment?: string | null; quantity_step?: string | number | null;
     indicators_used: Array<{
       key: string; label: string; value: string | number | null; source: string;
       source_type: string; reference_date: string | null; valid_until: string | null;
       freshness_status: string;
+      unit?: string | null; status?: string; unavailable_reason?: string | null;
     }>;
   }>;
   exclusions: Array<{ symbol: string; asset_class: string; reasons: string[] }>;

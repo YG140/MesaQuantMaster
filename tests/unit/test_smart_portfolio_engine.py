@@ -110,6 +110,7 @@ def candidate(
     coverage_breakdown=None,
     data_quality=None,
     issuer=None,
+    market_context=None,
 ):
     indicator = NormalizedIndicator(
         key="price_earnings",
@@ -156,7 +157,12 @@ def candidate(
         stale_indicators_count=0,
         calculated_at=NOW,
     )
-    return PortfolioCandidate(snapshot=snapshot, sector=sector, issuer=issuer or symbol)
+    return PortfolioCandidate(
+        snapshot=snapshot,
+        sector=sector,
+        issuer=issuer or symbol,
+        market_context=market_context,
+    )
 
 
 class FakeAsset:
@@ -1368,6 +1374,66 @@ def test_protection_phase_still_suspends_execution_regardless_of_aggressive_poli
     assert result.diagnosis.phase == "protection"
     assert result.assets
     assert any("suspensa" in item.lower() for item in result.assets[0].execution_impediments)
+
+
+def test_execution_rounds_down_and_marks_b3_fractional_market():
+    asset = SmartPortfolioEngine.explain(
+        request(available_amount=Decimal("833.99")),
+        candidate(
+            "PETR4",
+            current_price=Decimal("37.42"),
+            market_context="B3",
+        ),
+        Decimal("80"),
+        Decimal("100"),
+        "accumulation",
+    )
+
+    assert asset.executable_quantity == Decimal("22")
+    assert asset.executable_amount == Decimal("823.24")
+    assert asset.target_gap == Decimal("10.75")
+    assert asset.trading_symbol == "PETR4F"
+    assert asset.economic_identity == "PETR4"
+    assert asset.market_segment == "fractional"
+    assert asset.quantity_step == Decimal("1")
+
+
+def test_execution_preserves_fractional_granularity_for_treasury():
+    asset = SmartPortfolioEngine.explain(
+        request(available_amount=Decimal("1000")),
+        candidate(
+            "tesouro-selic-01032031",
+            asset_class=InvestmentClass.TREASURY,
+            current_price=Decimal("900"),
+        ),
+        Decimal("80"),
+        Decimal("100"),
+        "accumulation",
+    )
+
+    assert asset.executable_quantity == Decimal("1.11")
+    assert asset.executable_amount == Decimal("999.00")
+    assert asset.quantity_step == Decimal("0.01")
+    assert asset.market_segment is None
+
+
+def test_execution_returns_no_quantity_when_price_is_missing_or_amount_is_too_small():
+    missing_price = SmartPortfolioEngine.explain(
+        request(), candidate("SEM3", current_price=None), Decimal("80"), Decimal("20"), "accumulation"
+    )
+    below_unit = SmartPortfolioEngine.explain(
+        request(available_amount=Decimal("9")),
+        candidate("CARO3", current_price=Decimal("10"), market_context="B3"),
+        Decimal("80"),
+        Decimal("100"),
+        "accumulation",
+    )
+
+    assert missing_price.executable_quantity is None
+    assert "Preço de referência indisponível" in missing_price.execution_impediments[0]
+    assert below_unit.executable_quantity is None
+    assert below_unit.executable_amount == Decimal("0")
+    assert "menor que uma unidade" in below_unit.execution_impediments[0]
 
 
 def test_no_policy_response_schema_stays_backward_compatible():

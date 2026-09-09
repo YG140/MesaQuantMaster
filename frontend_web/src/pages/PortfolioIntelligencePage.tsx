@@ -34,8 +34,10 @@ import type {
 } from "../types/api";
 import {
   formatDateTimeBR,
+  formatDecimalBR,
   formatMoney,
   formatPercent,
+  formatQuantityBR,
   normalizeDecimalForApi,
   parseBrazilianNumber,
 } from "../utils/formatters";
@@ -666,13 +668,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
         </div>
         {!sortedAssets.length ? <div className="smart-insufficient"><h3>Ainda não há dados suficientes para recomendar ativos.</h3><p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></div> : (
           <div className="recommended-assets" aria-label="Ativos recomendados">
-            {sortedAssets.map((asset) => <article className="recommended-asset" key={asset.symbol}>
-              <div><strong>{asset.symbol}</strong><span>{asset.asset_class}</span></div>
-              <div><small>Percentual</small><b>{formatPercent(asset.recommended_percentage)}</b></div>
-              <div><small>Valor</small><b>{formatMoney(asset.recommended_amount)}</b></div>
-              <div><small>Confiança</small><b>{confidenceLabel(asset.confidence)}</b></div>
-              <details className="asset-details"><summary>Ver detalhes</summary><div className="asset-detail-content"><h4>Justificativas</h4><TextList items={asset.reasons} /><h4>Riscos</h4><TextList items={asset.risks} fallback="Nenhum risco adicional identificado com os dados disponíveis." /><h4>Indicadores e procedência</h4><div className="table-wrap"><table><thead><tr><th>Indicador</th><th>Fonte</th><th>Referência</th><th>Validade</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={item.key}><td>{item.label}</td><td>{item.source}</td><td>{formatDateTimeBR(item.reference_date)}</td><td>{formatDateTimeBR(item.valid_until)}</td></tr>)}</tbody></table></div><h4>Dados ausentes</h4><TextList items={asset.missing_data} fallback="Nenhum dado ausente entre os indicadores aplicáveis." /></div></details>
-            </article>)}
+            {sortedAssets.map((asset) => <RecommendedAssetCard asset={asset} key={asset.symbol} />)}
           </div>
         )}
         <p className="helper smart-disclaimer">{data.disclaimer}</p>
@@ -687,6 +683,77 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
       <ResultDetails title="Ativos não incluídos">{data.exclusions.length ? <div className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo</th></tr></thead><tbody>{data.exclusions.map((item) => <tr key={item.symbol}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></div> : <p>Nenhum ativo adicional foi excluído.</p>}</ResultDetails>
     </div>
   );
+}
+
+type RecommendedAsset = BuildPortfolioResponse["assets"][number];
+type RecommendedIndicator = RecommendedAsset["indicators_used"][number];
+
+function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
+  const quantity = asset.executable_quantity === null
+    ? "Indisponível"
+    : `${formatQuantityBR(asset.executable_quantity)} unidades`;
+  const confidenceReasons = [...asset.missing_data, ...asset.execution_impediments];
+  return <article className="recommended-asset">
+    <header className="recommended-asset-heading">
+      <div><strong>{asset.symbol}</strong><span>{asset.asset_class}</span></div>
+      {asset.market_segment ? <span className="market-segment">{marketSegmentLabel(asset.market_segment)}</span> : null}
+      {asset.trading_symbol && asset.trading_symbol !== asset.symbol ? <small>Ticker negociável: {asset.trading_symbol}</small> : null}
+    </header>
+    <dl className="asset-execution-grid">
+      <div><dt>Percentual-alvo</dt><dd>{formatPercent(asset.recommended_percentage)}</dd></div>
+      <div><dt>Valor-alvo</dt><dd>{formatMoney(asset.recommended_amount)}</dd></div>
+      <div><dt>Preço de referência</dt><dd>{formatMoney(asset.reference_price)}</dd></div>
+      <div><dt>Quantidade sugerida</dt><dd>{quantity}</dd></div>
+      <div><dt>Valor executável</dt><dd>{asset.executable_quantity === null ? "Indisponível" : formatMoney(asset.executable_amount)}</dd></div>
+      <div><dt>Saldo/diferença</dt><dd>{formatTargetGap(asset.target_gap)}</dd></div>
+      <div><dt>Confiança</dt><dd>{confidenceLabel(asset.confidence)}</dd></div>
+    </dl>
+    {asset.execution_impediments.length ? <div className="execution-warning" role="note"><strong>Quantidade sugerida: indisponível</strong><TextList items={asset.execution_impediments} /></div> : null}
+    {confidenceReasons.length ? <div className="confidence-explanation"><strong>{confidenceLabel(asset.confidence)}</strong><TextList items={confidenceReasons} /></div> : null}
+    <details className="asset-details">
+      <summary>Ver detalhes</summary>
+      <div className="asset-detail-content">
+        <h4>Justificativas</h4><TextList items={asset.reasons} />
+        <h4>Riscos</h4><TextList items={asset.risks} fallback="Nenhum risco adicional identificado com os dados disponíveis." />
+        <h4>Indicadores utilizados</h4>
+        <div className="table-wrap indicator-table"><table><thead><tr><th>Indicador</th><th>Valor</th><th>Situação</th><th>Referência</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={item.key}><td data-label="Indicador">{item.label}</td><td data-label="Valor">{formatIndicatorValue(item)}</td><td data-label="Situação">{indicatorStatusLabel(item)}</td><td data-label="Referência">{formatDateTimeBR(item.reference_date)}</td></tr>)}</tbody></table></div>
+        <details className="indicator-provenance"><summary>Ver procedência e qualidade dos dados</summary><div className="table-wrap"><table><thead><tr><th>Indicador</th><th>Fonte</th><th>Tipo</th><th>Referência</th><th>Validade</th><th>Frescor</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={`source-${item.key}`}><td data-label="Indicador">{item.label}</td><td data-label="Fonte">{item.source}</td><td data-label="Tipo">{sourceTypeLabel(item.source_type)}</td><td data-label="Referência">{formatDateTimeBR(item.reference_date)}</td><td data-label="Validade">{formatDateTimeBR(item.valid_until)}</td><td data-label="Frescor">{freshnessLabel(item.freshness_status)}</td></tr>)}</tbody></table></div><h4>Ausências e impedimentos</h4><TextList items={[...asset.missing_data, ...asset.execution_impediments, ...asset.indicators_used.flatMap((item) => item.unavailable_reason ? [item.unavailable_reason] : [])]} fallback="Nenhuma ausência ou impedimento informado." /></details>
+      </div>
+    </details>
+  </article>;
+}
+
+function formatTargetGap(value: string | number) {
+  const amount = parseBrazilianNumber(value);
+  if (amount === null) return "Não informado";
+  return amount > 0 ? `${formatMoney(amount)} não alocados neste ativo` : formatMoney(amount);
+}
+
+function formatIndicatorValue(indicator: RecommendedIndicator) {
+  if (indicator.value === null || indicator.status === "unavailable") return "Indisponível";
+  if (indicator.status === "not_applicable") return "Não aplicável";
+  if (typeof indicator.value === "string" && parseBrazilianNumber(indicator.value) === null) return indicator.value;
+  if (indicator.unit === "percentage" || indicator.unit === "percent") return formatPercent(indicator.value);
+  if (indicator.unit === "currency" || indicator.unit === "BRL") return formatMoney(indicator.value);
+  return formatDecimalBR(indicator.value, 2, "Indisponível");
+}
+
+function indicatorStatusLabel(indicator: RecommendedIndicator) {
+  if (indicator.status === "not_applicable") return "Não aplicável";
+  if (indicator.status === "unavailable") return "Indisponível";
+  return freshnessLabel(indicator.freshness_status);
+}
+
+function freshnessLabel(value: string) {
+  return ({ current: "Atual", stale: "Vencido", unavailable: "Indisponível", not_applicable: "Não aplicável" } as Record<string, string>)[value] ?? value;
+}
+
+function sourceTypeLabel(value: string) {
+  return ({ official: "Oficial", provider: "Provedor", snapshot: "Snapshot", manual: "Manual" } as Record<string, string>)[value] ?? value;
+}
+
+function marketSegmentLabel(value: string) {
+  return ({ fractional: "Mercado fracionário", mixed: "Lote padrão + fracionário", standard_lot: "Lote padrão" } as Record<string, string>)[value] ?? value;
 }
 
 function ResultDetails({ title, children }: { title: string; children: ReactNode }) {

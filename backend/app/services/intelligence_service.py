@@ -209,6 +209,9 @@ class PortfolioIntelligenceService:
                     issuer=self._issuer_identity(
                         asset, snapshot, market_context=market_context
                     ),
+                    market_context=(
+                        getattr(asset, "exchange", None) or market_context
+                    ),
                 )
             )
         return SmartPortfolioEngine.build(
