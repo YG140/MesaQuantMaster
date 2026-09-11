@@ -17,12 +17,12 @@ const response = {
   assets: [
     {
       symbol: "PETR4", name: "Petrobras PN", asset_class: "Ações", sector: "Energia", issuer: "B3:PETR4",
-      recommended_percentage: "50", recommended_amount: "833.99", score: "82", confidence: "medium",
+      recommended_percentage: "50", recommended_amount: "5000", score: "82", confidence: "medium",
       reasons: ["Preço atualizado e fundamentos disponíveis."], risks: ["Oscilação de mercado."],
       missing_data: ["Cobertura de analistas ausente."], reference_price: "37.42",
-      executable_quantity: "22", executable_amount: "823.24", effective_percentage: "49.36",
-      target_gap: "10.75", execution_impediments: [], trading_symbol: "PETR4F",
-      economic_identity: "PETR4", market_segment: "fractional", quantity_step: "1",
+      executable_quantity: "133", executable_amount: "4976.86", effective_percentage: "49.77",
+      target_gap: "23.14", execution_impediments: [], trading_symbol: null,
+      economic_identity: "PETR4", market_segment: "mixed", quantity_step: "1",
       indicators_used: [
         { key: "current_price", label: "Preço atual", value: "37.42", unit: "currency", status: "available", unavailable_reason: null, source: "BRAPI", source_type: "provider", reference_date: "2026-08-30T12:00:00Z", valid_until: "2026-08-31T12:00:00Z", freshness_status: "current" },
         { key: "dividend_yield", label: "Dividend Yield", value: "10.24", unit: "percentage", status: "available", unavailable_reason: null, source: "CVM", source_type: "official", reference_date: "2026-06-30T12:00:00Z", valid_until: "2026-09-30T12:00:00Z", freshness_status: "current" },
@@ -38,8 +38,8 @@ const response = {
       indicators_used: [{ key: "price_earnings", label: "P/L", value: "6.7", unit: "ratio", status: "available", unavailable_reason: null, source: "BRAPI", source_type: "provider", reference_date: "2026-08-30T12:00:00Z", valid_until: "2026-08-31T12:00:00Z", freshness_status: "current" }],
     },
   ],
-  exclusions: [], total_allocated_percentage: "100", total_allocated_amount: "5833.99",
-  unallocated_amount: "4166.01", confidence: "medium", status: "available", missing_data: [],
+  exclusions: [], total_allocated_percentage: "99.76", total_allocated_amount: "9975.70",
+  unallocated_amount: "24.30", confidence: "medium", status: "available", missing_data: ["Cobertura de analistas ausente."],
   strategy_summary: "Carteira educacional alinhada à política confirmada.",
   diagnosis: { phase: "accumulation", estimated_monthly_capacity: "900", reserve_months_covered: "6", reserve_target: "18000", debt_alerts: [], liquidity_assessment: "adequate", missing_data: [], priority_actions: ["Manter aportes."], confidence: "high" },
   contribution_plan: [],
@@ -53,7 +53,10 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/users/me", route => route.fulfill({ json: { id: "user-1", name: "Yury Gabriel", email: "yury@example.com", is_active: true, is_superuser: false, created_at: "2026-07-15T00:00:00Z" } }));
   await page.route("**/investor-profile/status", route => route.fulfill({ json: { status: "complete", version: 1, last_reviewed_at: null, confirmed_at: "2026-08-30T12:00:00Z", updated_at: "2026-08-30T12:00:00Z" } }));
   await page.route("**/intelligence/policy", route => route.fulfill({ json: policy }));
-  await page.route("**/intelligence/build-portfolio", route => route.fulfill({ json: response }));
+  await page.route("**/intelligence/build-portfolio", async route => {
+    expect(Number(route.request().postDataJSON().available_amount)).toBe(10000);
+    await route.fulfill({ json: response });
+  });
   await page.emulateMedia({ reducedMotion: "reduce" });
 });
 
@@ -66,25 +69,50 @@ for (const viewport of [
     test.setTimeout(120_000);
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto("/planejar?secao=montar-carteira", { waitUntil: "domcontentloaded", timeout: 120_000 });
-    await expect(page.getByRole("heading", { name: "Monte uma carteira para o seu momento" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Monte uma carteira para o seu momento" })).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "Montar minha carteira" }).click();
     const result = page.getByRole("heading", { name: "Sua carteira recomendada" });
     await expect(result).toBeVisible();
     await result.scrollIntoViewIfNeeded();
-    await expect(page.getByText("22 unidades")).toBeVisible();
-    await expect(page.getByText("Mercado fracionário").first()).toBeVisible();
-    await expect(page.getByText("R$ 10,75 não alocados neste ativo")).toBeVisible();
+    await expect(page.getByText("133 unidades")).toBeVisible();
+    await expect(page.getByText("Lote padrão + fracionário")).toBeVisible();
+    await expect(page.getByText("R$ 23,14 não alocados neste ativo")).toBeVisible();
     await page.locator(".recommended-asset").first().scrollIntoViewIfNeeded();
     await expect(page.locator("body")).not.toContainText("undefined");
     await expect(page.locator("body")).not.toContainText("NaN");
+    const geometry = await page.locator("html").evaluate(root => ({ clientWidth: root.clientWidth, scrollWidth: root.scrollWidth }));
+    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
+    console.log(JSON.stringify({ viewport: viewport.name, ...geometry }));
     const screenshot = await page.screenshot({ path: `test-results/planejar-quantidades-${viewport.name}.png`, fullPage: false });
     expect(screenshot.length).toBeGreaterThan(0);
     expect(page.viewportSize()).toEqual({ width: viewport.width, height: viewport.height });
   });
 }
 
-test("detalhes e procedência permanecem dentro da viewport mobile", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test("fixture mantém orçamento, alvos e execução coerentes", () => {
+  const budget = 10000;
+  let executed = 0;
+  for (const asset of response.assets) {
+    expect(Number(asset.recommended_amount)).toBe(budget * Number(asset.recommended_percentage) / 100);
+    expect(Number(asset.executable_quantity)).toBe(Math.floor(Number(asset.recommended_amount) / Number(asset.reference_price)));
+    const amount = Number((Number(asset.executable_quantity) * Number(asset.reference_price)).toFixed(2));
+    expect(Number(asset.executable_amount)).toBe(amount);
+    expect(Number(asset.target_gap)).toBe(Number((Number(asset.recommended_amount) - amount).toFixed(2)));
+    expect(Number(asset.effective_percentage)).toBe(Number((amount / budget * 100).toFixed(2)));
+    executed += amount;
+  }
+  expect(Number(response.class_allocations[0].amount)).toBe(budget);
+  expect(Number(response.total_allocated_amount)).toBe(Number(executed.toFixed(2)));
+  expect(Number(response.total_allocated_percentage)).toBe(Number((executed / budget * 100).toFixed(2)));
+  expect(Number(response.unallocated_amount)).toBe(Number((budget - executed).toFixed(2)));
+});
+
+for (const viewport of [
+  { name: "desktop", width: 1440, height: 900 },
+  { name: "mobile", width: 390, height: 844 },
+]) {
+test(`detalhes e procedência permanecem dentro da viewport ${viewport.name}`, async ({ page }) => {
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
   await page.goto("/planejar?secao=montar-carteira", { waitUntil: "domcontentloaded", timeout: 120_000 });
   await page.getByRole("button", { name: "Montar minha carteira" }).click();
 
@@ -105,5 +133,16 @@ test("detalhes e procedência permanecem dentro da viewport mobile", async ({ pa
   )).length;
 
   expect(rootGeometry.scrollWidth).toBeLessThanOrEqual(rootGeometry.clientWidth);
+  expect(cellBounds.length).toBeGreaterThan(0);
   expect(outsideViewport).toBe(0);
+  await asset.locator(".indicator-table").scrollIntoViewIfNeeded();
+  await asset.locator(".indicator-table").evaluate(element => {
+    const view = element.ownerDocument.defaultView;
+    if (!view) throw new Error("Janela da captura indisponível");
+    const top = view.innerWidth > 900 ? 180 : 100;
+    view.scrollTo(0, view.scrollY + element.getBoundingClientRect().top - top);
+  });
+  await page.screenshot({ path: `test-results/planejar-detalhes-${viewport.name}.png`, fullPage: false });
+  console.log(JSON.stringify({ viewport: viewport.name, ...rootGeometry, cells: cellBounds.length, outsideViewport }));
 });
+}

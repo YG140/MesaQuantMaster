@@ -678,8 +678,11 @@ class SmartPortfolioEngine:
                         )
                     elif remainder:
                         market_segment = "mixed"
+                        # Não há um único ticker operacional para lote e sobra.
+                        trading_symbol = None
                     else:
                         market_segment = "standard_lot"
+                        trading_symbol = identity.canonical_symbol
             else:
                 impediments.append(
                     "Valor destinado menor que uma unidade negociável pelo preço de referência."

@@ -692,12 +692,12 @@ function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
   const quantity = asset.executable_quantity === null
     ? "Indisponível"
     : `${formatQuantityBR(asset.executable_quantity)} unidades`;
-  const confidenceReasons = [...asset.missing_data, ...asset.execution_impediments];
   return <article className="recommended-asset">
     <header className="recommended-asset-heading">
       <div><strong>{asset.symbol}</strong><span>{asset.asset_class}</span></div>
       {asset.market_segment ? <span className="market-segment">{marketSegmentLabel(asset.market_segment)}</span> : null}
       {asset.trading_symbol && asset.trading_symbol !== asset.symbol ? <small>Ticker negociável: {asset.trading_symbol}</small> : null}
+      {asset.market_segment === "mixed" ? <small>Lote padrão e sobra fracionária exigem tickers distintos; não utilize um único ticker para toda a quantidade.</small> : null}
     </header>
     <dl className="asset-execution-grid">
       <div><dt>Percentual-alvo</dt><dd>{formatPercent(asset.recommended_percentage)}</dd></div>
@@ -709,7 +709,7 @@ function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
       <div><dt>Confiança</dt><dd>{confidenceLabel(asset.confidence)}</dd></div>
     </dl>
     {asset.execution_impediments.length ? <div className="execution-warning" role="note"><strong>Quantidade sugerida: indisponível</strong><TextList items={asset.execution_impediments} /></div> : null}
-    {confidenceReasons.length ? <div className="confidence-explanation"><strong>{confidenceLabel(asset.confidence)}</strong><TextList items={confidenceReasons} /></div> : null}
+    {asset.missing_data.length ? <div className="confidence-explanation" aria-label="Dados ausentes"><strong>Dados ausentes</strong><TextList items={asset.missing_data} /></div> : null}
     <details className="asset-details">
       <summary>Ver detalhes</summary>
       <div className="asset-detail-content">
@@ -730,8 +730,8 @@ function formatTargetGap(value: string | number) {
 }
 
 function formatIndicatorValue(indicator: RecommendedIndicator) {
-  if (indicator.value === null || indicator.status === "unavailable") return "Indisponível";
   if (indicator.status === "not_applicable") return "Não aplicável";
+  if (indicator.value === null || indicator.status === "unavailable") return "Indisponível";
   if (typeof indicator.value === "string" && parseBrazilianNumber(indicator.value) === null) return indicator.value;
   if (indicator.unit === "percentage" || indicator.unit === "percent") return formatPercent(indicator.value);
   if (indicator.unit === "currency" || indicator.unit === "BRL") return formatMoney(indicator.value);

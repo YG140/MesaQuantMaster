@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
+
 from app.engines.smart_portfolio_engine import (
     LEGACY_SOURCE,
     POLICY_SOURCE,
@@ -1396,6 +1398,26 @@ def test_execution_rounds_down_and_marks_b3_fractional_market():
     assert asset.economic_identity == "PETR4"
     assert asset.market_segment == "fractional"
     assert asset.quantity_step == Decimal("1")
+
+
+@pytest.mark.parametrize("symbol", ["PETR4", "PETR4F"])
+@pytest.mark.parametrize("quantity, segment, ticker", [
+    (22, "fractional", "PETR4F"),
+    (100, "standard_lot", "PETR4"),
+    (200, "standard_lot", "PETR4"),
+    (133, "mixed", None),
+])
+def test_b3_execution_identity_matches_quantity(symbol, quantity, segment, ticker):
+    asset = SmartPortfolioEngine.explain(
+        request(available_amount=Decimal(quantity) * Decimal("37.42")),
+        candidate(symbol, current_price=Decimal("37.42"), market_context=B3_MARKET),
+        Decimal("80"), Decimal("100"), "accumulation",
+    )
+    assert asset.executable_quantity == Decimal(quantity)
+    assert asset.economic_identity == "PETR4"
+    assert asset.market_segment == segment
+    assert asset.trading_symbol == ticker
+    assert asset.target_gap == Decimal("0")
 
 
 def test_execution_preserves_fractional_granularity_for_treasury():
