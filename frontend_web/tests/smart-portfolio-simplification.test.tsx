@@ -24,7 +24,8 @@ function responseWithAssets() {
     reasons: ["Boa aderência à estratégia."], risks: ["Oscilação de mercado."], missing_data: [],
     reference_price: "25", executable_quantity: "10", executable_amount: amount,
     effective_percentage: percentage, target_gap: "0", execution_impediments: [],
-    indicators_used: [{ key: "roe", label: "ROE", value: "18", source: "CVM", source_type: "official", reference_date: "2026-06-30", valid_until: "2026-09-30", freshness_status: "current" }],
+    trading_symbol: symbol, economic_identity: symbol, market_segment: null, quantity_step: "1",
+    indicators_used: [{ key: "roe", label: "ROE", value: "18", unit: "percentage", status: "available", unavailable_reason: null, source: "CVM", source_type: "official", reference_date: "2026-06-30", valid_until: "2026-09-30", freshness_status: "current" }],
   });
   return {
     class_allocations: [{ asset_class: "Ações", percentage: "75", amount: "7500", explanation: "Conforme a política." }],
@@ -85,13 +86,101 @@ describe("simplificação da Carteira Inteligente", () => {
     const assets = screen.getAllByRole("article");
     expect(within(assets[0]).getByText("MAIOR4")).toBeVisible();
     expect(within(assets[0]).getByText("50,00%")).toBeVisible();
-    expect(within(assets[0]).getByText("R$ 5.000,00")).toBeVisible();
+    expect(within(within(assets[0]).getByText("Valor-alvo").parentElement!).getByText("R$ 5.000,00")).toBeVisible();
     expect(screen.getByText("Saldo não alocado")).toBeVisible();
     await user.click(within(assets[0]).getByText("Ver detalhes"));
     expect(within(assets[0]).getByText("Boa aderência à estratégia.")).toBeVisible();
     expect(screen.getByText("Carteira executável")).toBeVisible();
     expect(screen.getByText("Plano de aportes")).toBeVisible();
     expect(screen.getAllByText(/Simulação educacional/).some((item) => item.offsetParent !== null || item.textContent?.includes("Simulação"))).toBe(true);
+  });
+
+  it("mostra execução no cartão, valor dos indicadores e procedência secundária", async () => {
+    const response = responseWithAssets();
+    Object.assign(response.assets[1], {
+      recommended_amount: "833.99",
+      reference_price: "37.42",
+      executable_quantity: "22",
+      executable_amount: "823.24",
+      target_gap: "10.75",
+      trading_symbol: "MAIOR4F",
+      economic_identity: "MAIOR4",
+      market_segment: "fractional",
+      confidence: "low",
+      missing_data: ["Faltam dados atuais de liquidez e valuation."],
+      indicators_used: [
+        { key: "dividend_yield", label: "Dividend Yield", value: "0", unit: "percentage", status: "available", unavailable_reason: null, source: "CVM", source_type: "official", reference_date: "2026-06-30", valid_until: "2026-09-30", freshness_status: "current" },
+        { key: "price_earnings", label: "P/L", value: null, unit: "ratio", status: "unavailable", unavailable_reason: "Indicador não fornecido.", source: "BRAPI", source_type: "provider", reference_date: null, valid_until: null, freshness_status: "unavailable" },
+      ],
+    });
+    server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(response)));
+    const user = await openBuilder();
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    await screen.findByRole("heading", { name: "Sua carteira recomendada" });
+    const asset = screen.getAllByRole("article").find((item) => within(item).queryByText("MAIOR4", { selector: "strong" }))!;
+    expect(within(asset).getByText("22 unidades")).toBeVisible();
+    expect(within(asset).getByText("R$ 37,42")).toBeVisible();
+    expect(within(asset).getByText("R$ 823,24")).toBeVisible();
+    expect(within(asset).getByText("R$ 10,75 não alocados neste ativo")).toBeVisible();
+    expect(within(asset).getByText("Mercado fracionário")).toBeVisible();
+    expect(within(within(asset).getByText("Confiança").parentElement!).getByText("Baixa")).toBeVisible();
+    expect(within(asset.querySelector(".confidence-explanation")!).getByText("Faltam dados atuais de liquidez e valuation.")).toBeVisible();
+    await user.click(within(asset).getByText("Ver detalhes"));
+    expect(within(asset).getByText("0,00%")).toBeVisible();
+    expect(within(asset).getAllByText("Indisponível").length).toBeGreaterThan(0);
+    expect(within(asset.querySelector(".indicator-table")!).queryByRole("columnheader", { name: "Fonte" })).not.toBeInTheDocument();
+    const provenance = within(asset).getByText("Ver procedência e qualidade dos dados");
+    expect(provenance).toBeVisible();
+    await user.click(provenance);
+    expect(within(asset).getByRole("columnheader", { name: "Fonte" })).toBeVisible();
+    expect(within(asset).getByText("CVM")).toBeVisible();
+  });
+
+  it.each([
+    ["not_applicable", null, "Não aplicável"],
+    ["unavailable", null, "Indisponível"],
+    ["available", "0", "0,00%"],
+  ])("distingue indicador %s com valor %s", async (status, value, expected) => {
+    const response = responseWithAssets();
+    Object.assign(response.assets[1].indicators_used[0], { status, value });
+    server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(response)));
+    const user = await openBuilder();
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    await screen.findByRole("heading", { name: "Sua carteira recomendada" });
+    const asset = screen.getAllByRole("article")[0];
+    await user.click(within(asset).getByText("Ver detalhes"));
+    expect(asset.querySelector('.indicator-table td[data-label="Valor"]')).toHaveTextContent(expected!);
+  });
+
+  it("separa dados ausentes, confiança e impedimentos de execução", async () => {
+    const response = responseWithAssets();
+    Object.assign(response.assets[1], {
+      confidence: "high", missing_data: ["Cobertura de analistas ausente."],
+      executable_quantity: null, execution_impediments: ["Preço de referência indisponível."],
+    });
+    server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(response)));
+    const user = await openBuilder();
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    await screen.findByRole("heading", { name: "Sua carteira recomendada" });
+    const asset = screen.getAllByRole("article")[0];
+    const missing = within(asset).getByLabelText("Dados ausentes");
+    expect(missing).toHaveTextContent("Cobertura de analistas ausente.");
+    expect(missing).not.toHaveTextContent("Preço de referência indisponível.");
+    expect(missing).not.toHaveTextContent("Alta");
+    expect(within(asset).getByRole("note")).toHaveTextContent("Preço de referência indisponível.");
+    expect(within(within(asset).getByText("Confiança").parentElement!).getByText("Alta")).toBeVisible();
+  });
+
+  it("não apresenta ticker único para um lote misto", async () => {
+    const response = responseWithAssets();
+    Object.assign(response.assets[1], { market_segment: "mixed", trading_symbol: null });
+    server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(response)));
+    const user = await openBuilder();
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    await screen.findByRole("heading", { name: "Sua carteira recomendada" });
+    const asset = screen.getAllByRole("article")[0];
+    expect(within(asset).getByText(/exigem tickers distintos/)).toBeVisible();
+    expect(within(asset).queryByText(/Ticker negociável:/)).not.toBeInTheDocument();
   });
 
   it("explica ausência de ativos e preserva o formulário após erro", async () => {

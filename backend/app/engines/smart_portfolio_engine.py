@@ -28,6 +28,7 @@ from app.schemas.market_intelligence import (
     IndicatorStatus,
     InvestmentClass,
 )
+from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
 
 
 HUNDRED = Decimal("100")
@@ -71,6 +72,7 @@ class PortfolioCandidate:
     snapshot: AssetIntelligenceSnapshot
     sector: str | None = None
     issuer: str | None = None
+    market_context: str | None = None
 
 
 # Classe do envelope da PortfolioPolicy que não corresponde a nenhum ativo
@@ -608,6 +610,9 @@ class SmartPortfolioEngine:
                 reference_date=item.reference_date,
                 valid_until=item.valid_until,
                 freshness_status=item.freshness_status,
+                unit=item.unit,
+                status=item.status.value,
+                unavailable_reason=item.unavailable_reason,
             )
             for item in snapshot.indicators
             if item.status == IndicatorStatus.AVAILABLE
@@ -628,13 +633,21 @@ class SmartPortfolioEngine:
         target_amount = (request.available_amount * percentage / HUNDRED).quantize(CENT)
         price = snapshot.current_price
         impediments = []
-        quantity = Decimal("0")
+        quantity = None
+        quantity_step = None
+        market_segment = None
+        identity = resolve_symbol_identity(
+            snapshot.symbol,
+            market=candidate.market_context,
+        )
+        economic_identity = identity.canonical_symbol
+        trading_symbol = identity.trading_symbol
         if phase == "protection":
             impediments.append(
                 "Execução suspensa enquanto reserva ou dívidas prioritárias exigem proteção."
             )
         elif price and price > 0:
-            step = (
+            quantity_step = (
                 Decimal("1")
                 if snapshot.asset_class
                 in {
@@ -645,14 +658,44 @@ class SmartPortfolioEngine:
                 }
                 else Decimal("0.01")
             )
-            quantity = (target_amount / price / step).to_integral_value(
+            calculated_quantity = (target_amount / price / quantity_step).to_integral_value(
                 rounding=ROUND_DOWN
-            ) * step
+            ) * quantity_step
+            if calculated_quantity > 0:
+                quantity = calculated_quantity
+                if (
+                    candidate.market_context == B3_MARKET
+                    and snapshot.asset_class == InvestmentClass.STOCK
+                ):
+                    standard_lot = Decimal("100")
+                    remainder = quantity % standard_lot
+                    if quantity < standard_lot:
+                        market_segment = "fractional"
+                        trading_symbol = (
+                            identity.trading_symbol
+                            if identity.is_fractional
+                            else f"{identity.canonical_symbol}F"
+                        )
+                    elif remainder:
+                        market_segment = "mixed"
+                        # Não há um único ticker operacional para lote e sobra.
+                        trading_symbol = None
+                    else:
+                        market_segment = "standard_lot"
+                        trading_symbol = identity.canonical_symbol
+            else:
+                impediments.append(
+                    "Valor destinado menor que uma unidade negociável pelo preço de referência."
+                )
         else:
             impediments.append(
                 "Preço de referência indisponível para calcular quantidade."
             )
-        executable_amount = (quantity * price).quantize(CENT) if price else Decimal("0")
+        executable_amount = (
+            (quantity * price).quantize(CENT)
+            if quantity is not None and price is not None
+            else Decimal("0")
+        )
         return BuildPortfolioAsset(
             symbol=snapshot.symbol,
             name=snapshot.name,
@@ -675,6 +718,10 @@ class SmartPortfolioEngine:
             ).quantize(CENT),
             target_gap=(target_amount - executable_amount).quantize(CENT),
             execution_impediments=impediments,
+            trading_symbol=trading_symbol,
+            economic_identity=economic_identity,
+            market_segment=market_segment,
+            quantity_step=quantity_step,
         )
 
     @staticmethod

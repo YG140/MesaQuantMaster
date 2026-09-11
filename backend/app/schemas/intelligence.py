@@ -195,6 +195,9 @@ class BuildPortfolioIndicator(BaseModel):
     reference_date: datetime | None = None
     valid_until: datetime | None = None
     freshness_status: str
+    unit: str | None = None
+    status: str = "available"
+    unavailable_reason: str | None = None
 
 
 class BuildPortfolioAsset(BaseModel):
@@ -217,6 +220,10 @@ class BuildPortfolioAsset(BaseModel):
     effective_percentage: Decimal = Decimal("0")
     target_gap: Decimal = Decimal("0")
     execution_impediments: list[str] = Field(default_factory=list)
+    trading_symbol: str | None = None
+    economic_identity: str | None = None
+    market_segment: str | None = None
+    quantity_step: Decimal | None = None
 
 
 class BuildPortfolioExclusion(BaseModel):
