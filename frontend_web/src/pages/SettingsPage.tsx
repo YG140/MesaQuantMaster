@@ -101,8 +101,8 @@ export function SettingsPage() {
         <p className="helper">Exportação de dados e gestão de sessões ainda não estão disponíveis nesta versão.</p>
       </SettingsSection>
       <SettingsSection id="ia" title="Mesa IA" state="Real">
-        <p>A Mesa IA responde perguntas sobre sua carteira com base nos seus dados reais, sem executar operações.</p>
-        <p className="helper">Ainda não há preferências configuráveis da Mesa IA disponíveis nesta versão.</p>
+        <p>Mesa IA — pausada. Nenhuma chamada externa é realizada.</p>
+        <p className="helper">Conversa e envio de dados não estão disponíveis nesta interface.</p>
       </SettingsSection>
       <SettingsSection id="sair" title="Sair da conta" state="Real">
         <p className="helper">Encerra sua sessão neste dispositivo.</p>

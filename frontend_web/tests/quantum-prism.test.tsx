@@ -69,7 +69,7 @@ describe("Quantum Prism", () => {
 
   it("expõe a navegação principal e o contexto do dashboard", async () => {
     await openAuthenticated();
-    expect(await screen.findByRole("heading", { name: /Seu universo financeiro/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /O que você quer fazer hoje/i })).toBeInTheDocument();
     const desktop = screen.getByTestId("desktop-primary-navigation");
     const mobile = screen.getByTestId("mobile-primary-navigation");
     expect(desktop.children).toHaveLength(5);
@@ -78,44 +78,28 @@ describe("Quantum Prism", () => {
       expect(desktop).toHaveTextContent(label);
       expect(mobile).toHaveTextContent(label);
     }
-    const actions = within(document.querySelector(".quick-action-grid")!);
+    const actions = within(screen.getByLabelText("Ações principais"));
     expect(actions.getByRole("link", { name: /^Investir/i })).toHaveAttribute("href", "/investimentos/novo");
     expect(actions.getByRole("link", { name: /^Analisar/i })).toHaveAttribute("href", "/ativos");
     expect(actions.getByRole("link", { name: /^Planejar/i })).toHaveAttribute("href", "/planejar?secao=montar-carteira");
     expect(actions.getByRole("link", { name: /^Acompanhar/i })).toHaveAttribute("href", "/carteira");
   });
 
-  it("abre a Mesa IA e envia uma pergunta ao endpoint real", async () => {
-    const user = await openAuthenticated("/analisar");
-    await user.click((await screen.findAllByRole("button", { name: /Mesa IA/i }))[0]);
-    const input = await screen.findByLabelText("Pergunte à Mesa IA");
-    await user.type(input, "Como está a concentração da carteira?");
-    await user.click(screen.getByRole("button", { name: "Enviar" }));
-    expect(await screen.findByText(/Leitura educacional: Como está a concentração/i)).toBeInTheDocument();
-    expect(screen.getByText("Análise da carteira")).toBeInTheDocument();
-    expect(screen.getByText(/Não constitui recomendação/i)).toBeInTheDocument();
-  });
-
-  it("traduz indisponibilidade da Mesa IA sem perder a conversa", async () => {
-    server.use(http.post(`${api}/ai-agent/chat`, () => HttpResponse.json({ detail: "disabled" }, { status: 503 })));
-    const user = await openAuthenticated();
-    await user.click((await screen.findAllByRole("button", { name: /Mesa IA/i }))[0]);
-    await user.type(await screen.findByLabelText("Pergunte à Mesa IA"), "Analise minha carteira");
-    await user.click(screen.getByRole("button", { name: "Enviar" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/desativada ou temporariamente indisponível/i);
-    expect(screen.getByText("Analise minha carteira")).toBeInTheDocument();
-  });
-
-  it("contextualiza a Mesa IA sem alterar o payload V1", async () => {
-    let body: unknown;
-    server.use(http.post(`${api}/ai-agent/chat`, async ({request}) => { body = await request.json(); return HttpResponse.json({ answer: "Contexto explicado.", tools_used: [], warnings: [], data_quality_notes: [] }); }));
-    const user = await openAuthenticated("/planejar?secao=futuro-financeiro");
-    await user.click((await screen.findAllByRole("button", { name: /Mesa IA/i }))[0]);
-    expect(screen.getByText(/Contexto · Futuro financeiro/)).toBeInTheDocument();
-    await user.type(await screen.findByLabelText("Pergunte à Mesa IA"), "Explique esta tela");
-    await user.click(screen.getByRole("button", { name: "Enviar" }));
-    await screen.findByText("Contexto explicado.");
-    expect(body).toEqual({ message: "Explique esta tela" });
+  it.each(["/", "/analisar", "/planejar?secao=futuro-financeiro"])("mantém Mesa IA pausada em %s, sem chamadas externas", async (path) => {
+    let calls = 0;
+    server.use(http.post(`${api}/ai-agent/chat`, () => { calls += 1; return HttpResponse.json({}); }));
+    const user = await openAuthenticated(path);
+    const trigger = (await screen.findAllByRole("button", { name: /Mesa IA/i }))[0];
+    await user.click(trigger);
+    const dialog = await screen.findByRole("dialog", { name: "Mesa IA — pausada" });
+    expect(dialog).toHaveTextContent("Nenhuma chamada externa é realizada.");
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Enviar" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Fechar Mesa IA" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(calls).toBe(0);
   });
 
   it("redireciona Investir para a seção canônica de montagem", async () => {

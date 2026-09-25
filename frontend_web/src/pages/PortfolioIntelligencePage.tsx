@@ -1,3 +1,4 @@
+import { ResponsiveTable } from "../components/ui/ResponsiveTable";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type ReactNode, type SetStateAction } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -220,7 +221,7 @@ function FutureFinancial() {
       <MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} />
     </div>
     <Card title="Cenários projetados">
-      <div className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></div>
+      <ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable>
       <TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} />
       <p className="helper smart-disclaimer">{data.disclaimer}</p>
     </Card>
@@ -296,7 +297,7 @@ function Strategy() {
             <strong>Total da alocação: {formatPercent(validation.total)}</strong>
             {validation.errors.map((error) => <p key={error} className="helper error-text">{error}</p>)}
           </div>
-          <div className="table-wrap span-2">
+          <ResponsiveTable className="table-wrap span-2">
             <table>
               <thead><tr><th>Classe</th><th>Habilitada</th><th>Alvo</th><th>Mínimo</th><th>Máximo</th></tr></thead>
               <tbody>
@@ -311,7 +312,7 @@ function Strategy() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ResponsiveTable>
           <div className="button-row span-2">
             <Button type="submit" disabled={!validation.valid || save.isPending}>{save.isPending ? "Salvando..." : "Salvar estratégia"}</Button>
             <Button type="button" variant="secondary" onClick={() => setDraft(policy.data ? draftFromPolicy(policy.data) : emptyDraft())}>Restaurar valores salvos</Button>
@@ -471,7 +472,7 @@ function MarketRecommendationCard({ item }: { item: AssetIntelligenceSnapshot })
 function IndicatorTable({ items }: { items: AssetIntelligenceSnapshot["indicators"] }) {
   if (!items.length) return <p>Não existem dados suficientes para uma análise confiável deste investimento.</p>;
   return (
-    <div className="table-wrap">
+    <ResponsiveTable className="table-wrap">
       <table>
         <thead><tr><th>Indicador</th><th>Valor</th><th>Período</th><th>Status</th><th>Fonte</th><th>Atualização</th><th>Explicação</th></tr></thead>
         <tbody>
@@ -488,7 +489,7 @@ function IndicatorTable({ items }: { items: AssetIntelligenceSnapshot["indicator
           ))}
         </tbody>
       </table>
-    </div>
+    </ResponsiveTable>
   );
 }
 
@@ -497,7 +498,7 @@ function Rebalancing({ data }: { data: PortfolioIntelligence }) {
   if (!data.rebalancing.length) return <EmptyState title="Dados insuficientes para calcular." />;
   return (
     <Card title="Rebalanceamento">
-      <div className="table-wrap">
+      <ResponsiveTable className="table-wrap">
         <table>
           <thead><tr><th>Classe</th><th>Atual</th><th>Meta</th><th>Diferença</th><th>Falta</th><th>Excesso</th><th>Próximo aporte</th><th>Status</th></tr></thead>
           <tbody>
@@ -515,7 +516,7 @@ function Rebalancing({ data }: { data: PortfolioIntelligence }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTable>
     </Card>
   );
 }
@@ -675,12 +676,12 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
       </Card>
       <ResultDetails title="Por que esta carteira?"><p>{data.strategy_summary}</p><TextList items={data.selections.map((item) => `${item.asset_class}: ${item.message}`)} /></ResultDetails>
       <ResultDetails title="Riscos e cuidados"><TextList items={[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks]} fallback="Nenhum cuidado adicional foi identificado com os dados disponíveis." /></ResultDetails>
-      <ResultDetails title="Distribuição por classe">{!data.class_allocations.length ? <EmptyState title="Cobertura insuficiente para alocar com segurança." /> : <div className="table-wrap"><table><thead><tr><th>Classe</th><th>Percentual</th><th>Valor sugerido</th><th>Explicação</th></tr></thead><tbody>{data.class_allocations.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatPercent(item.percentage)}</td><td>{formatMoney(item.amount)}</td><td>{item.explanation}</td></tr>)}</tbody></table></div>}</ResultDetails>
-      <ResultDetails title="Planejamento financeiro"><div className="metric-grid compact"><MetricCard label="Fase" value={data.diagnosis.phase} /><MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} /><MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} /><MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} /></div><TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} /><div className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></div></ResultDetails>
-      <ResultDetails title="Carteira executável">{!sortedAssets.length ? <p>Sem ativos executáveis.</p> : <div className="table-wrap"><table><thead><tr><th>Ativo</th><th>Preço</th><th>Quantidade</th><th>Valor executável</th><th>Diferença do alvo</th></tr></thead><tbody>{sortedAssets.map((asset) => <tr key={`execution-${asset.symbol}`}><td>{asset.symbol}</td><td>{formatMoney(asset.reference_price)}</td><td>{asset.executable_quantity ?? "—"}</td><td>{formatMoney(asset.executable_amount)}</td><td>{formatMoney(asset.target_gap)}</td></tr>)}</tbody></table></div>}</ResultDetails>
-      <ResultDetails title="Plano de aportes">{!data.contribution_plan.length ? <p>Sem aporte mensal informado.</p> : <div className="table-wrap"><table><thead><tr><th>Prioridade</th><th>Destino</th><th>Valor</th><th>Motivo</th></tr></thead><tbody>{data.contribution_plan.map((item) => <tr key={`${item.priority}-${item.symbol}`}><td>{item.priority}</td><td>{item.symbol}</td><td>{formatMoney(item.suggested_amount)}</td><td>{item.reason}</td></tr>)}</tbody></table></div>}</ResultDetails>
+      <ResultDetails title="Distribuição por classe">{!data.class_allocations.length ? <EmptyState title="Cobertura insuficiente para alocar com segurança." /> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Classe</th><th>Percentual</th><th>Valor sugerido</th><th>Explicação</th></tr></thead><tbody>{data.class_allocations.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatPercent(item.percentage)}</td><td>{formatMoney(item.amount)}</td><td>{item.explanation}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
+      <ResultDetails title="Planejamento financeiro"><div className="metric-grid compact"><MetricCard label="Fase" value={data.diagnosis.phase} /><MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} /><MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} /><MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} /></div><TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} /><ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable></ResultDetails>
+      <ResultDetails title="Carteira executável">{!sortedAssets.length ? <p>Sem ativos executáveis.</p> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Preço</th><th>Quantidade</th><th>Valor executável</th><th>Diferença do alvo</th></tr></thead><tbody>{sortedAssets.map((asset) => <tr key={`execution-${asset.symbol}`}><td>{asset.symbol}</td><td>{formatMoney(asset.reference_price)}</td><td>{asset.executable_quantity ?? "—"}</td><td>{formatMoney(asset.executable_amount)}</td><td>{formatMoney(asset.target_gap)}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
+      <ResultDetails title="Plano de aportes">{!data.contribution_plan.length ? <p>Sem aporte mensal informado.</p> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Prioridade</th><th>Destino</th><th>Valor</th><th>Motivo</th></tr></thead><tbody>{data.contribution_plan.map((item) => <tr key={`${item.priority}-${item.symbol}`}><td>{item.priority}</td><td>{item.symbol}</td><td>{formatMoney(item.suggested_amount)}</td><td>{item.reason}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
       <ResultDetails title="Dados e fontes"><TextList items={[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments)]} fallback="Sem avisos adicionais sobre dados e fontes." /></ResultDetails>
-      <ResultDetails title="Ativos não incluídos">{data.exclusions.length ? <div className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo</th></tr></thead><tbody>{data.exclusions.map((item) => <tr key={item.symbol}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></div> : <p>Nenhum ativo adicional foi excluído.</p>}</ResultDetails>
+      <ResultDetails title="Ativos não incluídos">{data.exclusions.length ? <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo</th></tr></thead><tbody>{data.exclusions.map((item) => <tr key={item.symbol}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></ResponsiveTable> : <p>Nenhum ativo adicional foi excluído.</p>}</ResultDetails>
     </div>
   );
 }
@@ -716,8 +717,8 @@ function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
         <h4>Justificativas</h4><TextList items={asset.reasons} />
         <h4>Riscos</h4><TextList items={asset.risks} fallback="Nenhum risco adicional identificado com os dados disponíveis." />
         <h4>Indicadores utilizados</h4>
-        <div className="table-wrap indicator-table"><table><thead><tr><th>Indicador</th><th>Valor</th><th>Situação</th><th>Referência</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={item.key}><td data-label="Indicador">{item.label}</td><td data-label="Valor">{formatIndicatorValue(item)}</td><td data-label="Situação">{indicatorStatusLabel(item)}</td><td data-label="Referência">{formatDateTimeBR(item.reference_date)}</td></tr>)}</tbody></table></div>
-        <details className="indicator-provenance"><summary>Ver procedência e qualidade dos dados</summary><div className="table-wrap"><table><thead><tr><th>Indicador</th><th>Fonte</th><th>Tipo</th><th>Referência</th><th>Validade</th><th>Frescor</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={`source-${item.key}`}><td data-label="Indicador">{item.label}</td><td data-label="Fonte">{item.source}</td><td data-label="Tipo">{sourceTypeLabel(item.source_type)}</td><td data-label="Referência">{formatDateTimeBR(item.reference_date)}</td><td data-label="Validade">{formatDateTimeBR(item.valid_until)}</td><td data-label="Frescor">{freshnessLabel(item.freshness_status)}</td></tr>)}</tbody></table></div><h4>Ausências e impedimentos</h4><TextList items={[...asset.missing_data, ...asset.execution_impediments, ...asset.indicators_used.flatMap((item) => item.unavailable_reason ? [item.unavailable_reason] : [])]} fallback="Nenhuma ausência ou impedimento informado." /></details>
+        <ResponsiveTable className="table-wrap indicator-table"><table><thead><tr><th>Indicador</th><th>Valor</th><th>Situação</th><th>Referência</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={item.key}><td data-label="Indicador">{item.label}</td><td data-label="Valor">{formatIndicatorValue(item)}</td><td data-label="Situação">{indicatorStatusLabel(item)}</td><td data-label="Referência">{formatDateTimeBR(item.reference_date)}</td></tr>)}</tbody></table></ResponsiveTable>
+        <details className="indicator-provenance"><summary>Ver procedência e qualidade dos dados</summary><ResponsiveTable className="table-wrap"><table><thead><tr><th>Indicador</th><th>Fonte</th><th>Tipo</th><th>Referência</th><th>Validade</th><th>Frescor</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={`source-${item.key}`}><td data-label="Indicador">{item.label}</td><td data-label="Fonte">{item.source}</td><td data-label="Tipo">{sourceTypeLabel(item.source_type)}</td><td data-label="Referência">{formatDateTimeBR(item.reference_date)}</td><td data-label="Validade">{formatDateTimeBR(item.valid_until)}</td><td data-label="Frescor">{freshnessLabel(item.freshness_status)}</td></tr>)}</tbody></table></ResponsiveTable><h4>Ausências e impedimentos</h4><TextList items={[...asset.missing_data, ...asset.execution_impediments, ...asset.indicators_used.flatMap((item) => item.unavailable_reason ? [item.unavailable_reason] : [])]} fallback="Nenhuma ausência ou impedimento informado." /></details>
       </div>
     </details>
   </article>;
@@ -798,12 +799,12 @@ export function MarketOpportunities() {
         {macro.isLoading ? <LoadingState label="Carregando cenário econômico..." /> : null}
         {macro.error ? <ErrorState message="Não foi possível carregar o cenário econômico." /> : null}
         {macro.data ? (
-          <div className="table-wrap">
+          <ResponsiveTable className="table-wrap">
             <table>
               <thead><tr><th>Indicador</th><th>Estado</th><th>Frequência</th><th>Fonte</th></tr></thead>
               <tbody>{macro.data.map((item) => <tr key={item.key}><td>{item.label}</td><td>{statusLabel(item.state)}</td><td>{item.frequency}</td><td>{item.source}</td></tr>)}</tbody>
             </table>
-          </div>
+          </ResponsiveTable>
         ) : null}
       </Card>
       {data.opportunities.length ? (
@@ -827,12 +828,12 @@ export function MarketOpportunities() {
 function ClassAllocationTable({ items }: { items: PortfolioIntelligence["diagnosis"]["class_allocations"] }) {
   if (!items.length) return <p>Dados insuficientes para calcular.</p>;
   return (
-    <div className="table-wrap">
+    <ResponsiveTable className="table-wrap">
       <table>
         <thead><tr><th>Classe</th><th>Valor atual</th><th>Atual</th><th>Meta</th><th>Mínimo</th><th>Máximo</th><th>Diferença</th><th>Status</th></tr></thead>
         <tbody>{items.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatMoney(item.current_value)}</td><td>{formatPercent(item.current_percentage)}</td><td>{formatPercent(item.target_percentage)}</td><td>{formatPercent(item.minimum_percentage)}</td><td>{formatPercent(item.maximum_percentage)}</td><td>{formatPercent(item.difference_percentage)}</td><td>{item.status}</td></tr>)}</tbody>
       </table>
-    </div>
+    </ResponsiveTable>
   );
 }
 

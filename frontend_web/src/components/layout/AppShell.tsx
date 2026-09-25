@@ -5,7 +5,7 @@ import { applyVisualPreferences, readVisualPreferences } from "../../features/pr
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 
-const AIContextPanel = lazy(() => import("../AIContextPanel").then(module => ({ default: module.AIContextPanel })));
+const AIContextPanel = lazy(() => import("../PausedAIPanel").then(module => ({ default: module.PausedAIPanel })));
 const GlobalSearchDialog = lazy(() => import("../search/GlobalSearchDialog").then(module => ({ default: module.GlobalSearchDialog })));
 
 export function AppShell() {
@@ -19,6 +19,7 @@ export function AppShell() {
   useEffect(() => applyVisualPreferences(readVisualPreferences()), []);
   return (
     <div className="app-shell">
+      <a className="orbita-skip" href="#main-content">Ir para o conteúdo</a>
       <Sidebar onOpenAI={openAI} />
       <div className="app-main">
         <Header onOpenSearch={openSearch} />

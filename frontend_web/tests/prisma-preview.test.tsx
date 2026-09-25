@@ -84,6 +84,14 @@ describe("Quantum Prism preview", () => {
     expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
   });
 
+  it("não transforma posições indisponíveis em zero quando somente a carteira falha", async () => {
+    server.use(http.get(`${api}/portfolio`, () => HttpResponse.json({ detail: "erro" }, { status: 503 })));
+    await renderPreview();
+    expect(await screen.findByText("Posições indisponíveis")).toBeInTheDocument();
+    expect(screen.queryByText("0 posições consolidadas")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
+  });
+
   it("expõe cinco destinos e navegação essencial acessível", async () => {
     await renderPreview();
     const navigation = await screen.findByRole("navigation", { name: "Destinos principais" });

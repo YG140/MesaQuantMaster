@@ -8,6 +8,7 @@ import { LoadingState } from "../components/feedback/LoadingState";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { MetricCard } from "../components/ui/MetricCard";
+import { ResponsiveTable } from "../components/ui/ResponsiveTable";
 import { ApiError } from "../services/apiClient";
 import { useAuth } from "../features/auth/useAuth";
 import { endpoints } from "../services/endpoints/data";
@@ -101,7 +102,7 @@ export function PortfolioPage() {
       {message && <div className="success-box" role="status">{message}</div>}
       <MarketDataNotice status={portfolio.data?.market_data_status} quoteUpdatedAt={portfolio.data?.quote_updated_at} unpricedSymbols={portfolio.data?.unpriced_symbols ?? []} />
       <section className="portfolio-prism-hero">
-        <div className="portfolio-orbit" aria-hidden="true"><span /></div>
+        <AllocationChart data={chartData} />
         <div className="metric-grid portfolio-prism-metrics">
         <MetricCard label="Total investido" value={formatMoney(portfolio.data?.total_invested)} />
         <MetricCard label="Valor de mercado" value={formatMoney(portfolio.data?.total_market_value)} />
@@ -112,16 +113,16 @@ export function PortfolioPage() {
       {!positions.length ? <EmptyState title="Sua carteira ainda está vazia." /> : (
         <>
           <Card title="Posições">
-            <div className="table-wrap portfolio-table"><table><thead><tr><th>Ativo</th><th>Nome</th><th>Quantidade</th><th>Preço médio</th><th>Valor investido</th><th>Preço atual</th><th>Valor de mercado</th><th>Lucro ou prejuízo</th><th>Alocação</th><th>Ações</th></tr></thead>
+            <ResponsiveTable className="portfolio-table"><table><thead><tr><th>Ativo</th><th>Nome</th><th>Quantidade</th><th>Preço médio</th><th>Valor investido</th><th>Preço atual</th><th>Valor de mercado</th><th>Lucro ou prejuízo</th><th>Alocação</th><th>Ações</th></tr></thead>
               <tbody>{positions.map((item) => <tr key={item.asset_id}><td>{item.ticker}</td><td>{item.asset_name}</td><td>{formatQuantityBR(item.quantity)}</td><td>{formatMoney(item.average_price)}</td><td>{formatMoney(item.invested_amount)}</td><td>{formatMoney(item.current_price)}</td><td>{formatMoney(item.market_value)}</td><td>{formatMoney(item.unrealized_profit)}</td><td>{formatPercent(item.allocation ?? item.weight)}</td><td><PositionActions item={item} onAction={openAction} /></td></tr>)}</tbody>
-            </table></div>
-            <div className="portfolio-cards">{positions.map((item) => <article className="position-card" key={item.asset_id}><div><strong>{item.ticker}</strong><span>{item.asset_name}</span></div><dl><div><dt>Quantidade</dt><dd>{formatQuantityBR(item.quantity)}</dd></div><div><dt>Valor investido</dt><dd>{formatMoney(item.invested_amount)}</dd></div><div><dt>Valor de mercado</dt><dd>{formatMoney(item.market_value)}</dd></div></dl><PositionActions item={item} onAction={openAction} /></article>)}</div>
+            </table></ResponsiveTable>
+            <div className="portfolio-cards">{positions.map((item) => <article className="position-card" key={item.asset_id}><div><strong>{item.ticker}</strong><span>{item.asset_name}</span></div><dl><div><dt>Quantidade</dt><dd>{formatQuantityBR(item.quantity)}</dd></div><div><dt>Valor investido</dt><dd>{formatMoney(item.invested_amount)}</dd></div><div><dt>Valor de mercado</dt><dd>{formatMoney(item.market_value)}</dd></div><div><dt>Preço médio</dt><dd>{formatMoney(item.average_price)}</dd></div><div><dt>Preço atual</dt><dd>{formatMoney(item.current_price)}</dd></div><div><dt>Lucro ou prejuízo</dt><dd>{formatMoney(item.unrealized_profit)}</dd></div><div><dt>Alocação</dt><dd>{formatPercent(item.allocation ?? item.weight)}</dd></div></dl><PositionActions item={item} onAction={openAction} /></article>)}</div>
           </Card>
-          <Card title="Gráfico de alocação">{chartData.length ? <AllocationChart data={chartData} /> : <p>Ainda não há informação de alocação para exibir.</p>}</Card>
+          <p className="helper">Evolução: consulte as movimentações registradas abaixo. Não há série histórica de patrimônio neste contrato.</p>
         </>
       )}
       <Card title="Histórico de movimentações">
-        {operations.data?.length ? <div className="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Quantidade</th><th>Preço</th><th>Taxas</th></tr></thead><tbody>{operations.data.map((item) => <tr key={item.id}><td>{item.operation_date}</td><td>{item.operation_type === "BUY" ? "Compra" : "Venda"}</td><td>{formatQuantityBR(item.quantity)}</td><td>{formatMoney(item.unit_price)}</td><td>{formatMoney(item.fees)}</td></tr>)}</tbody></table></div> : <p>Nenhuma movimentação registrada.</p>}
+        {operations.data?.length ? <ResponsiveTable><table><thead><tr><th>Data</th><th>Tipo</th><th>Quantidade</th><th>Preço</th><th>Taxas</th></tr></thead><tbody>{operations.data.map((item) => <tr key={item.id}><td>{item.operation_date}</td><td>{item.operation_type === "BUY" ? "Compra" : "Venda"}</td><td>{formatQuantityBR(item.quantity)}</td><td>{formatMoney(item.unit_price)}</td><td>{formatMoney(item.fees)}</td></tr>)}</tbody></table></ResponsiveTable> : <p>Nenhuma movimentação registrada.</p>}
       </Card>
       {position && action && <PositionDialog
         action={action}
