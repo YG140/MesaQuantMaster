@@ -22,6 +22,11 @@ router = APIRouter(prefix="/auth", tags=["Autenticação"])
 GENERIC_EMAIL_MESSAGE = (
     "Se o e-mail estiver cadastrado, você receberá as instruções em instantes."
 )
+GENERIC_RECOVERY_MESSAGE = (
+    "Por segurança, esta resposta não confirma cadastro nem entrega de e-mail. "
+    "Se a conta existir e o envio estiver disponível, você receberá um link de recuperação. "
+    "Confira também o spam. Se não receber, procure o administrador da instalação."
+)
 login_rate_limiter = LoginRateLimiter(
     attempts=settings.LOGIN_RATE_LIMIT_ATTEMPTS,
     window_seconds=settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS,
@@ -109,9 +114,11 @@ def forgot_password(
 ):
     try:
         service.forgot_password(request.email)
-    except AuthError:
-        pass
-    return MessageResponse(message=GENERIC_EMAIL_MESSAGE)
+    except AuthError as error:
+        if error.code == "EMAIL_DELIVERY_UNAVAILABLE":
+            raise_auth_error(error)
+        # Account-specific outcomes (including cooldown) stay private.
+    return MessageResponse(message=GENERIC_RECOVERY_MESSAGE)
 
 
 @router.post("/reset-password", response_model=MessageResponse)

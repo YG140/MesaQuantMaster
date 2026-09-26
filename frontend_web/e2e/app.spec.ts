@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -25,7 +25,26 @@ const policy = {
   updated_at: "2026-07-16T18:30:00Z",
 };
 
-test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
+async function mockApplicationApi(page: Page) {
+  // A fixture must never fall through to a developer's running API.
+  await page.route("http://127.0.0.1:8000/**", async route => {
+    await route.abort();
+    throw new Error(`Endpoint E2E sem fixture: ${new URL(route.request().url()).pathname}`);
+  });
+  await page.route("**/brokerages", route => route.fulfill({json:[]}));
+  await page.route("**/investor-profile", route => route.fulfill({json:{
+    id:"investor-profile-1",user_id:"user-1",status:"complete",version:1,
+    primary_objective:"crescimento_patrimonial",secondary_objectives:[],horizon:"mais_10_anos",
+    initial_contribution:"0",monthly_contribution:"1000",contribution_stability:"fixo",
+    income_range:"3000_a_8000",investable_net_worth_range:"10000_a_50000",
+    emergency_reserve_months:6,has_relevant_debt:false,dependents:0,liquidity_need:"moderada",
+    income_need:"complemento",allowed_classes:[],restricted_classes:[],
+    dimensions:{risk_tolerance_score:66,risk_capacity_score:70,horizon_score:90,liquidity_need_score:55,
+      income_need_score:40,knowledge_score:80,emergency_reserve_adequacy_score:100,overall_classification:"Moderado"},
+    explanations:[],policy_preview:null,evaluated_at:"2026-07-16T18:30:00Z",
+    confirmed_at:"2026-07-16T18:30:00Z",last_reviewed_at:null,
+    created_at:"2026-07-16T18:30:00Z",updated_at:"2026-07-16T18:30:00Z",
+  }}));
   await page.route("**/auth/login", async (route) => {
     await route.fulfill({ json: { access_token: "e2e-token", token_type: "bearer" } });
   });
@@ -252,12 +271,17 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
     });
   });
 
+}
+
+test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
+  await mockApplicationApi(page);
   await page.goto("/carteira");
   await expect(page.getByRole("heading", { name: "Mesa Quant Master" })).toBeVisible();
   await page.getByLabel("E-mail").fill("ana@example.com");
   await page.getByLabel("Senha", { exact: true }).fill("password123");
   await page.getByRole("button", { name: "Entrar" }).click();
-  await expect(page.getByRole("heading", { name: /In.cio/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Visão orbital", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Seu patrimônio ainda não foi formado na Mesa.", exact: true })).toBeVisible();
   await page.getByTestId("desktop-primary-navigation").getByRole("link", { name: "Carteira" }).click();
   // level: 2 desambigua do <h1> global do Header, que também mostra
   // "Minha carteira" como título de rota (ver navigation.ts) -- o alvo
@@ -294,12 +318,21 @@ test("fluxo principal de navegacao autenticada com mocks", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("heading", { name: "Mercado e ativos", exact: true })).toBeVisible();
   await expect(page.getByText(/JSON|undefined|null|NaN/)).not.toBeVisible();
-  // Correção interface: logout saiu do header e passou a viver em
-  // Configurações, seção "Sair da conta".
+});
+
+test("logout pelas configurações encerra a sessão e protege a carteira", async ({page}) => {
+  await mockApplicationApi(page);
+  await page.goto("/login");
+  await page.getByLabel("E-mail").fill("ana@example.com");
+  await page.getByLabel("Senha", {exact:true}).fill("password123");
+  await page.getByRole("button", {name:"Entrar",exact:true}).click();
+  await expect(page.getByRole("heading", {name:"Visão orbital",exact:true})).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/configuracoes");
   await page.getByRole("button", { name: "Sair da conta" }).click();
   await expect(page.getByRole("heading", { name: "Mesa Quant Master" })).toBeVisible();
+  await page.goto("/carteira");
+  await expect(page.getByRole("heading", {name:"Mesa Quant Master",exact:true})).toBeVisible();
 });
 
 test("bundle nao expoe chave BRAPI", async () => {

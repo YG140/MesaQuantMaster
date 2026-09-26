@@ -83,6 +83,12 @@ class AuthService:
             self._issue_and_send(user, VERIFY, enforce_cooldown=True)
 
     def forgot_password(self, email: str) -> None:
+        # Global configuration errors must not depend on account existence.
+        if not self.email_provider or not self.email_provider.is_configured():
+            raise AuthError(
+                "Recuperação temporariamente indisponível: envio de e-mail não configurado.",
+                "EMAIL_DELIVERY_UNAVAILABLE",
+            )
         user = self.repository.get_by_email(email.strip().lower())
         if user:
             self._issue_and_send(user, RESET, enforce_cooldown=True)

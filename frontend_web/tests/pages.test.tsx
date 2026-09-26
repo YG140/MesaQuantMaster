@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppRouter } from "../src/app/router";
 import { renderWithProviders } from "./render";
@@ -124,19 +124,19 @@ describe("paginas autenticadas", () => {
   it("mantem a rota / protegida e renderiza dashboard com dados", async () => {
     await login("/");
     expect((await screen.findAllByText("Patrimônio")).length).toBeGreaterThan(0);
-    expect(screen.getByText("Resumo de risco")).toBeInTheDocument();
-    expect(screen.getByText(/Cotações atualizadas em/)).toBeInTheDocument();
+    expect(screen.getByText("Risco")).toBeInTheDocument();
+    expect(screen.getByText(/Confirmado em/)).toBeInTheDocument();
     expect(screen.getAllByText("R$ 521,00").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("2").length).toBeGreaterThan(0);
+    expect(screen.getByText("Movimentações: 2")).toBeInTheDocument();
   });
 
   it("mostra estado vazio para usuario novo", async () => {
     mockEmptyPortfolio();
     await login();
 
-    expect(await screen.findByText("Sua carteira ainda está vazia.")).toBeInTheDocument();
+    expect(await screen.findByText("Seu patrimônio ainda não foi formado na Mesa.")).toBeInTheDocument();
     expect(screen.getAllByText("Adicionar investimento").length).toBeGreaterThan(0);
-    expect(screen.getByText("Importar carteira existente")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Importar carteira" })).toHaveAttribute("href", "/carteira/importar");
     expect(screen.queryByLabelText("Gráfico de alocação")).not.toBeInTheDocument();
     expect(screen.queryByText("Patrimônio")).not.toBeInTheDocument();
   });
@@ -186,8 +186,8 @@ describe("paginas autenticadas", () => {
     );
 
     await login();
-    expect(await screen.findByText("Ainda não há informação de alocação para exibir.")).toBeInTheDocument();
-    expect(screen.getAllByText("Não informado").length).toBeGreaterThan(0);
+    expect(await screen.findByText("A distribuição não foi informada.")).toBeInTheDocument();
+    expect(within(screen.getByText("Integridade").closest("section")!).getByText(/Sem cotação:/)).toHaveTextContent("não convertido em zero");
     expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
   });
 
@@ -228,7 +228,7 @@ describe("paginas autenticadas", () => {
     );
 
     await login();
-    expect(await screen.findByText("Ainda não há informação de alocação para exibir.")).toBeInTheDocument();
+    expect(await screen.findByText("A distribuição não foi informada.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Gráfico de alocação")).not.toBeInTheDocument();
   });
 
@@ -269,7 +269,7 @@ describe("paginas autenticadas", () => {
     );
 
     await login();
-    expect(await screen.findByText("Ainda não há informação de alocação para exibir.")).toBeInTheDocument();
+    expect(await screen.findByText("A distribuição não foi informada.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Gráfico de alocação")).not.toBeInTheDocument();
     expect(screen.queryByText(/NaN|undefined|null/)).not.toBeInTheDocument();
   });
@@ -278,7 +278,7 @@ describe("paginas autenticadas", () => {
     server.use(http.get(`${api}/dashboard`, () => HttpResponse.json({ detail: "Erro interno" }, { status: 500 })));
     await login();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o início");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Parte dos dados está indisponível");
     expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
   });
 
@@ -286,7 +286,7 @@ describe("paginas autenticadas", () => {
     server.use(http.get(`${api}/dashboard`, () => HttpResponse.error()));
     await login();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível carregar o início");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Parte dos dados está indisponível");
     expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
   });
 
@@ -319,6 +319,7 @@ describe("paginas autenticadas", () => {
     const retryButton = await screen.findByRole("button", { name: "Tentar novamente" });
     shouldFail = false;
     await user.click(retryButton);
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     expect((await screen.findAllByText("Patrimônio")).length).toBeGreaterThan(0);
   });
 
