@@ -224,6 +224,24 @@ class BuildPortfolioAsset(BaseModel):
     economic_identity: str | None = None
     market_segment: str | None = None
     quantity_step: Decimal | None = None
+    # Contexto vindo exclusivamente das operações autenticadas do usuário.
+    existing_quantity: Decimal = Decimal("0")
+    existing_value: Decimal = Decimal("0")
+    post_purchase_weight: Decimal | None = None
+    allocation_note: str | None = None
+
+
+class ExistingHoldingAssessment(BaseModel):
+    symbol: str
+    quantity: Decimal
+    estimated_value: Decimal
+    estimated_weight: Decimal
+    valuation_basis: str
+    recommendation: str
+    confidence: str
+    overall_score: Decimal | None = None
+    rationale: str
+    alerts: list[str] = Field(default_factory=list)
 
 
 class BuildPortfolioExclusion(BaseModel):
@@ -329,6 +347,10 @@ class BuildPortfolioResponse(BaseModel):
     # clientes que ainda não conhecem "investor_profile_policy".
     policy_source: str = "request_legacy"
     policy_id: UUID | None = None
+    existing_portfolio_value: Decimal = Decimal("0")
+    existing_positions_count: int = 0
+    existing_holdings_assessments: list[ExistingHoldingAssessment] = Field(default_factory=list)
+    holdings_warnings: list[str] = Field(default_factory=list)
     diagnosis: FinancialDiagnosis
     contribution_plan: list[ContributionPriority] = Field(default_factory=list)
     projections: list[ProjectionScenario] = Field(default_factory=list)
