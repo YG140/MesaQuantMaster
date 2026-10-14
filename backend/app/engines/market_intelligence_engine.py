@@ -100,8 +100,14 @@ class ScoringEngine:
             # Disponibilidade é um critério de confiança, NÃO de qualidade.
             # Os números de ROE, alavancagem, P/L etc. devem influenciar
             # a nota. Nenhum indicador não comparável recebe nota artificial.
+            # Dividend Yield é retorno/distribuição, não uma medida
+            # independente de valuation: não o contamos duas vezes.
+            scored_indicators = [
+                item for item in available
+                if not (item.key == "dividend_yield" and "price_earnings" in keys)
+            ]
             observed = [
-                rating for item in available
+                rating for item in scored_indicators
                 if (rating := score_stock_indicator(item)) is not None
             ]
             if not observed:
