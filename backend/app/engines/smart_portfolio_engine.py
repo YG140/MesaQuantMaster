@@ -29,6 +29,7 @@ from app.schemas.market_intelligence import (
     IndicatorStatus,
     InvestmentClass,
 )
+from app.engines.portfolio_holdings_context import limit_new_contributions, assess_holdings
 from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
 
 
@@ -258,8 +259,8 @@ class SmartPortfolioEngine:
         percentages = cls.allocate(request, ranked, strategy)
         holding_notes: dict[str, str] = {}
         if holdings:
-            percentages, holding_notes = cls._apply_holdings_limits(
-                request, ranked, strategy, percentages, holdings
+            percentages, holding_notes = limit_new_contributions(
+                request, ranked, strategy, percentages, holdings, cls.class_label
             )
 
         assets = []
@@ -329,7 +330,7 @@ class SmartPortfolioEngine:
                     "Aportes limitados pela concentração da carteira existente."
                 )
         holding_assessments = (
-            cls._assess_holdings(holdings, candidates, strategy)
+            assess_holdings(holdings, candidates, strategy, cls._effective_score)
             if holdings else []
         )
         status = (
