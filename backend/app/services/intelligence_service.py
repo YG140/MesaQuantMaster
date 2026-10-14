@@ -8,7 +8,7 @@ from app.engines.intelligence_engine import (
     PortfolioBuilderEngine,
     PortfolioIntelligenceEngine,
 )
-from app.engines.smart_portfolio_engine import PortfolioCandidate, SmartPortfolioEngine
+from app.engines.smart_portfolio_engine import PortfolioCandidate, PortfolioHolding, SmartPortfolioEngine
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
 from app.repositories.asset_repository import AssetRepository
@@ -129,6 +129,15 @@ class PortfolioIntelligenceService:
         if self.asset_repository is None or self.market_intelligence_service is None:
             return SmartPortfolioEngine.build(data, [], policy=policy)
 
+        # Apenas posições persistidas pelo usuário autenticado. O frontend não
+        # pode forjar holdings para alterar limites e pareceres.
+        portfolio = (
+            self.portfolio_service.calculate(user_id)
+            if self.portfolio_service is not None else None
+        )
+        persisted_positions = portfolio.positions if portfolio is not None else []
+        held_symbols = {position.ticker.upper() for position in persisted_positions}
+
         # Ordenamos explicitamente por ticker (chave estável) em vez de
         # confiar na ordem implícita do repositório, para que o universo e o
         # resultado sejam sempre reproduzíveis. Deduplicamos por ticker e
@@ -147,9 +156,18 @@ class PortfolioIntelligenceService:
         universe_total = len(active_assets)
         universe_max = settings.PORTFOLIO_UNIVERSE_MAX_ASSETS
         universe_truncated = universe_total > universe_max
-        considered_assets = (
-            active_assets[:universe_max] if universe_truncated else active_assets
-        )
+        # Prioridade de cobertura para posições reais se houver truncamento:
+        # um ativo já registrado não pode ser deixado sem análise apenas
+        # porque seu ticker vem depois dos primeiros N alfabeticamente.
+        # Sem carteira cadastrada, preserva-se a ordem legada integral.
+        if held_symbols and universe_truncated:
+            prioritized = sorted(
+                active_assets,
+                key=lambda asset: (asset.ticker.upper() not in held_symbols, asset.ticker),
+            )
+            considered_assets = prioritized[:universe_max]
+        else:
+            considered_assets = active_assets[:universe_max] if universe_truncated else active_assets
         universe_considered = len(considered_assets)
 
         if not considered_assets:
@@ -214,10 +232,46 @@ class PortfolioIntelligenceService:
                     ),
                 )
             )
+        # A posição vale a cotação somente quando disponível. Sem ela, o
+        # custo registrado é um proxy explícito, nunca um preço inventado.
+        # O setor/emissor são resolvidos pelo cadastro do ativo, não pelo
+        # texto livre enviado na requisição de montagem.
+        holdings = []
+        candidate_by_symbol = {
+            candidate.snapshot.symbol.upper(): candidate for candidate in candidates
+        }
+        all_assets_by_symbol = {asset.ticker.upper(): asset for asset in active_assets}
+        for position in persisted_positions:
+            symbol = position.ticker.upper()
+            asset = all_assets_by_symbol.get(symbol)
+            analyzed = candidate_by_symbol.get(symbol)
+            current_value = position.market_value
+            has_quote = current_value is not None and current_value > 0
+            value = current_value if has_quote else position.invested_amount
+            if value is None or value <= 0:
+                continue
+            raw_class = (
+                SmartPortfolioEngine.class_label(analyzed.snapshot.asset_class)
+                if analyzed else self._registered_asset_class(position.asset_type)
+            )
+            holdings.append(PortfolioHolding(
+                symbol=symbol,
+                quantity=position.quantity,
+                value=value,
+                valuation_basis="market" if has_quote else "invested",
+                asset_class=raw_class,
+                sector=getattr(asset, "sector", None),
+                issuer=(
+                    analyzed.issuer if analyzed else
+                    self._issuer_identity(asset, None, market_context=market_context)
+                    if asset is not None else None
+                ),
+            ))
         return SmartPortfolioEngine.build(
             data,
             candidates,
             policy=policy,
+            holdings=holdings,
             provider_errors=[item.message for item in errors],
             universe_total=universe_total,
             universe_considered=universe_considered,
@@ -225,6 +279,17 @@ class PortfolioIntelligenceService:
             batch_size=MAX_SYMBOLS_PER_ANALYSIS_BATCH,
             batch_count=len(batches),
         )
+
+    @staticmethod
+    def _registered_asset_class(asset_type: str | None) -> str | None:
+        mapping = {
+            "stock": "Ações", "acao": "Ações", "ações": "Ações",
+            "fii": "FIIs", "etf": "ETFs", "bdr": "BDRs",
+            "treasury": "Tesouro Direto", "cdb": "Renda fixa bancária",
+            "lci": "Renda fixa bancária", "lca": "Renda fixa bancária",
+            "crypto": "Criptomoedas",
+        }
+        return mapping.get((asset_type or "").strip().casefold())
 
     @staticmethod
     def _issuer_identity(asset, snapshot, *, market_context: str | None) -> str | None:
