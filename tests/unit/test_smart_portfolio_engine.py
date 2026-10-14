@@ -1602,3 +1602,24 @@ def test_holdings_price_fallback_and_uncovered_asset_are_not_passed_off_as_verif
     assert assessment.recommendation == "not_analyzed"
     assert assessment.confidence == "insufficient"
     assert assessment.valuation_basis == "invested"
+
+
+def test_builder_uses_next_eligible_stock_when_best_ranked_is_overweight():
+    from app.engines.smart_portfolio_engine import PortfolioHolding
+    result = SmartPortfolioEngine.build(
+        request(max_assets=1),
+        [
+            candidate("AAAA3", score="95", sector="Energia"),
+            candidate("BBBB3", score="70", sector="Tecnologia"),
+        ],
+        holdings=[
+            PortfolioHolding(
+                symbol="AAAA3", quantity=Decimal("900"),
+                value=Decimal("9000"), valuation_basis="market",
+                asset_class="Ações", sector="Energia", issuer="AAAA3",
+            )
+        ],
+    )
+    assert [asset.symbol for asset in result.assets] == ["BBBB3"]
+    assert "AAAA3" in {asset.symbol for asset in result.exclusions}
+    assert result.assets[0].score == Decimal("70.00")
