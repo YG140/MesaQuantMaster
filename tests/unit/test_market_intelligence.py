@@ -16,6 +16,7 @@ from app.engines.indicator_catalog import (
 from app.engines.market_intelligence_engine import (
     AssetAnalysisEngine,
     ScoringEngine,
+    ValuationEngine,
     RecommendationEngine,
     confidence_for_asset,
     warning_reasons,
@@ -2833,3 +2834,48 @@ def test_negative_earnings_pe_is_not_rewarded_as_cheap():
         InvestmentClass.STOCK, [_stock_ratio("price_earnings", "-8")], ["price_earnings"]
     )
     assert result.value is None
+
+
+def test_dividend_yield_alone_does_not_duplicate_into_stock_valuation():
+    dividend = NormalizedIndicator(
+        key="dividend_yield", label="Dividend Yield", value=Decimal("6"), unit="percent",
+        status=IndicatorStatus.AVAILABLE, source="test",
+        collected_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
+        confidence=ConfidenceLevel.HIGH,
+    )
+    valuation = ScoringEngine.score_category(
+        InvestmentClass.STOCK, [dividend], ["price_earnings", "price_book", "dividend_yield"]
+    )
+    income = ScoringEngine.score_category(
+        InvestmentClass.STOCK, [dividend], ["dividend_yield", "income_12m"]
+    )
+    assert valuation.value is None
+    assert income.value is not None
+
+
+def test_pe_and_pb_do_not_invent_an_intrinsic_price():
+    two_ratios = [
+        _stock_ratio("price_earnings", "9"),
+        _stock_ratio("price_book", "1.2"),
+    ]
+    assessment = ValuationEngine.assess(two_ratios)
+    assert assessment.status == ValuationStatus.INSUFFICIENT_DATA
+    assert assessment.estimated_range_low is None
+    assert assessment.estimated_range_high is None
+    assert assessment.confidence == ConfidenceLevel.INSUFFICIENT
+    assert "price_earnings" not in assessment.missing_indicators
+
+
+def test_no_buy_signal_from_unvalidated_fair_value():
+    snapshot = _snapshot_for_recommend(confidence=ConfidenceLevel.HIGH)
+    valuation = ValuationEngine.assess(
+        [_stock_ratio("price_earnings", "9"), _stock_ratio("price_book", "1.2")]
+    )
+    recommendation = RecommendationEngine.recommend(
+        snapshot,
+        scores={},
+        valuation=valuation,
+        confidence=ConfidenceLevel.HIGH,
+        overall_score=Decimal("90"),
+    )
+    assert recommendation == RecommendationAction.REVIEW_DATA
