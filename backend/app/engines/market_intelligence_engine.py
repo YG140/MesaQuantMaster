@@ -309,12 +309,19 @@ class ValuationEngine:
                 confidence=ConfidenceLevel.INSUFFICIENT,
                 data_date=next((item.reference_date for item in used), None),
             )
+        # Ter dois indicadores NÃO produz uma estimativa independente de
+        # preço justo. P/L e P/VP precisam de histórico/pares comparáveis,
+        # e não existe ainda um modelo validado de valor intrínseco.
+        # Até sua implementação, evite classificar automaticamente
+        # uma ação como "próxima do valor estimado".
         return ValuationAssessment(
-            status=ValuationStatus.NEAR_ESTIMATED_VALUE,
-            methods=["Indicadores fundamentalistas disponíveis"],
+            status=ValuationStatus.INSUFFICIENT_DATA,
+            methods=[],
             used_indicators=[item.label for item in used],
-            missing_indicators=missing,
-            confidence=ConfidenceLevel.MEDIUM,
+            missing_indicators=[
+                *missing, "Referência setorial/histórica validada para preço justo."
+            ],
+            confidence=ConfidenceLevel.INSUFFICIENT,
             data_date=next((item.reference_date for item in used), None),
         )
 
