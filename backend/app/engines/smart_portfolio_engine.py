@@ -255,13 +255,50 @@ class SmartPortfolioEngine:
         diagnosis = FinancialDiagnosisEngine.diagnose(request)
         projections = FinancialProjectionEngine.project(request)
         eligible, exclusions = cls.eligibility(strategy, candidates)
-        ranked = cls.score(strategy, eligible)[: request.max_assets]
+        scored = cls.score(strategy, eligible)
+        ranked = scored[: request.max_assets]
         percentages = cls.allocate(request, ranked, strategy)
         holding_notes: dict[str, str] = {}
+        blocked_by_holdings = []
         if holdings:
-            percentages, holding_notes = limit_new_contributions(
-                request, ranked, strategy, percentages, holdings, cls.class_label
-            )
+            # Não desperdice vagas com papéis que o investidor já possui em
+            # concentração excessiva: experimente os próximos do ranking.
+            attempted = {item.snapshot.symbol for item, _ in ranked}
+            while True:
+                percentages, holding_notes = limit_new_contributions(
+                    request, ranked, strategy, percentages, holdings, cls.class_label
+                )
+                zeroed = [
+                    pair for pair in ranked
+                    if percentages.get(pair[0].snapshot.symbol, Decimal("0")) <= 0
+                ]
+                if not zeroed:
+                    break
+                blocked_by_holdings.extend(zeroed)
+                ranked = [
+                    pair for pair in ranked
+                    if percentages.get(pair[0].snapshot.symbol, Decimal("0")) > 0
+                ]
+                replacements = []
+                for pair in scored:
+                    symbol = pair[0].snapshot.symbol
+                    if symbol not in attempted and len(ranked) + len(replacements) < request.max_assets:
+                        attempted.add(symbol)
+                        replacements.append(pair)
+                if not replacements:
+                    percentages = cls.allocate(request, ranked, strategy)
+                    percentages, holding_notes = limit_new_contributions(
+                        request, ranked, strategy, percentages, holdings, cls.class_label
+                    )
+                    break
+                ranked.extend(replacements)
+                percentages = cls.allocate(request, ranked, strategy)
+            for candidate, _ in blocked_by_holdings:
+                exclusions.append(BuildPortfolioExclusion(
+                    symbol=candidate.snapshot.symbol,
+                    asset_class=cls.class_label(candidate.snapshot.asset_class),
+                    reasons=["Novo aporte bloqueado pela concentração da carteira existente ou pela meta da classe."],
+                ))
 
         assets = []
         for candidate, score in ranked:
