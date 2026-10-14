@@ -124,6 +124,8 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(within(asset).getByText("R$ 10,75 não alocados neste ativo")).toBeVisible();
     expect(within(asset).getByText("Mercado fracionário")).toBeVisible();
     expect(within(within(asset).getByText("Confiança nos dados").parentElement!).getByText("Baixa")).toBeVisible();
+    const limitations = within(asset).getByText("Limitações e indicadores não disponíveis");
+    await user.click(limitations);
     expect(within(asset.querySelector(".confidence-explanation")!).getByText("Faltam dados atuais de liquidez e valuation.")).toBeVisible();
     await user.click(within(asset).getByText("Ver detalhes"));
     expect(within(asset).getByText("0,00%")).toBeVisible();
