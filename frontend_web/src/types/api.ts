@@ -545,6 +545,10 @@ export type BuildPortfolioResponse = {
     target_gap: string | number; execution_impediments: string[];
     trading_symbol?: string | null; economic_identity?: string | null;
     market_segment?: string | null; quantity_step?: string | number | null;
+    existing_quantity?: string | number;
+    existing_value?: string | number;
+    post_purchase_weight?: string | number | null;
+    allocation_note?: string | null;
     indicators_used: Array<{
       key: string; label: string; value: string | number | null; source: string;
       source_type: string; reference_date: string | null; valid_until: string | null;
@@ -560,6 +564,15 @@ export type BuildPortfolioResponse = {
   status: string;
   missing_data: string[];
   strategy_summary: string;
+  existing_portfolio_value?: string | number;
+  existing_positions_count?: number;
+  existing_holdings_assessments?: Array<{
+    symbol: string; quantity: string | number; estimated_value: string | number;
+    estimated_weight: string | number; valuation_basis: string;
+    recommendation: string; confidence: string; overall_score: string | number | null;
+    rationale: string; alerts: string[];
+  }>;
+  holdings_warnings?: string[];
   diagnosis: { phase: string; estimated_monthly_capacity: string | number | null; reserve_months_covered: string | number | null; reserve_target: string | number | null; debt_alerts: string[]; liquidity_assessment: string; missing_data: string[]; priority_actions: string[]; confidence: string };
   contribution_plan: Array<{ priority: number; symbol: string; asset_class: string; suggested_amount: string | number; reason: string; uses_income: boolean }>;
   projections: Array<{ name: string; annual_appreciation_rate: string | number; annual_income_rate: string | number; total_contributed: string | number; projected_wealth: string | number; estimated_appreciation: string | number; estimated_income: string | number; estimated_periodic_income: string | number; real_projected_wealth: string | number | null; projected_without_reinvestment: string | number }>;
