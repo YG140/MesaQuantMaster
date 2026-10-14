@@ -11,7 +11,6 @@ from app.schemas.intelligence import (
     BuildPortfolioClassAllocation,
     BuildPortfolioExclusion,
     BuildPortfolioIndicator,
-    ExistingHoldingAssessment,
     BuildPortfolioPreflight,
     BuildPortfolioRequest,
     BuildPortfolioResponse,
