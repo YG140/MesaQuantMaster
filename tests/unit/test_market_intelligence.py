@@ -15,6 +15,7 @@ from app.engines.indicator_catalog import (
 )
 from app.engines.market_intelligence_engine import (
     AssetAnalysisEngine,
+    ScoringEngine,
     RecommendationEngine,
     confidence_for_asset,
     warning_reasons,
@@ -219,12 +220,9 @@ def test_missing_fundamental_categories_do_not_score_as_zero():
     assert result.debt_score is None
     assert result.quality_score is None
     assert result.liquidity_score is not None
-    # P4: overall_score não é mais gated por coverage_percentage legado —
-    # exige apenas >= MINIMUM_SCORING_CATEGORIES categorias reais (aqui,
-    # liquidity + risk a partir de preço/volume/variação da quote mínima).
-    # Nunca 0/fabricado: é a média real dessas categorias já calculadas.
-    assert result.overall_score is not None
-    assert result.overall_score > Decimal("0")
+    # Cotação + volume não demonstram rentabilidade, solvência nem
+    # valuation. Disponibilidade de indicadores não é nota de qualidade.
+    assert result.overall_score is None
     assert result.valuation_status == ValuationStatus.INSUFFICIENT_DATA
     # required (valuation/profitability/leverage) continua incompleto com só
     # a quote mínima, então confidence continua INSUFFICIENT — overall_score
@@ -2783,3 +2781,55 @@ def test_end_to_end_total_fallback_failure_never_becomes_zero_and_explains_cause
     summary = build_resolution_summary(result.indicators)
     assert summary.failure_count == 2
     assert summary.unresolved_count == 1
+
+
+# Nova pontuação das ações: valores, e não a contagem de indicadores.
+def _stock_ratio(key: str, amount: str, *, stale: bool = False):
+    return NormalizedIndicator(
+        key=key, label=key, value=Decimal(amount), unit="percent" if key == "roe" else "ratio",
+        status=IndicatorStatus.STALE if stale else IndicatorStatus.AVAILABLE,
+        source="test", collected_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
+        confidence=ConfidenceLevel.HIGH,
+    )
+
+
+def test_stock_quality_distinguishes_low_and_high_roe_at_equal_coverage():
+    weak = ScoringEngine.score_category(InvestmentClass.STOCK, [_stock_ratio("roe", "2")], ["roe"])
+    strong = ScoringEngine.score_category(InvestmentClass.STOCK, [_stock_ratio("roe", "22")], ["roe"])
+    assert weak.coverage_percentage == strong.coverage_percentage == Decimal("100")
+    assert weak.value is not None and strong.value is not None
+    assert strong.value > weak.value
+
+
+def test_stock_valuation_uses_the_pe_value_not_just_its_presence():
+    cheap = ScoringEngine.score_category(
+        InvestmentClass.STOCK, [_stock_ratio("price_earnings", "9")], ["price_earnings"]
+    )
+    expensive = ScoringEngine.score_category(
+        InvestmentClass.STOCK, [_stock_ratio("price_earnings", "28")], ["price_earnings"]
+    )
+    assert cheap.coverage_percentage == expensive.coverage_percentage == Decimal("100")
+    assert cheap.value > expensive.value
+
+
+def test_raw_company_size_does_not_receive_a_fake_stock_score():
+    raw = ScoringEngine.score_category(
+        InvestmentClass.STOCK, [_stock_ratio("assets", "500000000000")], ["assets"]
+    )
+    assert raw.coverage_percentage == Decimal("100")
+    assert raw.value is None
+
+
+def test_stale_stock_ratio_does_not_feed_the_score():
+    stale = ScoringEngine.score_category(
+        InvestmentClass.STOCK, [_stock_ratio("roe", "22", stale=True)], ["roe"]
+    )
+    assert stale.value is None
+    assert stale.stale_indicators == 1
+
+
+def test_negative_earnings_pe_is_not_rewarded_as_cheap():
+    result = ScoringEngine.score_category(
+        InvestmentClass.STOCK, [_stock_ratio("price_earnings", "-8")], ["price_earnings"]
+    )
+    assert result.value is None
