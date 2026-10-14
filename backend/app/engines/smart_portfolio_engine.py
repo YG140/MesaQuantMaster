@@ -11,6 +11,7 @@ from app.schemas.intelligence import (
     BuildPortfolioClassAllocation,
     BuildPortfolioExclusion,
     BuildPortfolioIndicator,
+    ExistingHoldingAssessment,
     BuildPortfolioPreflight,
     BuildPortfolioRequest,
     BuildPortfolioResponse,
@@ -65,6 +66,18 @@ CLASS_LABELS = {
     InvestmentClass.CRYPTO: "Criptomoedas",
     InvestmentClass.UNKNOWN: "Outros",
 }
+
+
+@dataclass(frozen=True)
+class PortfolioHolding:
+    # Origem: operações autenticadas, nunca o JSON de montagem.
+    symbol: str
+    quantity: Decimal
+    value: Decimal
+    valuation_basis: str
+    asset_class: str | None = None
+    sector: str | None = None
+    issuer: str | None = None
 
 
 @dataclass(frozen=True)
@@ -230,6 +243,7 @@ class SmartPortfolioEngine:
         universe_truncated: bool = False,
         batch_size: int = 0,
         batch_count: int = 0,
+        holdings: list[PortfolioHolding] | None = None,
     ) -> BuildPortfolioResponse:
         now = datetime.now(timezone.utc)
         strategy = (
@@ -242,6 +256,11 @@ class SmartPortfolioEngine:
         eligible, exclusions = cls.eligibility(strategy, candidates)
         ranked = cls.score(strategy, eligible)[: request.max_assets]
         percentages = cls.allocate(request, ranked, strategy)
+        holding_notes: dict[str, str] = {}
+        if holdings:
+            percentages, holding_notes = cls._apply_holdings_limits(
+                request, ranked, strategy, percentages, holdings
+            )
 
         assets = []
         for candidate, score in ranked:
@@ -255,9 +274,26 @@ class SmartPortfolioEngine:
                     )
                 )
                 continue
-            assets.append(
-                cls.explain(request, candidate, score, percentage, diagnosis.phase)
-            )
+            recommended = cls.explain(request, candidate, score, percentage, diagnosis.phase)
+            if holdings:
+                existing = next(
+                    (item for item in holdings if item.symbol == candidate.snapshot.symbol.upper()),
+                    None,
+                )
+                previous_value = existing.value if existing else Decimal("0")
+                portfolio_after = sum((item.value for item in holdings), Decimal("0")) + request.available_amount
+                post_weight = (
+                    (previous_value + recommended.executable_amount) / portfolio_after * HUNDRED
+                ).quantize(CENT)
+                note = holding_notes.get(candidate.snapshot.symbol)
+                recommended = recommended.model_copy(update={
+                    "existing_quantity": existing.quantity if existing else Decimal("0"),
+                    "existing_value": previous_value,
+                    "post_purchase_weight": post_weight,
+                    "allocation_note": note,
+                    "reasons": recommended.reasons + ([note] if note else []),
+                })
+            assets.append(recommended)
 
         class_totals: dict[str, Decimal] = defaultdict(Decimal)
         for asset in assets:
@@ -277,6 +313,24 @@ class SmartPortfolioEngine:
             missing.append("Parte das fontes de mercado não respondeu.")
         confidence = cls.portfolio_confidence(
             assets, unallocated, request.available_amount
+        )
+        holdings_warnings = []
+        if holdings:
+            fallback_count = sum(item.valuation_basis != "market" for item in holdings)
+            if fallback_count:
+                holdings_warnings.append(
+                    f"{fallback_count} posição(ões) sem cotação: valor estimado pelo custo "
+                    "registrado; limites de concentração são provisórios."
+                )
+                if confidence == ConfidenceLevel.HIGH.value:
+                    confidence = ConfidenceLevel.MEDIUM.value
+            if holding_notes:
+                holdings_warnings.append(
+                    "Aportes limitados pela concentração da carteira existente."
+                )
+        holding_assessments = (
+            cls._assess_holdings(holdings, candidates, strategy)
+            if holdings else []
         )
         status = (
             "available"
@@ -331,6 +385,10 @@ class SmartPortfolioEngine:
             ),
             policy_source=strategy.source,
             policy_id=strategy.policy_id,
+            existing_portfolio_value=sum((item.value for item in holdings), Decimal("0")) if holdings else Decimal("0"),
+            existing_positions_count=len(holdings) if holdings else 0,
+            existing_holdings_assessments=holding_assessments,
+            holdings_warnings=holdings_warnings,
             diagnosis=diagnosis,
             contribution_plan=cls.contribution_plan(request, strategy, assets, diagnosis.phase),
             projections=projections,
