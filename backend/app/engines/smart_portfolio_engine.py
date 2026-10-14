@@ -362,6 +362,13 @@ class SmartPortfolioEngine:
                 )
                 if confidence == ConfidenceLevel.HIGH.value:
                     confidence = ConfidenceLevel.MEDIUM.value
+            if any(item.sector is None or item.issuer is None for item in holdings):
+                holdings_warnings.append(
+                    "Parte das posições não possui setor/emissor identificado; "
+                    "a concentração por esses grupos pode estar subestimada."
+                )
+                if confidence == ConfidenceLevel.HIGH.value:
+                    confidence = ConfidenceLevel.MEDIUM.value
             if holding_notes:
                 holdings_warnings.append(
                     "Aportes limitados pela concentração da carteira existente."
