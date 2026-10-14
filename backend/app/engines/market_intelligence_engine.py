@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.engines.indicator_catalog import SCORING_CATEGORIES, coverage_breakdown_for_asset
+from app.engines.equity_indicator_scoring import score_stock_indicator
 from app.schemas.market_intelligence import (
     AssetIntelligenceSnapshot,
     ConfidenceLevel,
@@ -95,6 +96,40 @@ class ScoringEngine:
                 ],
             )
 
+        if asset_class == InvestmentClass.STOCK:
+            # Disponibilidade é um critério de confiança, NÃO de qualidade.
+            # Os números de ROE, alavancagem, P/L etc. devem influenciar
+            # a nota. Nenhum indicador não comparável recebe nota artificial.
+            observed = [
+                rating for item in available
+                if (rating := score_stock_indicator(item)) is not None
+            ]
+            if not observed:
+                return ScoreBreakdown(
+                    available_indicators=len(available),
+                    missing_indicators=len(missing),
+                    stale_indicators=len(stale),
+                    coverage_percentage=coverage,
+                    confidence=confidence_for_coverage(coverage),
+                    reasons=[
+                        "Dados presentes, mas sem proporções financeiras "
+                        "comparáveis para uma pontuação fundamentada."
+                    ],
+                )
+            value = (sum(observed, Decimal("0")) / len(observed)).quantize(Decimal("0.01"))
+            return ScoreBreakdown(
+                value=value,
+                available_indicators=len(available),
+                missing_indicators=len(missing),
+                stale_indicators=len(stale),
+                coverage_percentage=coverage,
+                confidence=confidence_for_coverage(coverage),
+                reasons=[
+                    "Heurística inicial baseada nos valores reais dos índices "
+                    "financeiros, independente da cobertura; não substitui "
+                    "comparação setorial e análise de balanços."
+                ],
+            )
         return ScoreBreakdown(
             value=coverage,
             available_indicators=len(available),
@@ -102,7 +137,10 @@ class ScoringEngine:
             stale_indicators=len(stale),
             coverage_percentage=coverage,
             confidence=confidence_for_coverage(coverage),
-            reasons=["Pontuação baseada somente em indicadores disponíveis."],
+            reasons=[
+                "Pontuação provisória de disponibilidade: avaliação por "
+                "fundamentos específicos da classe ainda pendente."
+            ],
         )
 
 
