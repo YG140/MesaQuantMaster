@@ -666,6 +666,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
           <MetricCard label="Valor alocado" value={formatMoney(data.total_allocated_amount)} />
           <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
           <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />
+          {(data.existing_positions_count ?? 0) > 0 ? <MetricCard label="Carteira registrada" value={formatMoney(data.existing_portfolio_value)} /> : null}
         </div>
         {!sortedAssets.length ? <div className="smart-insufficient"><h3>Ainda não há dados suficientes para recomendar ativos.</h3><p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></div> : (
           <div className="recommended-assets" aria-label="Ativos recomendados">
@@ -673,7 +674,33 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
           </div>
         )}
         <p className="helper smart-disclaimer">{data.disclaimer}</p>
+        {(data.existing_positions_count ?? 0) > 0 ? <p className="helper">Novas compras calculadas considerando {data.existing_positions_count} posição(ões) registradas e os limites do seu perfil.</p> : null}
+        {(data.holdings_warnings ?? []).map((warning) => <p className="helper" role="note" key={warning}>{warning}</p>)}
       </Card>
+      {(data.existing_holdings_assessments ?? []).length > 0 ? (
+        <ResultDetails title="Avaliação dos ativos já comprados">
+          <p className="helper">Avaliação das posições cadastradas na aba Carteira, usando indicadores, confiança e limites de concentração.</p>
+          <div className="holdings-assessments">
+            {data.existing_holdings_assessments!.map((holding) => (
+              <article className="holding-assessment" key={holding.symbol}>
+                <div className="holding-assessment-heading">
+                  <strong>{holding.symbol}</strong>
+                  <span className="badge">{registeredHoldingLabel(holding.recommendation)}</span>
+                </div>
+                <dl className="asset-execution-grid">
+                  <div><dt>Quantidade existente</dt><dd>{formatQuantityBR(holding.quantity)}</dd></div>
+                  <div><dt>Valor considerado</dt><dd>{formatMoney(holding.estimated_value)}</dd></div>
+                  <div><dt>Peso atual</dt><dd>{formatPercent(holding.estimated_weight)}</dd></div>
+                  <div><dt>Confiança nos indicadores</dt><dd>{confidenceLabel(holding.confidence)}</dd></div>
+                </dl>
+                <p>{holding.rationale}</p>
+                {holding.valuation_basis !== "market" ? <p className="helper">Sem cotação atual: valor aproximado pelo custo.</p> : null}
+                {holding.alerts.length ? <details><summary>Riscos e alertas</summary><TextList items={holding.alerts} /></details> : null}
+              </article>
+            ))}
+          </div>
+        </ResultDetails>
+      ) : null}
       <ResultDetails title="Por que esta carteira?"><p>{data.strategy_summary}</p><TextList items={data.selections.map((item) => `${item.asset_class}: ${item.message}`)} /></ResultDetails>
       <ResultDetails title="Riscos e cuidados"><TextList items={[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks]} fallback="Nenhum cuidado adicional foi identificado com os dados disponíveis." /></ResultDetails>
       <ResultDetails title="Distribuição por classe">{!data.class_allocations.length ? <EmptyState title="Cobertura insuficiente para alocar com segurança." /> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Classe</th><th>Percentual</th><th>Valor sugerido</th><th>Explicação</th></tr></thead><tbody>{data.class_allocations.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatPercent(item.percentage)}</td><td>{formatMoney(item.amount)}</td><td>{item.explanation}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
@@ -696,6 +723,10 @@ function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
   return <article className="recommended-asset">
     <header className="recommended-asset-heading">
       <div><strong>{asset.symbol}</strong><span>{asset.asset_class}</span></div>
+      <div className="recommended-asset-signal">
+        <span className="badge">{assetSignalLabel(asset.score, asset.confidence)}</span>
+        <small>Pontuação: {formatDecimalBR(asset.score, 1)}/100</small>
+      </div>
       {asset.market_segment ? <span className="market-segment">{marketSegmentLabel(asset.market_segment)}</span> : null}
       {asset.trading_symbol && asset.trading_symbol !== asset.symbol ? <small>Ticker negociável: {asset.trading_symbol}</small> : null}
       {asset.market_segment === "mixed" ? <small>Lote padrão e sobra fracionária exigem tickers distintos; não utilize um único ticker para toda a quantidade.</small> : null}
@@ -707,10 +738,18 @@ function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
       <div><dt>Quantidade sugerida</dt><dd>{quantity}</dd></div>
       <div><dt>Valor executável</dt><dd>{asset.executable_quantity === null ? "Indisponível" : formatMoney(asset.executable_amount)}</dd></div>
       <div><dt>Saldo/diferença</dt><dd>{formatTargetGap(asset.target_gap)}</dd></div>
-      <div><dt>Confiança</dt><dd>{confidenceLabel(asset.confidence)}</dd></div>
+      <div><dt>Confiança nos dados</dt><dd>{confidenceLabel(asset.confidence)}</dd></div>
+      {(parseBrazilianNumber(asset.existing_quantity) ?? 0) > 0 ? (
+        <>
+          <div><dt>Quantidade que já possui</dt><dd>{formatQuantityBR(asset.existing_quantity)}</dd></div>
+          <div><dt>Valor em carteira</dt><dd>{formatMoney(asset.existing_value)}</dd></div>
+          <div><dt>Peso após novo aporte</dt><dd>{formatPercent(asset.post_purchase_weight)}</dd></div>
+        </>
+      ) : null}
     </dl>
+    {asset.allocation_note ? <p className="helper recommended-allocation-note">{asset.allocation_note}</p> : null}
     {asset.execution_impediments.length ? <div className="execution-warning" role="note"><strong>Quantidade sugerida: indisponível</strong><TextList items={asset.execution_impediments} /></div> : null}
-    {asset.missing_data.length ? <div className="confidence-explanation" aria-label="Dados ausentes"><strong>Dados ausentes</strong><TextList items={asset.missing_data} /></div> : null}
+    {asset.missing_data.length ? <details className="confidence-explanation" aria-label="Dados ausentes"><summary>Limitações e indicadores não disponíveis</summary><TextList items={asset.missing_data} /></details> : null}
     <details className="asset-details">
       <summary>Ver detalhes</summary>
       <div className="asset-detail-content">
@@ -949,6 +988,21 @@ function updateAllocation(
     ...current,
     allocations: current.allocations.map((item) => item.asset_class === assetClass ? { ...item, ...value } : item),
   }));
+}
+
+function assetSignalLabel(score: string | number, confidence: string) {
+  const numericScore = parseBrazilianNumber(score);
+  if (confidence === "insufficient" || numericScore === null) return "Não avaliável";
+  if (confidence === "low") return "Dados exigem cautela";
+  if (numericScore >= 70) return "Favorável para análise";
+  if (numericScore < 55) return "Exige cautela";
+  return "Avaliar fundamentos";
+}
+
+function registeredHoldingLabel(value: string) {
+  if (value === "review_concentration") return "Rever concentração";
+  if (value === "not_analyzed") return "Sem análise disponível";
+  return recommendationLabel(value);
 }
 
 function recommendationLabel(value: string) {
