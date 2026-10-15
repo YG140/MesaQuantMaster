@@ -15,6 +15,7 @@ from app.schemas.portfolio import (
     PortfolioSummary,
 )
 from app.services.market_service import MarketService
+from app.services.external_market_data_service import ExternalMarketDataService
 
 
 class PortfolioService:
@@ -54,12 +55,28 @@ class PortfolioService:
         return PortfolioEngine.summarize(positions)
 
     def _get_quotes_by_symbol(self, symbols: list[str]) -> dict:
+        # Os valores das operações/carteira são registrados em BRL.
+        # Não aplicar diretamente cotações USD da CoinGecko/Twelve Data
+        # nem recorrer a possível homônimo de ticker na BRAPI/B3.
+        domestic_symbols = [
+            symbol for symbol in symbols
+            if not (
+                (asset := self.asset_repository.get_by_ticker(symbol))
+                and ExternalMarketDataService.eligible(asset)
+            )
+        ]
+        if not domestic_symbols:
+            return {}
         try:
             market_service = self.market_service or MarketService()
-            quotes = market_service.get_quotes(symbols)
+            quotes = market_service.get_quotes(domestic_symbols)
         except Exception:
             return {}
-        return {quote.ticker.upper(): quote for quote in quotes.quotes}
+        return {
+            quote.ticker.upper(): quote
+            for quote in quotes.quotes
+            if quote.ticker.upper() in {symbol.upper() for symbol in domestic_symbols}
+        }
 
     def add_investment(
         self, user_id, data: InvestmentCreate

@@ -1644,6 +1644,19 @@ BDR_INDICATORS = [
 
 CRYPTO_INDICATORS = [
     catalog_entry(
+        "turnover_ratio_24h",
+        "Volume financeiro 24h / valor de mercado",
+        LIQUIDITY,
+        [InvestmentClass.CRYPTO],
+        unit="percent",
+        layer=IndicatorLayer.MACRO_MARKET,
+        description=(
+            "Proxy de negociação: volume financeiro das últimas 24 horas "
+            "dividido pela capitalização, ambos em USD. Não é profundidade "
+            "do livro nem comprovação contra wash trading."
+        ),
+    ),
+    catalog_entry(
         "price",
         "Preço",
         PRICE_MARKET,

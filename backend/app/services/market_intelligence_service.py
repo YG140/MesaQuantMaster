@@ -34,6 +34,7 @@ from app.services.indicator_normalization_service import (
 )
 from app.services.indicator_validation_service import IndicatorValidationService
 from app.services.market_service import MarketService
+from app.services.external_market_data_service import ExternalMarketDataService, ExternalMarketResult
 from app.services.indicator_resolver_service import (
     IndicatorResolverService,
     build_resolution_summary,
@@ -58,8 +59,10 @@ class MarketIntelligenceService:
         cvm_repository=None,
         cvm_fii_repository=None,
         resolver: IndicatorResolverService | None = None,
+        external_market_service: ExternalMarketDataService | None = None,
     ):
         self.market_service = market_service
+        self.external_market_service = external_market_service or ExternalMarketDataService()
         self.asset_repository = asset_repository
         self.portfolio_service = portfolio_service
         self.policy_repository = policy_repository
@@ -92,19 +95,44 @@ class MarketIntelligenceService:
     ) -> BatchAssetAnalysisResponse:
         now = datetime.now(timezone.utc)
         symbols = normalize_symbols(data.symbols)
-        provider_error: str | None = None
-        try:
-            quotes_response = self.market_service.get_quotes(symbols)
-            quotes_by_symbol = {
-                (quote.requested_symbol or quote.ticker).upper(): quote
-                for quote in quotes_response.quotes
-            }
-        except Exception as exc:
-            provider_error = str(exc) or "Provider de mercado indisponível."
-            quotes_by_symbol = {}
         local_assets = {
             symbol: self.asset_repository.get_by_ticker(symbol) for symbol in symbols
         }
+        external_symbols = {
+            symbol for symbol, asset in local_assets.items()
+            if asset is not None and self.external_market_service.eligible(asset)
+        }
+        local_symbols = [symbol for symbol in symbols if symbol not in external_symbols]
+        provider_error: str | None = None
+        try:
+            quotes_response = (
+                self.market_service.get_quotes(local_symbols)
+                if local_symbols else None
+            )
+            quotes_by_symbol = {
+                (quote.requested_symbol or quote.ticker).upper(): quote
+                for quote in (quotes_response.quotes if quotes_response else [])
+            }
+        except Exception:
+            provider_error = "Provedor BRAPI/B3 indisponível."
+            quotes_by_symbol = {}
+
+        external_results: dict[str, ExternalMarketResult] = {}
+        external_errors: dict[str, str] = {}
+        for symbol in sorted(external_symbols):
+            try:
+                result = self.external_market_service.load(local_assets[symbol])
+                if result.quote.ticker.upper() != symbol:
+                    raise ValueError("Provedor externo retornou identidade não correspondente.")
+                external_results[symbol] = result
+                quotes_by_symbol[symbol] = result.quote
+            except ValueError as exc:
+                # Mensagens do provedor são normalizadas para não expor
+                # headers/chaves; mantenha uma explicação por ativo.
+                external_errors[symbol] = str(exc)[:220]
+            except Exception:
+                external_errors[symbol] = "Fonte externa indisponível; nenhum dado foi presumido."
+
         portfolio = self.portfolio_service.calculate(user_id)
         positions = {
             position.ticker.upper(): position for position in portfolio.positions
@@ -119,7 +147,8 @@ class MarketIntelligenceService:
                 errors.append(
                     AssetAnalysisError(
                         symbol=symbol,
-                        message=provider_error
+                        message=external_errors.get(symbol)
+                        or provider_error
                         or "Cotação indisponível no provedor atual.",
                     )
                 )
@@ -132,6 +161,11 @@ class MarketIntelligenceService:
                     policy=policy,
                     collected_at=now,
                     user_id=user_id,
+                    external_result=external_results.get(symbol),
+                    external_class=(
+                        self.external_market_service._class(local_assets[symbol])
+                        if symbol in external_symbols else None
+                    ),
                 )
             )
 
@@ -158,7 +192,7 @@ class MarketIntelligenceService:
         return BatchAssetAnalysisResponse(
             snapshots=[enriched.get(snap.symbol, snap) for snap in snapshots],
             errors=errors,
-            provider_calls=1 if symbols else 0,
+            provider_calls=(1 if local_symbols else 0) + len(external_symbols),
             calculated_at=now,
         )
 
@@ -197,6 +231,8 @@ class MarketIntelligenceService:
         policy,
         collected_at: datetime,
         user_id=None,
+        external_result: ExternalMarketResult | None = None,
+        external_class: InvestmentClass | None = None,
     ) -> AssetIntelligenceSnapshot:
         asset_type = (
             local_asset.asset_type
@@ -215,22 +251,32 @@ class MarketIntelligenceService:
         if (
             asset_class == InvestmentClass.UNKNOWN
             or inferred_asset_class != asset_class
+            or external_class is not None
         ):
-            asset_class = inferred_asset_class
+            asset_class = external_class or inferred_asset_class
             asset_class, indicators = self.normalizer.normalize_quote(
                 quote,
                 requested_symbol=symbol,
                 asset_type=asset_class.value,
                 collected_at=collected_at,
             )
-        indicators = self.resolver.resolve_asset(
-            symbol=symbol,
-            asset_class=asset_class,
-            asset_id=local_asset.id if local_asset is not None else None,
-            user_id=user_id,
-            baseline=indicators,
-            collected_at=collected_at,
-        )
+        if external_class is None:
+            indicators = self.resolver.resolve_asset(
+                symbol=symbol,
+                asset_class=asset_class,
+                asset_id=local_asset.id if local_asset is not None else None,
+                user_id=user_id,
+                baseline=indicators,
+                collected_at=collected_at,
+            )
+        else:
+            # Nunca consultar cache B3/BRAPI/CVM com ticker internacional ou
+            # de token. Falha de provedor externo não pode cair num homônimo.
+            overrides = (
+                {item.key: item for item in external_result.indicators}
+                if external_result else {}
+            )
+            indicators = [overrides.get(item.key, item) for item in indicators]
         segment_indicator = next(
             (item for item in indicators if item.key == "segment"), None
         )

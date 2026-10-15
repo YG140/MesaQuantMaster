@@ -17,6 +17,7 @@ HUNDRED = Decimal("100")
 # Requer data observada e evita pontuar "atual" algo sem validade identificável.
 MAX_AGE_DAYS = {
     "bid_ask_spread": 7,
+    "turnover_ratio_24h": 2,
     "premium_discount": 7,
     "liquidity": 7,
     "bdr_liquidity": 7,
@@ -46,7 +47,7 @@ def specialized_categories(asset_class: InvestmentClass) -> dict[str, list[str]]
             "income": [],
             "growth": [],
             "risk": ["volatility", "maximum_drawdown", "holder_concentration"],
-            "liquidity": ["bid_ask_spread"],
+            "liquidity": ["bid_ask_spread", "turnover_ratio_24h"],
         }
     if asset_class == InvestmentClass.ETF:
         return {
@@ -134,6 +135,13 @@ def score_specialized_indicator(
     key = indicator.key
     if asset_class in {InvestmentClass.BDR, InvestmentClass.INTERNATIONAL} and key in GLOBAL_EQUITY_KEYS:
         return score_stock_indicator(indicator)
+    if key == "turnover_ratio_24h" and asset_class == InvestmentClass.CRYPTO:
+        amount = _percent(indicator, value)
+        if amount is None or amount <= 0 or amount > 50:
+            return None  # Giro excessivo pode ser manipulação.
+        return max(Decimal("0"), min(Decimal("100"), (
+            (amount - Decimal("0.1")) / Decimal("2") * Decimal("100")
+        )))
     if key == "bid_ask_spread":
         amount = _percent(indicator, value)
         return _inverse(amount, "0.05", "3") if amount is not None else None
