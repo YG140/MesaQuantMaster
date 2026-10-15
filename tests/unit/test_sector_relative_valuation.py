@@ -169,3 +169,27 @@ def test_relative_adjustment_is_idempotent_on_rerun():
         assert second[symbol].overall_score == first[symbol].overall_score
         assert second[symbol].valuation_score == first[symbol].valuation_score
         assert second[symbol].quality_score == first[symbol].quality_score
+
+
+def test_manual_peers_are_not_an_independent_reference():
+    group = universe()
+    peer = group[1]
+    modified = [
+        x.model_copy(update={"source_type": "manual"})
+        if x.key in {"price_earnings", "price_book"} else x
+        for x in peer.snapshot.indicators
+    ]
+    group[1] = PeerAsset(
+        peer.snapshot.model_copy(update={"indicators": modified}), peer.sector, peer.issuer
+    )
+    result = enrich_sector_valuations(group)["ALVO3"]
+    assert result.valuation.estimated_range_low is None
+
+
+def test_holding_segment_is_not_scored_as_a_regular_operating_company():
+    group = universe()
+    group[0] = stock("ALVO3", segment="Holding")
+    for idx in (1, 2, 3):
+        group[idx] = stock(f"PAR{idx}3", segment="Holding")
+    result = enrich_sector_valuations(group)["ALVO3"]
+    assert result.valuation.estimated_range_low is None
