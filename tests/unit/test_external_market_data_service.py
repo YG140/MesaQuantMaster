@@ -180,3 +180,128 @@ def test_unregistered_crypto_or_missing_key_is_not_automatically_probed():
     assert not service.eligible(asset("PETR4", "stock"))
     assert service.eligible(asset("BTC", "crypto"))
     assert not service.eligible(asset("AAPL34", "bdr"))
+
+
+def test_intelligence_uses_external_crypto_without_querying_b3():
+    from app.schemas.market import QuoteResponse
+    from app.schemas.market_intelligence import AnalyzeAssetsRequest, ConfidenceLevel, IndicatorStatus, NormalizedIndicator
+    from app.services.external_market_data_service import ExternalMarketResult
+    from app.services.market_intelligence_service import MarketIntelligenceService
+
+    quote = QuoteResponse(
+        ticker="BTC", current_price=Decimal("130000"), currency="USD",
+        market_time=datetime.now(timezone.utc) - timedelta(minutes=5),
+        source="CoinGecko", asset_type="crypto",
+    )
+    vol = NormalizedIndicator(
+        key="volatility", label="Volatilidade", value=Decimal("48"),
+        unit="percent", status=IndicatorStatus.AVAILABLE,
+        source="CoinGecko", source_type="provider",
+        reference_date=datetime.now(timezone.utc) - timedelta(days=1),
+        collected_at=datetime.now(timezone.utc),
+        confidence=ConfidenceLevel.HIGH,
+    )
+
+    class FailIfB3Queried:
+        provider = None
+        def get_quotes(self, symbols):
+            raise AssertionError("Cripto não pode cair no provedor brasileiro")
+
+    class FakeAssets:
+        def get_by_ticker(self, symbol):
+            return SimpleNamespace(
+                ticker="BTC", asset_type="crypto", id=None,
+                exchange="COINGECKO:bitcoin", sector=None, name="Bitcoin"
+            )
+
+    class FakeExternal:
+        def eligible(self, a):
+            return True
+        def _class(self, a):
+            return InvestmentClass.CRYPTO
+        def load(self, a):
+            return ExternalMarketResult(quote, (vol,))
+
+    class FailIfResolverCalled:
+        def resolve_asset(self, **kwargs):
+            raise AssertionError("Não consultar snapshots BRAPI/CVM para BTC")
+
+    svc = MarketIntelligenceService(
+        market_service=FailIfB3Queried(), asset_repository=FakeAssets(),
+        portfolio_service=SimpleNamespace(calculate=lambda _: SimpleNamespace(positions=[])),
+        policy_repository=SimpleNamespace(get_by_user=lambda _: None),
+        resolver=FailIfResolverCalled(), external_market_service=FakeExternal(),
+    )
+    output = svc.analyze_assets(AnalyzeAssetsRequest(symbols=["BTC"]), user_id="u")
+    assert not output.errors
+    btc = output.snapshots[0]
+    assert btc.asset_class == InvestmentClass.CRYPTO
+    assert btc.currency == "USD"
+    assert btc.current_price == Decimal("130000")
+    assert any(i.key == "volatility" and i.source == "CoinGecko" for i in btc.indicators)
+
+
+def test_intelligence_does_not_fallback_to_b3_when_foreign_provider_fails():
+    from app.schemas.market_intelligence import AnalyzeAssetsRequest
+    from app.services.market_intelligence_service import MarketIntelligenceService
+
+    class FailIfB3Queried:
+        provider = None
+        def get_quotes(self, symbols):
+            raise AssertionError("Ação internacional não pode consultar B3")
+
+    class FakeExternal:
+        def eligible(self, a):
+            return True
+        def _class(self, a):
+            return InvestmentClass.INTERNATIONAL
+        def load(self, a):
+            raise ValueError("Cotação externa indisponível")
+
+    class FakeAssets:
+        def get_by_ticker(self, symbol):
+            return SimpleNamespace(
+                ticker="MSFT", asset_type="international", id=None,
+                exchange="NASDAQ", sector=None, name="Microsoft",
+            )
+
+    class FailIfResolverCalled:
+        def resolve_asset(self, **kwargs):
+            raise AssertionError("Não usar a BRAPI como fonte internacional")
+
+    svc = MarketIntelligenceService(
+        market_service=FailIfB3Queried(), asset_repository=FakeAssets(),
+        portfolio_service=SimpleNamespace(calculate=lambda _: SimpleNamespace(positions=[])),
+        policy_repository=SimpleNamespace(get_by_user=lambda _: None),
+        resolver=FailIfResolverCalled(), external_market_service=FakeExternal(),
+    )
+    output = svc.analyze_assets(AnalyzeAssetsRequest(symbols=["MSFT"]), user_id="u")
+    assert len(output.errors) == 1
+    assert output.snapshots[0].current_price is None
+    assert output.snapshots[0].asset_class == InvestmentClass.INTERNATIONAL
+
+
+def test_portfolio_skips_foreign_symbols_in_brl_market_valuation():
+    from app.schemas.market import QuoteResponse, QuotesResponse
+    from app.services.portfolio_service import PortfolioService
+
+    class FakeAssets:
+        def get_by_ticker(self, symbol):
+            return asset(symbol, "international" if symbol == "MSFT" else "stock")
+
+    requested = []
+    def fetched(symbols):
+        requested.extend(symbols)
+        return QuotesResponse(quotes=[
+            QuoteResponse(ticker=s, current_price=Decimal("38"), source="BRAPI")
+            for s in symbols
+        ])
+    service = PortfolioService(
+        operation_repository=SimpleNamespace(),
+        asset_repository=FakeAssets(),
+        market_service=SimpleNamespace(get_quotes=fetched),
+    )
+    quotes = service._get_quotes_by_symbol(["MSFT", "PETR4"])
+    assert requested == ["PETR4"]
+    assert "MSFT" not in quotes
+    assert "PETR4" in quotes
