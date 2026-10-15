@@ -96,7 +96,7 @@ export async function apiRequest<T>(
       throw new ApiError("A API demorou demais para responder.", null, "TIMEOUT");
     }
     throw new ApiError(
-      "Não foi possível conectar ao backend. Verifique se a API está rodando.",
+      "Não foi possível acessar o serviço de investimentos. Verifique a conexão com a internet e a disponibilidade da API.",
       null,
       "NETWORK",
     );

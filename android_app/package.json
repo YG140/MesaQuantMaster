@@ -1,0 +1,18 @@
+{
+  "name": "mesa-quant-master-android",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wrapper Android nativo da interface React Mesa Quant Master",
+  "scripts": {
+    "android:init": "cap add android",
+    "android:sync": "cap sync android",
+    "android:open": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
+  }
+}
