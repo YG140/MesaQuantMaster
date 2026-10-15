@@ -203,3 +203,18 @@ def test_b3_ordinary_and_preferred_shares_do_not_count_as_two_issuers():
     group[2] = stock("PARA4", issuer="B3:PARA4")
     result = enrich_sector_valuations(group)["ALVO3"]
     assert result.valuation.estimated_range_low is None
+
+
+def test_low_confidence_ratio_cannot_justify_reference_range():
+    group = universe()
+    peer = group[1]
+    altered = [
+        x.model_copy(update={"confidence": ConfidenceLevel.LOW})
+        if x.key == "price_book" else x
+        for x in peer.snapshot.indicators
+    ]
+    group[1] = PeerAsset(
+        peer.snapshot.model_copy(update={"indicators": altered}), peer.sector, peer.issuer
+    )
+    result = enrich_sector_valuations(group)["ALVO3"]
+    assert result.valuation.estimated_range_low is None
