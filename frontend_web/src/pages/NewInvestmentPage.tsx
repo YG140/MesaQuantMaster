@@ -11,6 +11,7 @@ import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { MetricCard } from "../components/ui/MetricCard";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
 import { useAuth } from "../features/auth/useAuth";
