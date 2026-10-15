@@ -443,7 +443,7 @@ function MarketRecommendationCard({ item }: { item: AssetIntelligenceSnapshot })
         <MetricCard label="Cobertura dos dados" value={formatPercent(item.coverage_percentage)} />
         <MetricCard label="Qualidade dos dados" value={formatPercent(item.data_quality_score)} />
         <MetricCard label="Preço atual" value={formatMoney(item.current_price)} />
-        {item.valuation.estimated_range_low !== null && item.valuation.estimated_range_high !== null ? (
+        {item.valuation.estimated_range_low != null && item.valuation.estimated_range_high != null ? (
           <MetricCard label="Faixa setorial indicativa (não preço justo intrínseco)" value={`${formatMoney(item.valuation.estimated_range_low)} – ${formatMoney(item.valuation.estimated_range_high)}`} />
         ) : null}
         <MetricCard label="Atualização" value={formatDateTimeBR(item.market_updated_at)} />
@@ -755,7 +755,7 @@ function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
       <div className="portfolio-peer-valuation">
         <strong>Faixa de preço indicativa por múltiplos do setor</strong>
         <span>{formatMoney(asset.estimated_range_low)} – {formatMoney(asset.estimated_range_high)}</span>
-        <small>Comparação relativa, não preço justo intrínseco ou garantia de rentabilidade.</small>
+        <small>Comparação relativa, não preço justo intrínseco ou garantia de rentabilidade. Confiança na faixa: {confidenceLabel(asset.valuation_confidence ?? "insufficient")}.</small>
         {asset.peer_comparison ? <p className="helper">{asset.peer_comparison}</p> : null}
       </div>
     ) : asset.peer_comparison ? (
