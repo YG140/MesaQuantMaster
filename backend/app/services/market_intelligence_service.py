@@ -38,6 +38,7 @@ from app.services.indicator_resolver_service import (
     IndicatorResolverService,
     build_resolution_summary,
 )
+from app.engines.sector_relative_valuation import PeerAsset, enrich_sector_valuations
 from app.services.portfolio_service import PortfolioService
 from app.services.symbol_identity import market_context_of, resolve_symbol_identity
 
@@ -134,8 +135,28 @@ class MarketIntelligenceService:
                 )
             )
 
+        # Só compara com papéis realmente analisados neste lote. A análise
+        # isolada não recebe benchmarks setoriais presumidos.
+        peers = []
+        for snap in snapshots:
+            local = local_assets.get(snap.symbol)
+            quote = quotes_by_symbol.get(snap.symbol)
+            sector_indicator = next(
+                (item for item in snap.indicators
+                 if item.key == "sector" and item.status == IndicatorStatus.AVAILABLE),
+                None,
+            )
+            peers.append(PeerAsset(
+                snapshot=snap,
+                sector=(
+                    getattr(local, "sector", None)
+                    or getattr(quote, "sector", None)
+                    or (str(sector_indicator.value) if sector_indicator else None)
+                ),
+            ))
+        enriched = enrich_sector_valuations(peers)
         return BatchAssetAnalysisResponse(
-            snapshots=snapshots,
+            snapshots=[enriched.get(snap.symbol, snap) for snap in snapshots],
             errors=errors,
             provider_calls=1 if symbols else 0,
             calculated_at=now,

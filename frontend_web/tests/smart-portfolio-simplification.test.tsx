@@ -22,6 +22,12 @@ function responseWithAssets() {
     symbol, name: symbol, asset_class: "Ações", sector: "Financeiro", issuer: symbol,
     recommended_percentage: percentage, recommended_amount: amount, score: "82", confidence: "high",
     reasons: ["Boa aderência à estratégia."], risks: ["Oscilação de mercado."], missing_data: [],
+    valuation_status: symbol === "MAIOR4" ? "near_estimated_value" : "insufficient_data",
+    valuation_confidence: "medium",
+    estimated_range_low: symbol === "MAIOR4" ? "40" : null,
+    estimated_range_high: symbol === "MAIOR4" ? "55" : null,
+    peer_comparison: symbol === "MAIOR4" ? "Referência relativa a 3 empresas do setor." : null,
+    valuation_methods: ["Medianas setoriais"],
     reference_price: "25", executable_quantity: "10", executable_amount: amount,
     effective_percentage: percentage, target_gap: "0", execution_impediments: [],
     trading_symbol: symbol, economic_identity: symbol, market_segment: null, quantity_step: "1",
@@ -88,6 +94,9 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(within(assets[0]).getByText("50,00%")).toBeVisible();
     expect(within(within(assets[0]).getByText("Valor-alvo").parentElement!).getByText("R$ 5.000,00")).toBeVisible();
     expect(screen.getByText("Saldo não alocado")).toBeVisible();
+    expect(within(assets[0]).getByText("Faixa de preço indicativa por múltiplos do setor")).toBeVisible();
+    expect(within(assets[0]).getByText("R$ 40,00 – R$ 55,00")).toBeVisible();
+    expect(within(assets[0]).getByText(/não preço justo intrínseco/)).toBeVisible();
     await user.click(within(assets[0]).getByText("Ver detalhes"));
     expect(within(assets[0]).getByText("Boa aderência à estratégia.")).toBeVisible();
     expect(screen.getByText("Carteira executável")).toBeVisible();

@@ -9,6 +9,7 @@ from app.engines.intelligence_engine import (
     PortfolioIntelligenceEngine,
 )
 from app.engines.smart_portfolio_engine import PortfolioCandidate, PortfolioHolding, SmartPortfolioEngine
+from app.engines.sector_relative_valuation import PeerAsset, enrich_sector_valuations
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
 from app.repositories.asset_repository import AssetRepository
@@ -27,7 +28,7 @@ from app.services.symbol_identity import (
     market_context_of,
     resolve_symbol_identity,
 )
-from app.schemas.market_intelligence import AnalyzeAssetsRequest
+from app.schemas.market_intelligence import AnalyzeAssetsRequest, IndicatorStatus, ConfidenceLevel
 
 
 # Espelha AnalyzeAssetsRequest.symbols (max_length=50 em
@@ -223,7 +224,18 @@ class PortfolioIntelligenceService:
             candidates.append(
                 PortfolioCandidate(
                     snapshot=snapshot,
-                    sector=asset.sector if asset else None,
+                    sector=(
+                        getattr(asset, "sector", None)
+                        or next(
+                            (str(indicator.value) for indicator in snapshot.indicators
+                             if indicator.key == "sector"
+                             and indicator.status == IndicatorStatus.AVAILABLE
+                             and indicator.confidence in {ConfidenceLevel.MEDIUM, ConfidenceLevel.HIGH}
+                             and indicator.source_type != "manual"
+                             and indicator.value),
+                            None,
+                        )
+                    ),
                     issuer=self._issuer_identity(
                         asset, snapshot, market_context=market_context
                     ),
@@ -232,6 +244,21 @@ class PortfolioIntelligenceService:
                     ),
                 )
             )
+        # Reunir todo o universo, inclusive lotes distintos, para comparar
+        # somente emissores reais do mesmo setor. Não alterar a identidade
+        # ou o limite de concentração de cada candidato.
+        enriched = enrich_sector_valuations([
+            PeerAsset(snapshot=candidate.snapshot, sector=candidate.sector, issuer=candidate.issuer)
+            for candidate in candidates
+        ])
+        candidates = [
+            PortfolioCandidate(
+                snapshot=enriched.get(candidate.snapshot.symbol, candidate.snapshot),
+                sector=candidate.sector, issuer=candidate.issuer,
+                market_context=candidate.market_context,
+            )
+            for candidate in candidates
+        ]
         # A posição vale a cotação somente quando disponível. Sem ela, o
         # custo registrado é um proxy explícito, nunca um preço inventado.
         # O setor/emissor são resolvidos pelo cadastro do ativo, não pelo

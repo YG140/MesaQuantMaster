@@ -549,11 +549,18 @@ export type BuildPortfolioResponse = {
     existing_value?: string | number;
     post_purchase_weight?: string | number | null;
     allocation_note?: string | null;
+    valuation_status?: string | null;
+    valuation_confidence?: string | null;
+    estimated_range_low?: string | number | null;
+    estimated_range_high?: string | number | null;
+    peer_comparison?: string | null;
+    valuation_methods?: string[];
     indicators_used: Array<{
       key: string; label: string; value: string | number | null; source: string;
       source_type: string; reference_date: string | null; valid_until: string | null;
       freshness_status: string;
       unit?: string | null; status?: string; unavailable_reason?: string | null;
+      sector_comparison?: string | null;
     }>;
   }>;
   exclusions: Array<{ symbol: string; asset_class: string; reasons: string[] }>;

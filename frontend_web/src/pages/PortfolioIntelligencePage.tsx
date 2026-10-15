@@ -443,8 +443,12 @@ function MarketRecommendationCard({ item }: { item: AssetIntelligenceSnapshot })
         <MetricCard label="Cobertura dos dados" value={formatPercent(item.coverage_percentage)} />
         <MetricCard label="Qualidade dos dados" value={formatPercent(item.data_quality_score)} />
         <MetricCard label="Preço atual" value={formatMoney(item.current_price)} />
+        {item.valuation.estimated_range_low != null && item.valuation.estimated_range_high != null ? (
+          <MetricCard label="Faixa setorial indicativa (não preço justo intrínseco)" value={`${formatMoney(item.valuation.estimated_range_low)} – ${formatMoney(item.valuation.estimated_range_high)}`} />
+        ) : null}
         <MetricCard label="Atualização" value={formatDateTimeBR(item.market_updated_at)} />
       </div>
+      {item.valuation.peer_comparison ? <p className="helper" role="note">{item.valuation.peer_comparison}</p> : null}
       {item.warning_reasons.length ? <div className="warning-box">{item.warning_reasons[0]}</div> : null}
       {item.data_quality?.anomaly_flags.length ? (
         <div className="warning-box">{item.data_quality.anomaly_flags.join(" ")}</div>
@@ -484,7 +488,7 @@ function IndicatorTable({ items }: { items: AssetIntelligenceSnapshot["indicator
               <td>{statusLabel(item.status)}</td>
               <td>{item.source}</td>
               <td>{formatDateTimeBR(item.reference_date)}</td>
-              <td>{item.explanation || item.description || "Não informado"}</td>
+              <td>{[item.sector_comparison, item.explanation || item.description].filter(Boolean).join(" • ") || "Não informado"}</td>
             </tr>
           ))}
         </tbody>
@@ -747,6 +751,16 @@ function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
         </>
       ) : null}
     </dl>
+    {asset.estimated_range_low != null && asset.estimated_range_high != null ? (
+      <div className="portfolio-peer-valuation">
+        <strong>Faixa de preço indicativa por múltiplos do setor</strong>
+        <span>{formatMoney(asset.estimated_range_low)} – {formatMoney(asset.estimated_range_high)}</span>
+        <small>Comparação relativa, não preço justo intrínseco ou garantia de rentabilidade. Confiança na faixa: {confidenceLabel(asset.valuation_confidence ?? "insufficient")}.</small>
+        {asset.peer_comparison ? <p className="helper">{asset.peer_comparison}</p> : null}
+      </div>
+    ) : asset.peer_comparison ? (
+      <details className="confidence-explanation"><summary>Por que não há estimativa de preço?</summary><p className="helper">{asset.peer_comparison}</p></details>
+    ) : null}
     {asset.allocation_note ? <p className="helper recommended-allocation-note">{asset.allocation_note}</p> : null}
     {asset.execution_impediments.length ? <div className="execution-warning" role="note"><strong>Quantidade sugerida: indisponível</strong><TextList items={asset.execution_impediments} /></div> : null}
     {asset.missing_data.length ? <details className="confidence-explanation" aria-label="Dados ausentes"><summary>Limitações e indicadores não disponíveis</summary><TextList items={asset.missing_data} /></details> : null}
@@ -756,6 +770,12 @@ function RecommendedAssetCard({ asset }: { asset: RecommendedAsset }) {
         <h4>Justificativas</h4><TextList items={asset.reasons} />
         <h4>Riscos</h4><TextList items={asset.risks} fallback="Nenhum risco adicional identificado com os dados disponíveis." />
         <h4>Indicadores utilizados</h4>
+        {asset.indicators_used.some((item) => item.sector_comparison) ? (
+          <div className="portfolio-sector-benchmarks">
+            <strong>Comparação com empresas do mesmo setor</strong>
+            <TextList items={asset.indicators_used.flatMap((item) => item.sector_comparison ? [`${item.label}: ${item.sector_comparison}`] : [])} />
+          </div>
+        ) : null}
         <ResponsiveTable className="table-wrap indicator-table"><table><thead><tr><th>Indicador</th><th>Valor</th><th>Situação</th><th>Referência</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={item.key}><td data-label="Indicador">{item.label}</td><td data-label="Valor">{formatIndicatorValue(item)}</td><td data-label="Situação">{indicatorStatusLabel(item)}</td><td data-label="Referência">{formatDateTimeBR(item.reference_date)}</td></tr>)}</tbody></table></ResponsiveTable>
         <details className="indicator-provenance"><summary>Ver procedência e qualidade dos dados</summary><ResponsiveTable className="table-wrap"><table><thead><tr><th>Indicador</th><th>Fonte</th><th>Tipo</th><th>Referência</th><th>Validade</th><th>Frescor</th></tr></thead><tbody>{asset.indicators_used.map((item) => <tr key={`source-${item.key}`}><td data-label="Indicador">{item.label}</td><td data-label="Fonte">{item.source}</td><td data-label="Tipo">{sourceTypeLabel(item.source_type)}</td><td data-label="Referência">{formatDateTimeBR(item.reference_date)}</td><td data-label="Validade">{formatDateTimeBR(item.valid_until)}</td><td data-label="Frescor">{freshnessLabel(item.freshness_status)}</td></tr>)}</tbody></table></ResponsiveTable><h4>Ausências e impedimentos</h4><TextList items={[...asset.missing_data, ...asset.execution_impediments, ...asset.indicators_used.flatMap((item) => item.unavailable_reason ? [item.unavailable_reason] : [])]} fallback="Nenhuma ausência ou impedimento informado." /></details>
       </div>
