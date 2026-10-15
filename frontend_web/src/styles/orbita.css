@@ -101,3 +101,65 @@ th { font-size:12px;color:#b9c9e4;letter-spacing:.03em; }td { font-size:13px; }
  .orbita-table td::before { content:attr(data-label);color:var(--muted);font-size:12px; }
 }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important;animation:none!important;transition:none!important; } }
+
+/* Layout responsivo da montagem de carteira e registro de compras.
+   A navegação continua acessível acima da área segura do Android/iOS. */
+@media (max-width: 700px) {
+  html, body, #root, .app-main, .planning-prism-page { max-width:100%; min-width:0; }
+  .planning-prism-page .intelligence-areas {
+    display:flex; flex-wrap:nowrap; gap:4px; max-width:100%;
+    overflow-x:auto; overscroll-behavior-inline:contain;
+    -webkit-overflow-scrolling:touch; scrollbar-width:thin;
+  }
+  .planning-prism-page .intelligence-areas > button {
+    flex:0 0 auto; min-height:46px; padding-inline:12px; white-space:nowrap;
+  }
+  .planning-prism-page .smart-summary {
+    display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;
+  }
+  .planning-prism-page .smart-summary > * {
+    min-width:0; padding:12px 9px; border:1px solid var(--border);
+    border-radius:12px; overflow-wrap:anywhere;
+  }
+  .planning-prism-page .recommended-assets,
+  .planning-prism-page .recommended-asset,
+  .planning-prism-page .recommended-asset-heading,
+  .planning-prism-page .asset-details,
+  .planning-prism-page .smart-result-details { min-width:0; width:100%; }
+  .planning-prism-page .recommended-asset {
+    display:grid; grid-template-columns:minmax(0,1fr); padding:14px;
+    overflow:hidden; gap:12px;
+  }
+  .planning-prism-page .recommended-asset-heading {
+    display:flex; flex-wrap:wrap; align-items:start; gap:10px;
+  }
+  .planning-prism-page .asset-execution-grid {
+    display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:8px; min-width:0;
+  }
+  .planning-prism-page .asset-execution-grid dt { font-size:.76rem; line-height:1.35; }
+  .planning-prism-page .asset-execution-grid dd { font-size:.96rem; line-height:1.35; }
+  .planning-prism-page .asset-details,
+  .planning-prism-page .execution-warning,
+  .planning-prism-page .confidence-explanation,
+  .planning-prism-page .recommended-allocation-note {
+    grid-column:1 / -1;
+  }
+  .planning-prism-page .smart-detail-body { min-width:0; padding:8px 12px 14px; }
+  .planning-prism-page .table-wrap { width:100%; min-width:0; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .planning-prism-page .table-wrap table { min-width:540px; }
+  .planning-prism-page .indicator-table table, .planning-prism-page .indicator-provenance table { min-width:0; }
+  .planning-prism-page .holdings-assessments { display:grid; grid-template-columns:minmax(0,1fr); }
+  .planning-prism-page .holding-assessment { padding:12px; }
+  .planning-prism-page .smart-portfolio-flow form > button[type="submit"] { min-height:50px; width:100%; }
+  .planning-prism-page input, .planning-prism-page select,
+  .planning-prism-page textarea, .portfolio-prism-page input { font-size:16px; }
+  .planning-prism-page summary { min-height:44px; display:list-item; padding-block:12px; }
+  .mobile-nav { padding-bottom:calc(9px + env(safe-area-inset-bottom)); }
+  button, .button, .mobile-nav a { touch-action:manipulation; }
+}
+@media (max-width: 380px) {
+  .planning-prism-page .smart-summary,
+  .planning-prism-page .asset-execution-grid { grid-template-columns:minmax(0,1fr); }
+  .planning-prism-page .intelligence-areas > button { padding-inline:10px; }
+}
