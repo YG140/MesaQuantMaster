@@ -40,6 +40,18 @@ services:
       - key: TWELVEDATA_API_KEY
         sync: false
 
+  # Web HTTPS complementar para ativação de contas/recuperação de senha
+  # e acesso alternativo ao APK. Endereço de API é configurado no painel.
+  - type: web
+    name: mesa-quant-master-web
+    runtime: static
+    rootDir: frontend_web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+
 databases:
   - name: mesa-quant-master-db
     databaseName: mesa_quant_master
