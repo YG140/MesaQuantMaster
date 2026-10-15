@@ -1,0 +1,92 @@
+name: APK Android - Mesa Quant Master
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "android_app/**"
+      - "frontend_web/**"
+      - ".github/workflows/android-apk.yml"
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "URL publica HTTPS do backend Mesa Quant Master, ex.: https://api.seudominio.com (sem / final)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-android-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    name: Compilar Android e APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      ANDROID_API_URL: ${{ github.event_name == 'pull_request' && 'https://android-build.invalid' || (inputs.api_base_url != '' && inputs.api_base_url || vars.MESA_API_BASE_URL) }}
+      ANDROID_PLACEHOLDER: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend_web/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+
+      - name: Validar URL do backend (sem localhost nem HTTP)
+        run: node android_app/scripts/verify-api-url.mjs
+
+      - name: Verificar API real antes de gerar APK instalavel
+        if: github.event_name == 'workflow_dispatch'
+        run: node android_app/scripts/check-api-health.mjs
+
+      - name: Instalar dependencias web com lockfile
+        working-directory: frontend_web
+        run: npm ci
+
+      - name: Compilar React com endereco HTTPS da API
+        working-directory: frontend_web
+        env:
+          VITE_API_BASE_URL: ${{ env.ANDROID_API_URL }}
+        run: npm run build
+
+      - name: Instalar Capacitor (versoes fixas)
+        working-directory: android_app
+        run: npm install --no-audit --no-fund
+
+      - name: Gerar projeto Android nativo
+        working-directory: android_app
+        run: npx cap add android
+
+      - name: Incorporar React ao Android
+        working-directory: android_app
+        run: npx cap sync android
+
+      - name: Restringir permissoes e trafego HTTP
+        working-directory: android_app
+        run: node scripts/harden-android-manifest.mjs
+
+      - name: Compilar APK debug
+        working-directory: android_app/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug
+          test -s app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Disponibilizar APK para instalacao pessoal
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MesaQuantMaster-Android-debug
+          path: android_app/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
