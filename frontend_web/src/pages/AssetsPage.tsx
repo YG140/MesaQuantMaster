@@ -30,7 +30,7 @@ export function AssetsPage() {
   const normalizedExternalTicker = externalTicker.trim().toUpperCase();
   const exchangeRequired = externalType !== "crypto"
     || !["BTC", "ETH", "SOL", "ADA", "XRP"].includes(normalizedExternalTicker);
-  const externalFormValid = /^[A-Z0-9][A-Z0-9.\-]{0,18}$/.test(normalizedExternalTicker)
+  const externalFormValid = /^[A-Z0-9][A-Z0-9.-]{0,18}$/.test(normalizedExternalTicker)
     && externalName.trim().length > 0
     && (!exchangeRequired || externalExchange.trim().length > 0)
     && (externalType !== "crypto" || !externalExchange.trim()
