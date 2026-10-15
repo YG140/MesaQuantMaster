@@ -43,6 +43,19 @@ import {
   parseBrazilianNumber,
 } from "../utils/formatters";
 
+/** A cotação do mercado internacional NÃO é convertida implicitamente em BRL. */
+function formatPriceWithCurrency(value: string | number | null, currency: string | null) {
+  if (!currency || currency === "BRL") return formatMoney(value);
+  const amount = parseBrazilianNumber(value);
+  if (amount === null || !Number.isFinite(amount)) return "Indisponível";
+  if (!/^[A-Z]{3}$/.test(currency)) return `${formatDecimalBR(amount, 2)} ${currency}`;
+  try {
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(amount);
+  } catch {
+    return `${formatDecimalBR(amount, 2)} ${currency}`;
+  }
+}
+
 const areas = ["Diagnóstico", "Montar carteira", "Futuro financeiro"] as const;
 type IntelligenceArea = (typeof areas)[number];
 const classes = [
@@ -442,7 +455,7 @@ function MarketRecommendationCard({ item }: { item: AssetIntelligenceSnapshot })
         <MetricCard label="Confiança" value={confidenceLabel(item.confidence)} />
         <MetricCard label="Cobertura dos dados" value={formatPercent(item.coverage_percentage)} />
         <MetricCard label="Qualidade dos dados" value={formatPercent(item.data_quality_score)} />
-        <MetricCard label="Preço atual" value={formatMoney(item.current_price)} />
+        <MetricCard label="Preço atual" value={formatPriceWithCurrency(item.current_price, item.currency)} />
         {item.valuation.estimated_range_low != null && item.valuation.estimated_range_high != null ? (
           <MetricCard label="Faixa setorial indicativa (não preço justo intrínseco)" value={`${formatMoney(item.valuation.estimated_range_low)} – ${formatMoney(item.valuation.estimated_range_high)}`} />
         ) : null}
