@@ -28,7 +28,7 @@ from app.services.symbol_identity import (
     market_context_of,
     resolve_symbol_identity,
 )
-from app.schemas.market_intelligence import AnalyzeAssetsRequest
+from app.schemas.market_intelligence import AnalyzeAssetsRequest, IndicatorStatus, ConfidenceLevel
 
 
 # Espelha AnalyzeAssetsRequest.symbols (max_length=50 em
@@ -224,7 +224,18 @@ class PortfolioIntelligenceService:
             candidates.append(
                 PortfolioCandidate(
                     snapshot=snapshot,
-                    sector=asset.sector if asset else None,
+                    sector=(
+                        getattr(asset, "sector", None)
+                        or next(
+                            (str(indicator.value) for indicator in snapshot.indicators
+                             if indicator.key == "sector"
+                             and indicator.status == IndicatorStatus.AVAILABLE
+                             and indicator.confidence in {ConfidenceLevel.MEDIUM, ConfidenceLevel.HIGH}
+                             and indicator.source_type != "manual"
+                             and indicator.value),
+                            None,
+                        )
+                    ),
                     issuer=self._issuer_identity(
                         asset, snapshot, market_context=market_context
                     ),
