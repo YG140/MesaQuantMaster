@@ -198,6 +198,7 @@ class BuildPortfolioIndicator(BaseModel):
     unit: str | None = None
     status: str = "available"
     unavailable_reason: str | None = None
+    sector_comparison: str | None = None
 
 
 class BuildPortfolioAsset(BaseModel):
