@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="Mesa Quant Master">
+  <rect width="192" height="192" rx="40" fill="#07162c"/>
+  <path d="M26 133L64 98 99 117 141 59 165 80" fill="none" stroke="#5ae1ed" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M37 151H155" stroke="#97a4ff" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="141" cy="59" r="9" fill="#9c8fff"/>
+</svg>
