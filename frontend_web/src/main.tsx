@@ -16,7 +16,13 @@ createRoot(document.getElementById("root")!).render(
 
 // O service worker serve apenas para permitir experiência de aplicativo;
 // todas as consultas financeiras continuam sempre online, sem cache.
-if ("serviceWorker" in navigator && (window.isSecureContext || window.location.hostname === "localhost")) {
+// Android Capacitor executa a interface dentro da WebView. Seu service
+// worker não deve interferir com as rotas nativas ou cachear sessões.
+const nativeWebView = Boolean(
+  (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } })
+    .Capacitor?.isNativePlatform?.(),
+);
+if (!nativeWebView && "serviceWorker" in navigator && (window.isSecureContext || window.location.hostname === "localhost")) {
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   });
