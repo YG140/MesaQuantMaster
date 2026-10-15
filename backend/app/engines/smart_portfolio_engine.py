@@ -715,6 +715,7 @@ class SmartPortfolioEngine:
                 unit=item.unit,
                 status=item.status.value,
                 unavailable_reason=item.unavailable_reason,
+                sector_comparison=item.sector_comparison,
             )
             for item in snapshot.indicators
             if item.status == IndicatorStatus.AVAILABLE
@@ -812,6 +813,11 @@ class SmartPortfolioEngine:
             indicators_used=used,
             missing_data=snapshot.missing_data,
             confidence=snapshot.confidence.value,
+            valuation_status=snapshot.valuation_status.value,
+            estimated_range_low=snapshot.valuation.estimated_range_low,
+            estimated_range_high=snapshot.valuation.estimated_range_high,
+            peer_comparison=snapshot.valuation.peer_comparison,
+            valuation_methods=snapshot.valuation.methods,
             reference_price=price,
             executable_quantity=quantity,
             executable_amount=executable_amount,
