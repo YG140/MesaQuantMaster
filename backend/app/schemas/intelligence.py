@@ -229,6 +229,12 @@ class BuildPortfolioAsset(BaseModel):
     existing_value: Decimal = Decimal("0")
     post_purchase_weight: Decimal | None = None
     allocation_note: str | None = None
+    # Faixa relativa a pares comparáveis (não valor intrínseco garantido).
+    valuation_status: str | None = None
+    estimated_range_low: Decimal | None = None
+    estimated_range_high: Decimal | None = None
+    peer_comparison: str | None = None
+    valuation_methods: list[str] = Field(default_factory=list)
 
 
 class ExistingHoldingAssessment(BaseModel):
