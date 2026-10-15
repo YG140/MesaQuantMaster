@@ -76,11 +76,21 @@ def _text_indicator(snapshot: AssetIntelligenceSnapshot, key: str) -> str:
 
 
 def _issuer_key(peer: PeerAsset) -> str:
-    if peer.issuer:
-        return _canonical(peer.issuer)
-    # Sem CNPJ mapeado, não trate ações PN/ON do mesmo prefixo como
-    # empresas independentes. Falso agrupamento é preferível à dupla contagem.
-    return re.sub(r"\d+[fF]?$", "", peer.snapshot.symbol.upper())
+    identity = _canonical(peer.issuer or "")
+    # A identidade do portfólio pode ser B3:PETR4 / B3:PETR3. Sem CNPJ
+    # oficial, nenhum desses tickers prova emissor distinto; agrupe pelo
+    # prefixo da companhia para não aumentar artificialmente o tamanho
+    # da amostra (e preserve o namespace do mercado).
+    if identity:
+        prefix, sep, ticker = identity.rpartition(":")
+        candidate = ticker if sep else identity
+        if re.fullmatch(r"[a-z]{4}\d{1,2}f?", candidate):
+            prefix_key = re.sub(r"\d{1,2}f?$", "", candidate)
+            return f"{prefix}:{prefix_key}" if sep else prefix_key
+        return identity
+    # Falta de identificador verificável: não considerar diferentes
+    # classes do mesmo prefixo como pares independentes.
+    return re.sub(r"\d{1,2}f?$", "", peer.snapshot.symbol.casefold())
 
 
 def _aware(value: datetime) -> datetime:
