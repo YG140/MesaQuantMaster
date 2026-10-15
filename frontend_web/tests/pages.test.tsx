@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppRouter } from "../src/app/router";
 import { renderWithProviders } from "./render";
@@ -502,6 +502,9 @@ describe("paginas autenticadas", () => {
     await login("/analises");
     expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
 
+    // Mesmo teste, duas montagens de roteador: remova o DOM anterior,
+    // ou o getByRole detecta dois títulos idênticos (flaky no CI).
+    cleanup();
     await login("/simulador-historico");
     expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
   });

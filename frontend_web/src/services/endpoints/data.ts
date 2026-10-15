@@ -56,6 +56,15 @@ export const endpoints = {
     ),
   marketAsset: (token: string, code: string) =>
     apiRequest<MarketAsset>(`/market/assets/${encodeURIComponent(code)}`, { token }),
+  usdBrlReference: (token: string) =>
+    apiRequest<{
+      pair: "USD/BRL";
+      rate_brl_per_usd: string;
+      quoted_at: string;
+      source: string;
+      indicative_only: boolean;
+      disclaimer: string;
+    }>("/market/fx/usd-brl", { token }),
   marketQuotes: (token: string, symbols: string[]) =>
     apiRequest<{ quotes: MarketQuote[]; unavailable_symbols: string[] }>(
       "/market/quotes",

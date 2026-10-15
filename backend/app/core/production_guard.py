@@ -1,0 +1,26 @@
+"""Validação de configuração para evitar implantação insegura por engano."""
+
+from sqlalchemy.engine import make_url
+
+
+def assert_production_ready(settings) -> None:
+    if settings.APP_ENV.strip().lower() != "production":
+        return
+    errors = []
+    database = make_url(settings.DATABASE_URL)
+    if not database.drivername.startswith("postgresql"):
+        errors.append("DATABASE_URL deve ser PostgreSQL persistente em produção")
+    secret = settings.SECRET_KEY.strip()
+    if len(secret) < 32 or secret in {"change-me-in-local-env", "secret", "development"}:
+        errors.append("SECRET_KEY deve ser uma chave forte de pelo menos 32 caracteres")
+    if settings.DEBUG or settings.API_DOCS_ENABLED:
+        errors.append("DEBUG e API_DOCS_ENABLED devem estar desativados")
+    if not settings.SECURITY_HSTS_ENABLED:
+        errors.append("SECURITY_HSTS_ENABLED deve estar ativado")
+    if not settings.FRONTEND_ORIGINS or any(
+        not origin.startswith("https://") or origin.endswith("/")
+        for origin in settings.FRONTEND_ORIGINS
+    ):
+        errors.append("FRONTEND_ORIGINS deve conter somente origens HTTPS exatas")
+    if errors:
+        raise RuntimeError("Configuração de produção insegura: " + "; ".join(errors))

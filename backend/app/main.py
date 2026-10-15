@@ -26,10 +26,16 @@ from app.api.cvm_fii import router as cvm_fii_router
 from app.api.ai_agent import router as ai_agent_router
 
 from app.core.config import settings
+from app.core.production_guard import assert_production_ready
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from fastapi import HTTPException
 from app.core.database import Base, engine
 from app.core.sqlite_compat import ensure_sqlite_compat_schema
 from app.middleware.request_body_limit import RequestBodyLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+
+assert_production_ready(settings)
 
 importlib.import_module("app.models")
 
@@ -97,6 +103,17 @@ def health():
     return {
         "status": "healthy",
     }
+
+
+@app.get("/ready", tags=["Sistema"])
+def ready():
+    """Sinaliza prontidão apenas quando PostgreSQL responde a SELECT 1."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Banco temporariamente indisponível.") from exc
+    return {"status": "ready"}
 
 
 # ===========================
