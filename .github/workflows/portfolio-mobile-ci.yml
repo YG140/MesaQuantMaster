@@ -3,9 +3,6 @@ name: Carteira inteligente e celular
 on:
   pull_request:
     branches: [main]
-  push:
-    branches:
-      - "feat/contextual-portfolio-recommendations"
   workflow_dispatch:
 
 permissions:
@@ -52,3 +49,21 @@ jobs:
       - run: npm run lint
       - run: npm run test
       - run: npm run build
+
+  mobile:
+    name: Android viewport - portfolio smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend_web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend_web/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e -- e2e/planejar-quantidades.spec.ts
