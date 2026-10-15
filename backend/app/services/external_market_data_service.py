@@ -213,6 +213,9 @@ class ExternalMarketDataService:
         currency = str(data.get("currency", "")).upper()
         if len(currency) != 3 or not currency.isalpha() or currency == "BRL":
             raise ValueError("Moeda da cotação internacional ausente ou incoerente.")
+        configured_currency = (getattr(asset, "currency", None) or "").strip().upper()
+        if configured_currency and configured_currency != currency:
+            raise ValueError("Moeda do provedor difere do cadastro; identidade rejeitada.")
         price = _positive(data.get("close"))
         quote = QuoteResponse(
             ticker=symbol, requested_symbol=symbol, name=str(data.get("name") or asset.name),
