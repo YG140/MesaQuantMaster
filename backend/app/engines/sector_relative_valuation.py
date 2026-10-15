@@ -153,9 +153,9 @@ def _peer_reference(target: PeerAsset, universe: list[PeerAsset]) -> list[PeerAs
         identifier = _issuer_key(peer)
         if not identifier or identifier in issuers:
             continue
-        issuers.add(identifier)
         if peer.snapshot.confidence == ConfidenceLevel.INSUFFICIENT or peer.snapshot.anomaly_flags:
             continue
+        issuers.add(identifier)
         result.append(peer)
     return result
 
@@ -255,11 +255,25 @@ def enrich_sector_valuations(assets: list[PeerAsset]) -> dict[str, AssetIntellig
         valuation = _valuation(snap, peers, at)
         indicators, deltas = _comparisons(snap, peers, at) if len(peers) >= MIN_PEERS else (snap.indicators, {})
         updates = {"indicators": indicators, "valuation": valuation, "valuation_status": valuation.status}
-        # Apenas ajuste limitado do score já fundamentado; nunca cria
-        # categoria quando o dado original não permitia uma pontuação.
+        # analyze_assets() pode ser chamado por lotes antes da montagem final.
+        # Se o snapshot já tinha benchmark anterior, recalcule os scores
+        # originais a partir dos indicadores crus; não aplique o ajuste 2x.
+        was_enriched = any(item.sector_comparison for item in snap.indicators)
+        if was_enriched:
+            from app.engines.market_intelligence_engine import ScoringEngine
+            raw_scores = ScoringEngine.score_all(snap.asset_class, snap.indicators)
+            baseline = {
+                f"{category}_score": breakdown.value
+                for category, breakdown in raw_scores.items()
+            }
+            updates.update(baseline)
+        else:
+            baseline = {}
+        # Ajuste limitado sobre scores fundamentados; nunca pontua uma
+        # categoria originalmente ausente.
         changed = {}
         for category, values in deltas.items():
-            original = getattr(snap, category)
+            original = baseline.get(category, getattr(snap, category))
             if original is None:
                 continue
             extra = sum(values, Decimal("0")) / len(values)
