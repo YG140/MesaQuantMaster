@@ -21,6 +21,7 @@ from app.schemas.market import (
     ProviderCapabilitiesResponse,
 )
 from app.services.market_service import MarketService
+from app.services.bcb_fx_service import BcbPtaxFxService, FxUnavailableError, FxReference
 from app.repositories.asset_repository import AssetRepository
 from app.repositories.market_sync_repository import MarketSyncRepository
 from app.schemas.market_sync import MarketSyncReport, MarketSyncRequest
@@ -48,6 +49,18 @@ def dry_run_market_sync(
 ):
     """Preview administrativo; apply é permitido somente pelo comando local."""
     return service.run(request, apply=False)
+
+
+@router.get("/fx/usd-brl", response_model=FxReference)
+def get_usd_brl_reference(_user: User = Depends(get_current_active_user)):
+    """PTAX venda oficial para leitura, jamais taxa executável de compra."""
+    try:
+        return BcbPtaxFxService().latest_usd_brl()
+    except FxUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get("/provider-capabilities", response_model=ProviderCapabilitiesResponse)
