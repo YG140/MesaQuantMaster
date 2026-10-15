@@ -40,7 +40,9 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@v3
+      # Os runners Ubuntu do GitHub já fornecem Android SDK.
+      # O setup-android@v3 tenta instalar o pacote removido "tools",
+      # quebrando a configuração; Gradle instala APIs complementares quando necessário.
 
       - name: Testes de URL segura do APK
         working-directory: android_app
