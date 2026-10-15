@@ -103,6 +103,13 @@ export function AssetsPage() {
       });
     },
   });
+  const fx = useQuery({
+    queryKey: ["usd-brl-ptax-reference"],
+    queryFn: () => endpoints.usdBrlReference(token!),
+    enabled: Boolean(token) && intelligenceCurrencyRequired(asset),
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
   const intelligence = useQuery({ queryKey: ["asset-intelligence", asset?.ticker], queryFn: () => endpoints.assetIntelligence(token!, asset!.ticker), enabled: Boolean(asset) });
   const analysis = useMutation({ mutationFn: () => endpoints.analyzeAssets(token!, comparison) });
   const selectAsset = (next: MarketAsset) => {
@@ -171,6 +178,19 @@ export function AssetsPage() {
       {intelligence.isLoading ? <p role="status">Carregando inteligência do ativo…</p> : null}
       {intelligence.error ? <ErrorState message="A inteligência deste ativo está indisponível." /> : null}
       {intelligence.data ? <AssetSnapshot snapshot={intelligence.data} /> : null}
+      {intelligence.data?.currency === "USD" && intelligence.data.current_price != null ? (
+        <Card title="Referência cambial oficial (USD/BRL)">
+          {fx.data && Number(fx.data.rate_brl_per_usd) > 0 ? (
+            <div className="page-stack">
+              <p>PTAX venda de fechamento: <strong>{formatMoney(fx.data.rate_brl_per_usd)}</strong> por US$ 1 em {formatDateTimeBR(fx.data.quoted_at)}.</p>
+              <p>Valor convertido de referência por unidade: <strong>{formatMoney(
+                (Number(intelligence.data.current_price) * Number(fx.data.rate_brl_per_usd)).toString()
+              )}</strong>.</p>
+              <p className="helper">{fx.data.disclaimer} Não é preço executável nem altera automaticamente suas posições em carteira.</p>
+            </div>
+          ) : <p className="helper">PTAX indisponível agora. Não foi presumida taxa de câmbio.</p>}
+        </Card>
+      ) : null}
       <Card title="Comparação de ativos" className="market-comparison-card">
         <p className="helper">Selecione até cinco ativos pela busca. A comparação usa somente dimensões retornadas pela análise em lote.</p>
         <div className="comparison-selection">{comparison.map(symbol=><button type="button" key={symbol} onClick={()=>setComparison(items=>items.filter(item=>item!==symbol))}>{symbol} ×</button>)}</div>
@@ -181,6 +201,10 @@ export function AssetsPage() {
       <MarketOpportunities />
     </div>
   );
+}
+
+function intelligenceCurrencyRequired(selected: MarketAsset | null) {
+  return selected?.currency === "USD";
 }
 
 function AssetSnapshot({snapshot}:{snapshot:import("../types/api").AssetIntelligenceSnapshot}) {
