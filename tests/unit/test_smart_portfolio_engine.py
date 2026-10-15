@@ -1546,8 +1546,8 @@ def test_existing_concentrated_stock_cannot_receive_new_money():
     from app.engines.smart_portfolio_engine import PortfolioHolding
     holdings = [
         PortfolioHolding(
-            symbol="AAAA3", quantity=Decimal("900"),
-            value=Decimal("9000"), valuation_basis="market",
+            symbol="AAAA3", quantity=Decimal("300"),
+            value=Decimal("3000"), valuation_basis="market",
             asset_class="Ações", sector="Energia", issuer="AAAA3",
         )
     ]
@@ -1558,7 +1558,7 @@ def test_existing_concentrated_stock_cannot_receive_new_money():
     )
     assert all(item.symbol != "AAAA3" for item in result.assets)
     assert result.existing_positions_count == 1
-    assert result.existing_portfolio_value == Decimal("9000")
+    assert result.existing_portfolio_value == Decimal("3000")
     assessment = result.existing_holdings_assessments[0]
     assert assessment.recommendation == "review_concentration"
     assert assessment.estimated_weight == Decimal("100.00")
@@ -1614,8 +1614,8 @@ def test_builder_uses_next_eligible_stock_when_best_ranked_is_overweight():
         ],
         holdings=[
             PortfolioHolding(
-                symbol="AAAA3", quantity=Decimal("900"),
-                value=Decimal("9000"), valuation_basis="market",
+                symbol="AAAA3", quantity=Decimal("300"),
+                value=Decimal("3000"), valuation_basis="market",
                 asset_class="Ações", sector="Energia", issuer="AAAA3",
             )
         ],
