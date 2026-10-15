@@ -814,6 +814,7 @@ class SmartPortfolioEngine:
             missing_data=snapshot.missing_data,
             confidence=snapshot.confidence.value,
             valuation_status=snapshot.valuation_status.value,
+            valuation_confidence=snapshot.valuation.confidence.value,
             estimated_range_low=snapshot.valuation.estimated_range_low,
             estimated_range_high=snapshot.valuation.estimated_range_high,
             peer_comparison=snapshot.valuation.peer_comparison,
