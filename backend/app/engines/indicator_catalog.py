@@ -1193,7 +1193,7 @@ ADVANCED_ETF_INDICATORS = [
         "bid_ask_spread",
         "Spread entre compra e venda",
         LIQUIDITY,
-        [InvestmentClass.ETF, InvestmentClass.BDR, InvestmentClass.CRYPTO],
+        [InvestmentClass.ETF, InvestmentClass.BDR, InvestmentClass.INTERNATIONAL, InvestmentClass.CRYPTO],
         unit="percent",
         layer=IndicatorLayer.CLASS_SPECIFIC,
         direction=IndicatorDirection.LOWER_IS_BETTER,
@@ -1939,8 +1939,40 @@ MACRO_INDICATOR_REGISTRY = [
 ]
 
 
+# Indicadores financeiros de empresas estrangeiras e dos subjacentes de
+# BDRs. Só serão AVAILABLE se o provedor entregar os dados de verdade; a
+# classe não herda dados da ação brasileira pelo nome do ticker.
+GLOBAL_EQUITY_SCORING_KEYS = {
+    "roe", "roa", "roic", "price_earnings", "price_book", "ev_ebitda",
+    "net_debt_equity", "net_debt_ebitda", "liabilities_assets",
+    "current_liquidity", "revenue_cagr_3y", "revenue_cagr_5y",
+    "earnings_cagr_3y", "earnings_cagr_5y", "dividend_yield",
+    "earnings_per_share", "book_value_per_share", "sector", "segment",
+}
+GLOBAL_EQUITY_INDICATORS = [
+    item.model_copy(update={
+        "applicable_classes": [InvestmentClass.BDR, InvestmentClass.INTERNATIONAL],
+        "required": False,
+        "importance": IndicatorImportance.RECOMMENDED,
+    })
+    for item in STOCK_INDICATORS
+    if item.key in GLOBAL_EQUITY_SCORING_KEYS
+]
+GLOBAL_RISK_INDICATORS = [
+    item.model_copy(update={
+        "applicable_classes": [InvestmentClass.BDR, InvestmentClass.INTERNATIONAL],
+        "required": False,
+        "importance": IndicatorImportance.RECOMMENDED,
+    })
+    for item in ADVANCED_ETF_INDICATORS
+    if item.key in {"volatility", "maximum_drawdown"}
+]
+
+
 ALL_INDICATORS = [
     *STOCK_INDICATORS,
+    *GLOBAL_EQUITY_INDICATORS,
+    *GLOBAL_RISK_INDICATORS,
     *FII_INDICATORS,
     *ETF_INDICATORS,
     *TREASURY_INDICATORS,
@@ -2353,13 +2385,24 @@ def pillar_group_coverage(
 
 def scoring_coverage_for_indicators(
     indicators: list[NormalizedIndicator],
+    *,
+    asset_class: InvestmentClass | None = None,
 ) -> tuple[Decimal | None, int, int]:
     """Cobertura restrita aos indicadores/categorias que alimentam o score financeiro.
 
     Não considera nome, ticker, descrição ou metadados de apresentação: apenas
     chaves declaradas em SCORING_CATEGORIES. NOT_APPLICABLE é excluído do denominador.
     """
-    scoring_keys = {key for keys in SCORING_CATEGORIES.values() for key in keys}
+    # Classes globais não devem medir confiança por categorias domésticas.
+    if asset_class in {
+        InvestmentClass.BDR, InvestmentClass.INTERNATIONAL,
+        InvestmentClass.CRYPTO, InvestmentClass.ETF,
+    }:
+        from app.engines.multimarket_scoring import specialized_categories
+        mapping = specialized_categories(asset_class)
+        scoring_keys = {key for keys in mapping.values() for key in keys}
+    else:
+        scoring_keys = {key for keys in SCORING_CATEGORIES.values() for key in keys}
     relevant = [
         item
         for item in indicators
@@ -2414,7 +2457,9 @@ def coverage_breakdown_for_asset(
     total_coverage, total_available, total_applicable = pillar_group_coverage(
         total_pillars, indicators
     )
-    scoring_coverage, scoring_available, scoring_total = scoring_coverage_for_indicators(indicators)
+    scoring_coverage, scoring_available, scoring_total = scoring_coverage_for_indicators(
+        indicators, asset_class=asset_class
+    )
     provider_coverage, provider_resolved, provider_requested = provider_coverage_for_indicators(
         indicators
     )

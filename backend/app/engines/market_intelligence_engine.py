@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from app.engines.indicator_catalog import SCORING_CATEGORIES, coverage_breakdown_for_asset
 from app.engines.equity_indicator_scoring import score_stock_indicator
+from app.engines.multimarket_scoring import specialized_categories, score_specialized_indicator
 from app.schemas.market_intelligence import (
     AssetIntelligenceSnapshot,
     ConfidenceLevel,
@@ -41,9 +42,12 @@ class ScoringEngine:
         asset_class: InvestmentClass,
         indicators: list[NormalizedIndicator],
     ) -> dict[str, ScoreBreakdown]:
+        # ETF, BDR, exterior e cripto usam métricas específicas da
+        # classe; volume/preço disponíveis não devem virar nota de qualidade.
+        categories = specialized_categories(asset_class) or SCORING_CATEGORIES
         return {
             category: cls.score_category(asset_class, indicators, keys)
-            for category, keys in SCORING_CATEGORIES.items()
+            for category, keys in categories.items()
         }
 
     @staticmethod
@@ -84,7 +88,10 @@ class ScoringEngine:
         coverage = (
             Decimal(len(available)) / Decimal(len(applicable)) * Decimal("100")
         ).quantize(Decimal("0.01"))
-        if coverage < MINIMUM_SCORE_COVERAGE:
+        if coverage < MINIMUM_SCORE_COVERAGE and asset_class not in {
+            InvestmentClass.ETF, InvestmentClass.BDR,
+            InvestmentClass.INTERNATIONAL, InvestmentClass.CRYPTO,
+        }:
             return ScoreBreakdown(
                 available_indicators=len(available),
                 missing_indicators=len(missing),
@@ -96,6 +103,32 @@ class ScoringEngine:
                 ],
             )
 
+        if asset_class in {
+            InvestmentClass.ETF, InvestmentClass.BDR,
+            InvestmentClass.INTERNATIONAL, InvestmentClass.CRYPTO,
+        }:
+            observed = [
+                rating for item in available
+                if (rating := score_specialized_indicator(asset_class, item)) is not None
+            ]
+            return ScoreBreakdown(
+                value=(
+                    (sum(observed, Decimal("0")) / len(observed)).quantize(Decimal("0.01"))
+                    if observed else None
+                ),
+                available_indicators=len(available),
+                missing_indicators=len(missing),
+                stale_indicators=len(stale),
+                coverage_percentage=coverage,
+                confidence=confidence_for_coverage(coverage),
+                reasons=[
+                    "Pontuação baseada apenas em índices numéricos comparáveis, "
+                    "com procedência e atualização verificadas."
+                    if observed else
+                    "Sem índices apropriados para pontuar esta categoria; "
+                    "disponibilidade não equivale a qualidade."
+                ],
+            )
         if asset_class == InvestmentClass.STOCK:
             # Disponibilidade é um critério de confiança, NÃO de qualidade.
             # Os números de ROE, alavancagem, P/L etc. devem influenciar
@@ -350,6 +383,22 @@ class RecommendationEngine:
             return RecommendationAction.REVIEW_DATA
         if snapshot.strategy_fit_score is not None and snapshot.strategy_fit_score < 40:
             return RecommendationAction.WAIT
+        if snapshot.asset_class == InvestmentClass.ETF:
+            # ETF não é empresa com LPA/VPA; em vez de inventar
+            # preço justo, exige spread, risco, custo de gestão e
+            # prêmio/desconto ao NAV verificáveis antes de cogitar aporte.
+            required = ("quality", "valuation", "risk", "liquidity")
+            if overall_score is None or any(
+                scores[key].value is None for key in required
+            ):
+                return RecommendationAction.REVIEW_DATA
+            if overall_score < Decimal("60"):
+                return RecommendationAction.WAIT
+            if overall_score >= Decimal("75") and confidence in {
+                ConfidenceLevel.HIGH, ConfidenceLevel.MEDIUM,
+            }:
+                return RecommendationAction.ANALYZE_TO_BUY
+            return RecommendationAction.HOLD
         if valuation.status == ValuationStatus.INSUFFICIENT_DATA:
             return RecommendationAction.REVIEW_DATA
         if overall_score is None:

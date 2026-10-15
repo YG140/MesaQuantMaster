@@ -154,7 +154,9 @@ def _metric_median(peers: list[PeerAsset], key: str, at: datetime) -> Decimal | 
 
 def _peer_reference(target: PeerAsset, universe: list[PeerAsset]) -> list[PeerAsset]:
     key = _valid_sector(target.sector)
-    if not key or target.snapshot.asset_class != InvestmentClass.STOCK:
+    if not key or target.snapshot.asset_class not in {
+        InvestmentClass.STOCK, InvestmentClass.INTERNATIONAL
+    }:
         return []
     segment = _text_indicator(target.snapshot, "segment")
     if any(block in segment for block in INCOMPATIBLE_SECTORS):
@@ -162,7 +164,9 @@ def _peer_reference(target: PeerAsset, universe: list[PeerAsset]) -> list[PeerAs
     result = []
     issuers = {_issuer_key(target)}
     for peer in sorted(universe, key=lambda p: p.snapshot.symbol):
-        if peer.snapshot.asset_class != InvestmentClass.STOCK or _valid_sector(peer.sector) != key:
+        # Global equities use only global-equity peers, never BDRs or
+        # Brazilian listings. No currency conversion across peers.
+        if peer.snapshot.asset_class != target.snapshot.asset_class or _valid_sector(peer.sector) != key:
             continue
         if peer.snapshot.currency != target.snapshot.currency or not peer.snapshot.currency:
             continue
@@ -270,7 +274,7 @@ def enrich_sector_valuations(assets: list[PeerAsset]) -> dict[str, AssetIntellig
     result = {}
     for target in assets:
         snap = target.snapshot
-        if snap.asset_class != InvestmentClass.STOCK:
+        if snap.asset_class not in {InvestmentClass.STOCK, InvestmentClass.INTERNATIONAL}:
             result[snap.symbol] = snap
             continue
         peers = _peer_reference(target, assets)
