@@ -13,3 +13,11 @@ createRoot(document.getElementById("root")!).render(
     </AppProviders>
   </StrictMode>,
 );
+
+// O service worker serve apenas para permitir experiência de aplicativo;
+// todas as consultas financeiras continuam sempre online, sem cache.
+if ("serviceWorker" in navigator && (window.isSecureContext || window.location.hostname === "localhost")) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
+}
