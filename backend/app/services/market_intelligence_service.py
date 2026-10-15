@@ -406,6 +406,9 @@ def strategy_fit(
         InvestmentClass.STOCK: "Ações",
         InvestmentClass.FII: "FIIs",
         InvestmentClass.ETF: "ETFs",
+        InvestmentClass.BDR: "BDRs",
+        InvestmentClass.INTERNATIONAL: "Ativos internacionais",
+        InvestmentClass.CRYPTO: "Criptomoedas",
         InvestmentClass.TREASURY: "Tesouro Direto",
     }.get(asset_class)
     if policy_class is None:
