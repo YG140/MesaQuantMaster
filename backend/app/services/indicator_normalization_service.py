@@ -82,6 +82,19 @@ class IndicatorNormalizationService:
         "maturity_date": ("maturityDate",),
         "duration": ("durationYears", "durationDays"),
         "market_price": ("buyPrice", "sellPrice", "basePrice"),
+        # Entradas especializadas SOMENTE quando o provedor declara a
+        # unidade no próprio nome do campo (percentual em pontos, não fração).
+        "management_fee": ("managementFeePercent", "expenseRatioPercent"),
+        "tracking_error": ("trackingErrorPercent",),
+        "tracking_difference": ("trackingDifferencePercent",),
+        "premium_discount": ("premiumDiscountPercent",),
+        "bid_ask_spread": ("bidAskSpreadPercent",),
+        "volatility": ("volatilityPercent", "annualVolatilityPercent"),
+        "maximum_drawdown": ("maximumDrawdownPercent",),
+        "holder_concentration": ("holderConcentrationPercent",),
+        "top_holdings_concentration": ("topHoldingsConcentrationPercent",),
+        "earnings_cagr_3y": ("earningsCagr3y",),
+        "revenue_cagr_3y": ("revenueCagr3y",),
     }
 
     def normalize_quote(
