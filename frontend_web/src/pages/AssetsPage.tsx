@@ -83,7 +83,7 @@ export function AssetsPage() {
       name: externalName.trim(),
       asset_type: externalType,
       sector: null,
-      country: externalType === "crypto" ? null : "US",
+      country: null,
       currency: externalType === "crypto" ? "USD" : externalCurrency,
       exchange: externalExchange.trim().toUpperCase() || null,
     }),
