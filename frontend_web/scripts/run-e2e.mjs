@@ -87,7 +87,8 @@ try {
   vite.stderr.pipe(process.stderr);
   await waitForVite();
   log("Vite pronto; iniciando Playwright com API interceptada por mocks");
-  const playwright = spawnNode(playwrightEntry, ["test", "--reporter=line"], "inherit");
+  const selectedTests = process.argv.slice(2);
+  const playwright = spawnNode(playwrightEntry, ["test", ...selectedTests, "--reporter=line"], "inherit");
   const exitCode = await new Promise((resolvePromise, reject) => {
     playwright.once("error", reject);
     playwright.once("close", (code) => resolvePromise(code ?? 1));
