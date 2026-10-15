@@ -166,7 +166,23 @@ class ExternalMarketDataService:
             market_cap=market_cap, market_time=observed, source="CoinGecko",
             provider="CoinGecko",
         )
-        indicators = ()
+        indicators_list = []
+        if volume_usd and market_cap and market_cap > 0:
+            turnover = volume_usd / market_cap * Decimal("100")
+            if turnover.is_finite() and Decimal("0") < turnover <= Decimal("50"):
+                indicators_list.append(NormalizedIndicator(
+                    key="turnover_ratio_24h", label="Giro financeiro 24h",
+                    value=turnover.quantize(Decimal("0.01")),
+                    display_value=f"{turnover.quantize(Decimal('0.01'))}%",
+                    unit="percent", status=IndicatorStatus.AVAILABLE,
+                    source="CoinGecko", source_type="provider",
+                    reference_date=observed, collected_at=datetime.now(timezone.utc),
+                    valid_until=observed + timedelta(days=2),
+                    confidence=ConfidenceLevel.MEDIUM,
+                    period="últimas 24 horas",
+                    explanation="Volume 24h USD dividido pela capitalização USD; não é liquidez garantida.",
+                ))
+        indicators = tuple(indicators_list)
         try:
             historical = self._json(
                 f"{COINGECKO_BASE}/coins/{identity}/market_chart",
@@ -174,7 +190,7 @@ class ExternalMarketDataService:
             )
             if isinstance(historical, dict):
                 prices = _coingecko_daily(historical.get("prices"))
-                indicators = _historical_indicators(
+                indicators += _historical_indicators(
                     prices, source="CoinGecko", asset_class=InvestmentClass.CRYPTO
                 )
         except ValueError:
