@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     BRAPI_QUOTE_CACHE_SECONDS: int = 60
     BRAPI_SEARCH_CACHE_SECONDS: int = 600
     BRAPI_PROFILE_CACHE_SECONDS: int = 3600
+    # APIs externas opcionais, apenas no backend. Nunca expor ao frontend.
+    COINGECKO_DEMO_API_KEY: str = ""
+    TWELVEDATA_API_KEY: str = ""
     # Recurso oficial "Taxas dos Títulos Ofertados pelo Tesouro Direto"
     # (Tesouro Nacional / Tesouro Transparente, CKAN público, sem
     # autenticação) -- confirmado vigente por auditoria direta (HTTP HEAD +
