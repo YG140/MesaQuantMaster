@@ -189,12 +189,8 @@ class ExternalMarketDataService:
             raise ValueError("Twelve Data retornou símbolo diferente do cadastrado.")
         observed = _timestamp(data.get("timestamp"))
         _fresh(observed, timedelta(days=7))
-        quote_type = str(data.get("type", "")).lower()
-        if asset_class == InvestmentClass.ETF:
-            if "etf" not in quote_type:
-                raise ValueError("O provedor não confirmou que este símbolo é ETF.")
-        elif quote_type not in {"common stock", "preferred stock", "american depositary receipt"}:
-            raise ValueError("O provedor não confirmou a classe da ação internacional.")
+        # Twelve Data /quote não documenta o campo "type". A classe
+        # precisa ser confirmada pelo meta de /time_series, nunca inferida.
         exchange = str(data.get("exchange", "")).upper()
         if expected_exchange and expected_exchange != exchange:
             raise ValueError("Bolsa de negociação diferente do cadastro; identidade rejeitada.")
@@ -211,25 +207,33 @@ class ExternalMarketDataService:
             volume=_optional_int(data.get("volume")),
             previous_close=_optional_positive(data.get("previous_close")),
         )
-        indicators = ()
-        try:
-            historical = self._json(
-                f"{TWELVEDATA_BASE}/time_series",
-                params={"symbol": symbol, "interval": "1day", "outputsize": "120", "apikey": key},
-                headers={},
-            )
-            if isinstance(historical, dict):
-                meta = historical.get("meta")
-                if not isinstance(meta, dict) or str(meta.get("symbol", "")).upper() != symbol:
-                    raise ValueError("Histórico Twelve Data pertence a outro símbolo.")
-                if str(meta.get("currency", "")).upper() != currency:
-                    raise ValueError("Moeda do histórico incompatível com a cotação.")
-                indicators = _historical_indicators(
-                    _twelvedata_daily(historical.get("values")),
-                    source="Twelve Data", asset_class=asset_class
-                )
-        except ValueError:
-            pass
+        # Metadados de time_series validam a identidade e o tipo.
+        # Sem esse endpoint não usamos a cotação para ações/ETFs:
+        # símbolos homônimos podem apontar para classes diferentes.
+        historical = self._json(
+            f"{TWELVEDATA_BASE}/time_series",
+            params={"symbol": symbol, "interval": "1day", "outputsize": "120", "apikey": key},
+            headers={},
+        )
+        if not isinstance(historical, dict):
+            raise ValueError("Resposta histórica inválida para o ativo.")
+        meta = historical.get("meta")
+        if not isinstance(meta, dict) or str(meta.get("symbol", "")).upper() != symbol:
+            raise ValueError("Histórico Twelve Data pertence a outro símbolo.")
+        if str(meta.get("currency", "")).upper() != currency:
+            raise ValueError("Moeda do histórico incompatível com a cotação.")
+        if expected_exchange and str(meta.get("exchange", "")).upper() != expected_exchange:
+            raise ValueError("Bolsa do histórico incompatível com o cadastro.")
+        kind = str(meta.get("type", "")).lower()
+        if asset_class == InvestmentClass.ETF:
+            if kind != "etf":
+                raise ValueError("O provedor não confirmou que este símbolo é ETF.")
+        elif kind not in {"common stock", "preferred stock", "american depositary receipt"}:
+            raise ValueError("O provedor não confirmou que este símbolo é ação internacional.")
+        indicators = _historical_indicators(
+            _twelvedata_daily(historical.get("values")),
+            source="Twelve Data", asset_class=asset_class
+        )
         return ExternalMarketResult(quote=quote, indicators=indicators)
 
 
