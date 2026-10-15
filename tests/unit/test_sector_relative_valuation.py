@@ -193,3 +193,13 @@ def test_holding_segment_is_not_scored_as_a_regular_operating_company():
         group[idx] = stock(f"PAR{idx}3", segment="Holding")
     result = enrich_sector_valuations(group)["ALVO3"]
     assert result.valuation.estimated_range_low is None
+
+
+def test_b3_ordinary_and_preferred_shares_do_not_count_as_two_issuers():
+    group = universe()
+    # B3:PARA3 e B3:PARA4 parecem diferentes no cadastro, mas não
+    # demonstram emissores distintos para mediana.
+    group[1] = stock("PARA3", issuer="B3:PARA3")
+    group[2] = stock("PARA4", issuer="B3:PARA4")
+    result = enrich_sector_valuations(group)["ALVO3"]
+    assert result.valuation.estimated_range_low is None
