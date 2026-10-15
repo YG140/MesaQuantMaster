@@ -27,6 +27,7 @@ from app.schemas.market_intelligence import (
     ConfidenceLevel,
     IndicatorStatus,
     InvestmentClass,
+    RecommendationAction,
     ValuationStatus,
 )
 from app.engines.portfolio_holdings_context import limit_new_contributions, assess_holdings
@@ -544,6 +545,20 @@ class SmartPortfolioEngine:
                 reasons.append(
                     "Sem conversão cambial verificada para o orçamento em BRL; "
                     "a carteira não transforma preço estrangeiro em reais por suposição."
+                )
+            if snapshot.asset_class == InvestmentClass.ETF and (
+                snapshot.quality_score is None
+                or snapshot.valuation_score is None
+                or snapshot.risk_score is None
+                or snapshot.liquidity_score is None
+                or snapshot.recommendation not in {
+                    RecommendationAction.ANALYZE_TO_BUY,
+                    RecommendationAction.HOLD,
+                }
+            ):
+                reasons.append(
+                    "ETF sem taxas, prêmio/desconto ao valor patrimonial, "
+                    "histórico de risco e spread confiáveis para sugerir compra."
                 )
             if snapshot.asset_class == InvestmentClass.CRYPTO:
                 reasons.append(
