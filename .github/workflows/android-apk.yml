@@ -42,6 +42,10 @@ jobs:
           java-version: "21"
       - uses: android-actions/setup-android@v3
 
+      - name: Testes de URL segura do APK
+        working-directory: android_app
+        run: node scripts/test-verify-api-url.mjs
+
       - name: Validar URL do backend (sem localhost nem HTTP)
         run: node android_app/scripts/verify-api-url.mjs
 
