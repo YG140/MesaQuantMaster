@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from app.engines.indicator_catalog import SCORING_CATEGORIES, coverage_breakdown_for_asset
 from app.engines.equity_indicator_scoring import score_stock_indicator
+from app.engines.multimarket_scoring import specialized_categories, score_specialized_indicator
 from app.schemas.market_intelligence import (
     AssetIntelligenceSnapshot,
     ConfidenceLevel,
@@ -41,9 +42,12 @@ class ScoringEngine:
         asset_class: InvestmentClass,
         indicators: list[NormalizedIndicator],
     ) -> dict[str, ScoreBreakdown]:
+        # ETF, BDR, exterior e cripto usam métricas específicas da
+        # classe; volume/preço disponíveis não devem virar nota de qualidade.
+        categories = specialized_categories(asset_class) or SCORING_CATEGORIES
         return {
             category: cls.score_category(asset_class, indicators, keys)
-            for category, keys in SCORING_CATEGORIES.items()
+            for category, keys in categories.items()
         }
 
     @staticmethod
@@ -96,6 +100,32 @@ class ScoringEngine:
                 ],
             )
 
+        if asset_class in {
+            InvestmentClass.ETF, InvestmentClass.BDR,
+            InvestmentClass.INTERNATIONAL, InvestmentClass.CRYPTO,
+        }:
+            observed = [
+                rating for item in available
+                if (rating := score_specialized_indicator(asset_class, item)) is not None
+            ]
+            return ScoreBreakdown(
+                value=(
+                    (sum(observed, Decimal("0")) / len(observed)).quantize(Decimal("0.01"))
+                    if observed else None
+                ),
+                available_indicators=len(available),
+                missing_indicators=len(missing),
+                stale_indicators=len(stale),
+                coverage_percentage=coverage,
+                confidence=confidence_for_coverage(coverage),
+                reasons=[
+                    "Pontuação baseada apenas em índices numéricos comparáveis, "
+                    "com procedência e atualização verificadas."
+                    if observed else
+                    "Sem índices apropriados para pontuar esta categoria; "
+                    "disponibilidade não equivale a qualidade."
+                ],
+            )
         if asset_class == InvestmentClass.STOCK:
             # Disponibilidade é um critério de confiança, NÃO de qualidade.
             # Os números de ROE, alavancagem, P/L etc. devem influenciar
