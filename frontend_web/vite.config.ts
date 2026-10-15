@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Para acesso pela rede local: npm run dev:mobile
   },
   test: {
     environment: "jsdom",
