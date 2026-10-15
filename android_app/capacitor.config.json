@@ -1,0 +1,12 @@
+{
+  "appId": "br.com.mesaquantmaster.app",
+  "appName": "Mesa Quant Master",
+  "webDir": "../frontend_web/dist",
+  "server": {
+    "hostname": "localhost",
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
