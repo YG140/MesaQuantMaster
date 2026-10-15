@@ -255,20 +255,15 @@ def enrich_sector_valuations(assets: list[PeerAsset]) -> dict[str, AssetIntellig
         valuation = _valuation(snap, peers, at)
         indicators, deltas = _comparisons(snap, peers, at) if len(peers) >= MIN_PEERS else (snap.indicators, {})
         updates = {"indicators": indicators, "valuation": valuation, "valuation_status": valuation.status}
-        # analyze_assets() pode ser chamado por lotes antes da montagem final.
-        # Se o snapshot já tinha benchmark anterior, recalcule os scores
-        # originais a partir dos indicadores crus; não aplique o ajuste 2x.
-        was_enriched = any(item.sector_comparison for item in snap.indicators)
-        if was_enriched:
-            from app.engines.market_intelligence_engine import ScoringEngine
-            raw_scores = ScoringEngine.score_all(snap.asset_class, snap.indicators)
-            baseline = {
-                f"{category}_score": breakdown.value
-                for category, breakdown in raw_scores.items()
-            }
-            updates.update(baseline)
-        else:
-            baseline = {}
+        # analyze_assets() pode ser chamado por lotes antes da montagem
+        # final. Guarde a nota fundamentada original e reaplique sempre a
+        # partir dela; nunca duplique o bônus relativo em uma segunda passagem.
+        score_fields = ("quality_score", "valuation_score", "income_score", "growth_score", "debt_score", "risk_score", "liquidity_score")
+        baseline = snap.sector_baseline_scores or {
+            field: getattr(snap, field) for field in score_fields
+        }
+        updates["sector_baseline_scores"] = baseline
+        updates.update(baseline)
         # Ajuste limitado sobre scores fundamentados; nunca pontua uma
         # categoria originalmente ausente.
         changed = {}
@@ -279,7 +274,6 @@ def enrich_sector_valuations(assets: list[PeerAsset]) -> dict[str, AssetIntellig
             extra = sum(values, Decimal("0")) / len(values)
             changed[category] = max(Decimal("0"), min(Decimal("100"), original + extra)).quantize(CENT)
         updates.update(changed)
-        score_fields = ("quality_score", "valuation_score", "income_score", "growth_score", "debt_score", "risk_score", "liquidity_score")
         computed = [updates.get(field, getattr(snap, field)) for field in score_fields]
         available_scores = [value for value in computed if value is not None]
         if len(available_scores) >= 2:
