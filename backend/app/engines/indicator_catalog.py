@@ -1947,6 +1947,7 @@ GLOBAL_EQUITY_SCORING_KEYS = {
     "net_debt_equity", "net_debt_ebitda", "liabilities_assets",
     "current_liquidity", "revenue_cagr_3y", "revenue_cagr_5y",
     "earnings_cagr_3y", "earnings_cagr_5y", "dividend_yield",
+    "earnings_per_share", "book_value_per_share", "sector", "segment",
 }
 GLOBAL_EQUITY_INDICATORS = [
     item.model_copy(update={
