@@ -550,6 +550,7 @@ export type BuildPortfolioResponse = {
     post_purchase_weight?: string | number | null;
     allocation_note?: string | null;
     valuation_status?: string | null;
+    valuation_confidence?: string | null;
     estimated_range_low?: string | number | null;
     estimated_range_high?: string | number | null;
     peer_comparison?: string | null;
