@@ -1193,7 +1193,7 @@ ADVANCED_ETF_INDICATORS = [
         "bid_ask_spread",
         "Spread entre compra e venda",
         LIQUIDITY,
-        [InvestmentClass.ETF, InvestmentClass.BDR, InvestmentClass.CRYPTO],
+        [InvestmentClass.ETF, InvestmentClass.BDR, InvestmentClass.INTERNATIONAL, InvestmentClass.CRYPTO],
         unit="percent",
         layer=IndicatorLayer.CLASS_SPECIFIC,
         direction=IndicatorDirection.LOWER_IS_BETTER,
@@ -1953,15 +1953,26 @@ GLOBAL_EQUITY_INDICATORS = [
     item.model_copy(update={
         "applicable_classes": [InvestmentClass.BDR, InvestmentClass.INTERNATIONAL],
         "required": False,
+        "importance": IndicatorImportance.RECOMMENDED,
     })
     for item in STOCK_INDICATORS
     if item.key in GLOBAL_EQUITY_SCORING_KEYS
+]
+GLOBAL_RISK_INDICATORS = [
+    item.model_copy(update={
+        "applicable_classes": [InvestmentClass.BDR, InvestmentClass.INTERNATIONAL],
+        "required": False,
+        "importance": IndicatorImportance.RECOMMENDED,
+    })
+    for item in ADVANCED_ETF_INDICATORS
+    if item.key in {"volatility", "maximum_drawdown"}
 ]
 
 
 ALL_INDICATORS = [
     *STOCK_INDICATORS,
     *GLOBAL_EQUITY_INDICATORS,
+    *GLOBAL_RISK_INDICATORS,
     *FII_INDICATORS,
     *ETF_INDICATORS,
     *TREASURY_INDICATORS,
