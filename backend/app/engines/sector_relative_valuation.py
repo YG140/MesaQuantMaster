@@ -91,6 +91,10 @@ def _numeric(snapshot: AssetIntelligenceSnapshot, key: str, at: datetime) -> Dec
     for item in snapshot.indicators:
         if item.key != key or item.status != IndicatorStatus.AVAILABLE:
             continue
+        # Declarações manuais (confiança baixa) não formam benchmarks
+        # independentes. Não inferir preço a partir de números do usuário.
+        if item.source_type in {"manual", "user"}:
+            return None
         if item.value is None or isinstance(item.value, str):
             # Pydantic pode normalizar decimais como Decimal; rejeite texto
             # livres e unidades não mensuráveis.
@@ -141,6 +145,8 @@ def _peer_reference(target: PeerAsset, universe: list[PeerAsset]) -> list[PeerAs
     if not key or target.snapshot.asset_class != InvestmentClass.STOCK:
         return []
     segment = _text_indicator(target.snapshot, "segment")
+    if any(block in segment for block in INCOMPATIBLE_SECTORS):
+        return []
     result = []
     issuers = {_issuer_key(target)}
     for peer in sorted(universe, key=lambda p: p.snapshot.symbol):
@@ -148,7 +154,12 @@ def _peer_reference(target: PeerAsset, universe: list[PeerAsset]) -> list[PeerAs
             continue
         if peer.snapshot.currency != target.snapshot.currency or not peer.snapshot.currency:
             continue
-        if segment and _text_indicator(peer.snapshot, "segment") != segment:
+        peer_segment = _text_indicator(peer.snapshot, "segment")
+        if any(block in peer_segment for block in INCOMPATIBLE_SECTORS):
+            continue
+        if segment != peer_segment:
+            # Sem uma segmentação homogênea, setor genérico pode misturar
+            # modelos de negócio (e.g., holding com operador).
             continue
         identifier = _issuer_key(peer)
         if not identifier or identifier in issuers:
