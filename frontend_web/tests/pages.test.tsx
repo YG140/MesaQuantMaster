@@ -342,7 +342,7 @@ describe("paginas autenticadas", () => {
     await user.type(screen.getByLabelText("Quantidade"), "10");
     await user.type(screen.getByLabelText("Preço de compra"), "37.10");
     await user.click(screen.getByRole("button", { name: "Salvar investimento" }));
-    expect(await screen.findByText("Investimento salvo com sucesso.")).toBeInTheDocument();
+    expect(await screen.findByText(/Investimento salvo\./)).toBeInTheDocument();
   });
 
   it("permite cadastrar corretora dentro do formulario e seleciona automaticamente", async () => {
