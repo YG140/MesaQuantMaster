@@ -103,7 +103,9 @@ def _numeric(snapshot: AssetIntelligenceSnapshot, key: str, at: datetime) -> Dec
             continue
         # Declarações manuais (confiança baixa) não formam benchmarks
         # independentes. Não inferir preço a partir de números do usuário.
-        if item.source_type in {"manual", "user"}:
+        if item.source_type in {"manual", "user"} or item.confidence in {
+            ConfidenceLevel.LOW, ConfidenceLevel.INSUFFICIENT
+        }:
             return None
         if item.value is None or isinstance(item.value, str):
             # Pydantic pode normalizar decimais como Decimal; rejeite texto
