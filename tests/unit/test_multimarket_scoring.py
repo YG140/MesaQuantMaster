@@ -71,7 +71,8 @@ def test_wrong_units_or_nan_are_not_interpreted_as_percent():
         InvestmentClass.ETF, item("management_fee", "0.2", unit="ratio")
     ) is None
     assert score_specialized_indicator(
-        InvestmentClass.ETF, item("management_fee", "NaN")
+        InvestmentClass.ETF,
+        item("management_fee", "0.2").model_copy(update={"value": "NaN"})
     ) is None
 
 
