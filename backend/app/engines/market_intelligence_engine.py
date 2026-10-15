@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app.engines.indicator_catalog import SCORING_CATEGORIES, coverage_breakdown_for_asset
+from app.engines.equity_indicator_scoring import score_stock_indicator
 from app.schemas.market_intelligence import (
     AssetIntelligenceSnapshot,
     ConfidenceLevel,
@@ -95,6 +96,46 @@ class ScoringEngine:
                 ],
             )
 
+        if asset_class == InvestmentClass.STOCK:
+            # Disponibilidade é um critério de confiança, NÃO de qualidade.
+            # Os números de ROE, alavancagem, P/L etc. devem influenciar
+            # a nota. Nenhum indicador não comparável recebe nota artificial.
+            # Dividend Yield é retorno/distribuição, não uma medida
+            # independente de valuation: não o contamos duas vezes.
+            scored_indicators = [
+                item for item in available
+                if not (item.key == "dividend_yield" and "price_earnings" in keys)
+            ]
+            observed = [
+                rating for item in scored_indicators
+                if (rating := score_stock_indicator(item)) is not None
+            ]
+            if not observed:
+                return ScoreBreakdown(
+                    available_indicators=len(available),
+                    missing_indicators=len(missing),
+                    stale_indicators=len(stale),
+                    coverage_percentage=coverage,
+                    confidence=confidence_for_coverage(coverage),
+                    reasons=[
+                        "Dados presentes, mas sem proporções financeiras "
+                        "comparáveis para uma pontuação fundamentada."
+                    ],
+                )
+            value = (sum(observed, Decimal("0")) / len(observed)).quantize(Decimal("0.01"))
+            return ScoreBreakdown(
+                value=value,
+                available_indicators=len(available),
+                missing_indicators=len(missing),
+                stale_indicators=len(stale),
+                coverage_percentage=coverage,
+                confidence=confidence_for_coverage(coverage),
+                reasons=[
+                    "Heurística inicial baseada nos valores reais dos índices "
+                    "financeiros, independente da cobertura; não substitui "
+                    "comparação setorial e análise de balanços."
+                ],
+            )
         return ScoreBreakdown(
             value=coverage,
             available_indicators=len(available),
@@ -102,7 +143,10 @@ class ScoringEngine:
             stale_indicators=len(stale),
             coverage_percentage=coverage,
             confidence=confidence_for_coverage(coverage),
-            reasons=["Pontuação baseada somente em indicadores disponíveis."],
+            reasons=[
+                "Pontuação provisória de disponibilidade: avaliação por "
+                "fundamentos específicos da classe ainda pendente."
+            ],
         )
 
 
@@ -265,12 +309,19 @@ class ValuationEngine:
                 confidence=ConfidenceLevel.INSUFFICIENT,
                 data_date=next((item.reference_date for item in used), None),
             )
+        # Ter dois indicadores NÃO produz uma estimativa independente de
+        # preço justo. P/L e P/VP precisam de histórico/pares comparáveis,
+        # e não existe ainda um modelo validado de valor intrínseco.
+        # Até sua implementação, evite classificar automaticamente
+        # uma ação como "próxima do valor estimado".
         return ValuationAssessment(
-            status=ValuationStatus.NEAR_ESTIMATED_VALUE,
-            methods=["Indicadores fundamentalistas disponíveis"],
+            status=ValuationStatus.INSUFFICIENT_DATA,
+            methods=[],
             used_indicators=[item.label for item in used],
-            missing_indicators=missing,
-            confidence=ConfidenceLevel.MEDIUM,
+            missing_indicators=[
+                *missing, "Referência setorial/histórica validada para preço justo."
+            ],
+            confidence=ConfidenceLevel.INSUFFICIENT,
             data_date=next((item.reference_date for item in used), None),
         )
 

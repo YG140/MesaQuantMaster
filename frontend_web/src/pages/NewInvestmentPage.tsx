@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { SearchAutocomplete } from "../components/forms/SearchAutocomplete";
@@ -10,12 +11,13 @@ import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { MetricCard } from "../components/ui/MetricCard";
 import { Input } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
 import { useAuth } from "../features/auth/useAuth";
 import { endpoints } from "../services/endpoints/data";
 import type { Brokerage, MarketAsset } from "../types/api";
-import { display, formatCurrencyInputBR, formatDateTimeBR, formatMoney, formatPercent, normalizeDecimalForApi, parseBrazilianNumber } from "../utils/formatters";
+import { display, formatCurrencyInputBR, formatDateTimeBR, formatDecimalBR, formatMoney, formatPercent, normalizeDecimalForApi, parseBrazilianNumber } from "../utils/formatters";
 
 const requiredDecimal = (message: string) => z.string().min(1, message).refine((value) => parseBrazilianNumber(value) !== null, "Informe um número válido.");
 
@@ -37,6 +39,13 @@ export function NewInvestmentPage() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [selectedAsset, setSelectedAsset] = useState<MarketAsset | null>(null);
+  const [lastSavedSymbol, setLastSavedSymbol] = useState<string | null>(null);
+  const savedAssessment = useQuery({
+    queryKey: ["assessment-after-buy", token, lastSavedSymbol],
+    queryFn: () => endpoints.assetIntelligence(token!, lastSavedSymbol!),
+    enabled: Boolean(token && lastSavedSymbol),
+    retry: 1,
+  });
   const [showBrokerageForm, setShowBrokerageForm] = useState(false);
   const [newBrokerageName, setNewBrokerageName] = useState("");
   const [brokerageError, setBrokerageError] = useState<string | null>(null);
@@ -68,7 +77,13 @@ export function NewInvestmentPage() {
       });
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["portfolio"] });
+      setLastSavedSymbol(selectedAsset?.ticker ?? null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["portfolio"] }),
+        queryClient.invalidateQueries({ queryKey: ["portfolio-intelligence"] }),
+        queryClient.invalidateQueries({ queryKey: ["portfolio-market-recommendations"] }),
+        queryClient.invalidateQueries({ queryKey: ["portfolio-projection"] }),
+      ]);
       form.reset();
       setSelectedAsset(null);
       setQuery("");
@@ -137,7 +152,7 @@ export function NewInvestmentPage() {
       </Card>
       <Card title="Dados da compra">
         {mutation.error ? <ErrorState message={mutation.error instanceof Error ? mutation.error.message : "Não foi possível salvar."} /> : null}
-        {mutation.isSuccess ? <div className="success-box">Investimento salvo com sucesso.</div> : null}
+        {mutation.isSuccess ? <div className="success-box">Investimento salvo. A avaliação pelos indicadores é exibida abaixo e não altera a operação registrada.</div> : null}
         <form className="form-grid two" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
           <div className="form-grid span-2">
             {brokerages.data?.length ? (
@@ -182,6 +197,50 @@ export function NewInvestmentPage() {
           <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Salvando..." : "Salvar investimento"}</Button>
         </form>
       </Card>
+      {lastSavedSymbol ? (
+        <Card title={`Avaliação da compra registrada — ${lastSavedSymbol}`}>
+          {savedAssessment.isLoading ? <LoadingState label="Analisando indicadores da ação registrada..." /> : null}
+          {savedAssessment.error ? (
+            <p className="helper">Não foi possível obter indicadores confiáveis deste ativo agora. O registro foi salvo normalmente; não há recomendação de compra ou venda nesta condição.</p>
+          ) : null}
+          {savedAssessment.data ? (
+            <>
+              <div className="metric-grid compact">
+                <MetricCard label="Orientação de análise" value={registeredPurchaseLabel(savedAssessment.data.recommendation)} />
+                <MetricCard label="Confiabilidade dos dados" value={registeredPurchaseConfidence(savedAssessment.data.confidence)} />
+                <MetricCard label="Pontuação por indicadores" value={savedAssessment.data.overall_score === null ? "Não disponível" : `${formatDecimalBR(savedAssessment.data.overall_score, 1)}/100`} />
+                <MetricCard label="Avaliação do preço" value={registeredPurchaseValuation(savedAssessment.data.valuation_status)} />
+              </div>
+              <p className="helper">Parecer baseado nos indicadores disponíveis, no perfil confirmado e nas posições registradas. A valorização passada ou o preço que você pagou, isoladamente, não tornam o investimento bom ou ruim.</p>
+              {savedAssessment.data.positive_reasons.length ? <details><summary>Por que pode fazer sentido</summary><ul>{savedAssessment.data.positive_reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></details> : null}
+              {savedAssessment.data.warning_reasons.length ? <details><summary>Riscos e pontos de atenção</summary><ul>{savedAssessment.data.warning_reasons.map((risk) => <li key={risk}>{risk}</li>)}</ul></details> : null}
+            </>
+          ) : null}
+          <Link className="button button-secondary" to="/planejar?secao=montar-carteira">Montar carteira considerando esta posição</Link>
+        </Card>
+      ) : null}
     </div>
   );
+}
+
+function registeredPurchaseLabel(value: string) {
+  return ({
+    analyze_to_buy: "Analisar compra", buy_gradually: "Avaliar aporte gradual",
+    increase_position: "Avaliar ampliação", hold: "Acompanhar",
+    wait: "Aguardar", reduce_exposure: "Rever exposição",
+    consider_selling: "Reavaliar posição", review_data: "Revisar dados",
+    insufficient_data: "Sem dados suficientes",
+  } as Record<string, string>)[value] ?? "Revisar dados";
+}
+
+function registeredPurchaseConfidence(value: string) {
+  return ({ high: "Alta", medium: "Média", low: "Baixa", insufficient: "Insuficiente" } as Record<string, string>)[value] ?? "Insuficiente";
+}
+
+function registeredPurchaseValuation(value: string) {
+  return ({
+    very_attractive: "Potencialmente atrativo", attractive: "Potencialmente atrativo",
+    near_estimated_value: "Próximo do valor estimado", elevated: "Preço elevado",
+    very_elevated: "Preço muito elevado", insufficient_data: "Não avaliável",
+  } as Record<string, string>)[value] ?? "Não avaliável";
 }

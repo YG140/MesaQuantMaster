@@ -31,8 +31,16 @@ type RequestOptions = {
   timeoutMs?: number;
 };
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+// No celular, 127.0.0.1 seria o próprio telefone, não o computador
+// onde o backend está rodando. Em desenvolvimento, use o host do site.
+// Em produção, prefira uma API HTTPS sob a mesma origem (reverse proxy).
+const mobileSafeDevHost = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+  ? "127.0.0.1"
+  : window.location.hostname;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").trim()
+  || (import.meta.env.DEV
+    ? `${window.location.protocol}//${mobileSafeDevHost}:8000`
+    : "");
 
 let unauthorizedHandler: (() => void) | null = null;
 

@@ -1,0 +1,19 @@
+{
+  "name": "Mesa Quant Master",
+  "short_name": "Mesa Quant",
+  "description": "Acompanhe sua carteira e planeje aportes com indicadores verificáveis.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#050714",
+  "theme_color": "#08152b",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/icons/mesa-quant.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

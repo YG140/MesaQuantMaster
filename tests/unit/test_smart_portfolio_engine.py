@@ -1539,3 +1539,87 @@ def test_reserve_class_from_policy_is_never_redistributed_to_other_classes():
     # redistribuídos/forçados em Ações.
     assert result.unallocated_amount == Decimal("2000.00")
     assert result.status == "partial"
+
+
+# Carteira contextual: compras e vendas reais influenciam o próximo aporte.
+def test_existing_concentrated_stock_cannot_receive_new_money():
+    from app.engines.smart_portfolio_engine import PortfolioHolding
+    holdings = [
+        PortfolioHolding(
+            symbol="AAAA3", quantity=Decimal("300"),
+            value=Decimal("3000"), valuation_basis="market",
+            asset_class="Ações", sector="Energia", issuer="AAAA3",
+        )
+    ]
+    result = SmartPortfolioEngine.build(
+        request(),
+        [candidate("AAAA3", sector="Energia"), candidate("BBBB3", sector="Tecnologia")],
+        holdings=holdings,
+    )
+    assert all(item.symbol != "AAAA3" for item in result.assets)
+    assert result.existing_positions_count == 1
+    assert result.existing_portfolio_value == Decimal("3000")
+    assessment = result.existing_holdings_assessments[0]
+    assert assessment.recommendation == "review_concentration"
+    assert assessment.estimated_weight == Decimal("100.00")
+    assert any(item.symbol == "BBBB3" for item in result.assets)
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("10000.00")
+
+
+def test_new_money_is_restricted_by_existing_sector_exposure():
+    from app.engines.smart_portfolio_engine import PortfolioHolding
+    holdings = [
+        PortfolioHolding(
+            symbol="EXIST3", quantity=Decimal("200"),
+            value=Decimal("6000"), valuation_basis="market",
+            asset_class="Ações", sector="Energia", issuer="EXIST3",
+        )
+    ]
+    result = SmartPortfolioEngine.build(
+        request(),
+        [candidate("NEW3", sector="Energia"), candidate("TECH3", sector="Tecnologia")],
+        holdings=holdings,
+    )
+    # Sector limit 30% of (R$ 6000 + R$ 10000), already has R$ 6000.
+    assert all(item.symbol != "NEW3" for item in result.assets)
+    assert any(item.symbol == "TECH3" for item in result.assets)
+
+
+def test_holdings_price_fallback_and_uncovered_asset_are_not_passed_off_as_verified():
+    from app.engines.smart_portfolio_engine import PortfolioHolding
+    result = SmartPortfolioEngine.build(
+        request(),
+        [candidate("NEW3", sector="Tecnologia")],
+        holdings=[
+            PortfolioHolding(
+                symbol="OLD3", quantity=Decimal("10"), value=Decimal("100"),
+                valuation_basis="invested", asset_class="Ações",
+            )
+        ],
+    )
+    assert result.holdings_warnings
+    assessment = result.existing_holdings_assessments[0]
+    assert assessment.recommendation == "not_analyzed"
+    assert assessment.confidence == "insufficient"
+    assert assessment.valuation_basis == "invested"
+
+
+def test_builder_uses_next_eligible_stock_when_best_ranked_is_overweight():
+    from app.engines.smart_portfolio_engine import PortfolioHolding
+    result = SmartPortfolioEngine.build(
+        request(max_assets=1),
+        [
+            candidate("AAAA3", score="95", sector="Energia"),
+            candidate("BBBB3", score="70", sector="Tecnologia"),
+        ],
+        holdings=[
+            PortfolioHolding(
+                symbol="AAAA3", quantity=Decimal("300"),
+                value=Decimal("3000"), valuation_basis="market",
+                asset_class="Ações", sector="Energia", issuer="AAAA3",
+            )
+        ],
+    )
+    assert [asset.symbol for asset in result.assets] == ["BBBB3"]
+    assert "AAAA3" in {asset.symbol for asset in result.exclusions}
+    assert result.assets[0].score == Decimal("70.00")
