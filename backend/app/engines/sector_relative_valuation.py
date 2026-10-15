@@ -274,7 +274,17 @@ def enrich_sector_valuations(assets: list[PeerAsset]) -> dict[str, AssetIntellig
         peers = _peer_reference(target, assets)
         at = _aware(snap.calculated_at)
         valuation = _valuation(snap, peers, at)
-        indicators, deltas = _comparisons(snap, peers, at) if len(peers) >= MIN_PEERS else (snap.indicators, {})
+        if len(peers) < MIN_PEERS:
+            result[snap.symbol] = snap.model_copy(update={
+                "valuation": valuation,
+                "valuation_status": valuation.status,
+                "warning_reasons": [
+                    *snap.warning_reasons,
+                    valuation.peer_comparison or "Sem pares setoriais confiáveis.",
+                ],
+            })
+            continue
+        indicators, deltas = _comparisons(snap, peers, at)
         updates = {"indicators": indicators, "valuation": valuation, "valuation_status": valuation.status}
         # analyze_assets() pode ser chamado por lotes antes da montagem
         # final. Guarde a nota fundamentada original e reaplique sempre a
