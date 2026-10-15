@@ -380,6 +380,22 @@ class RecommendationEngine:
             return RecommendationAction.REVIEW_DATA
         if snapshot.strategy_fit_score is not None and snapshot.strategy_fit_score < 40:
             return RecommendationAction.WAIT
+        if snapshot.asset_class == InvestmentClass.ETF:
+            # ETF não é empresa com LPA/VPA; em vez de inventar
+            # preço justo, exige spread, risco, custo de gestão e
+            # prêmio/desconto ao NAV verificáveis antes de cogitar aporte.
+            required = ("quality", "valuation", "risk", "liquidity")
+            if overall_score is None or any(
+                scores[key].value is None for key in required
+            ):
+                return RecommendationAction.REVIEW_DATA
+            if overall_score < Decimal("60"):
+                return RecommendationAction.WAIT
+            if overall_score >= Decimal("75") and confidence in {
+                ConfidenceLevel.HIGH, ConfidenceLevel.MEDIUM,
+            }:
+                return RecommendationAction.ANALYZE_TO_BUY
+            return RecommendationAction.HOLD
         if valuation.status == ValuationStatus.INSUFFICIENT_DATA:
             return RecommendationAction.REVIEW_DATA
         if overall_score is None:
