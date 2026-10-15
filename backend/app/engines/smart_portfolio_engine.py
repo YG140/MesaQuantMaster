@@ -27,6 +27,7 @@ from app.schemas.market_intelligence import (
     ConfidenceLevel,
     IndicatorStatus,
     InvestmentClass,
+    ValuationStatus,
 )
 from app.engines.portfolio_holdings_context import limit_new_contributions, assess_holdings
 from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
@@ -531,6 +532,30 @@ class SmartPortfolioEngine:
             if conservative and snapshot.asset_class == InvestmentClass.CRYPTO:
                 reasons.append(
                     "Classe incompatível com o perfil conservador nesta versão."
+                )
+            # O orçamento desta API é sempre em BRL. Converter o preço
+            # unitário USD diretamente em quantidade BRL geraria compras
+            # incorretas. Uma taxa cambial verificada ainda não faz parte
+            # da ordem executável, logo não recomendaremos essas operações.
+            if snapshot.asset_class in {
+                InvestmentClass.CRYPTO, InvestmentClass.INTERNATIONAL,
+                InvestmentClass.ETF, InvestmentClass.BDR,
+            } and snapshot.currency != "BRL":
+                reasons.append(
+                    "Sem conversão cambial verificada para o orçamento em BRL; "
+                    "a carteira não transforma preço estrangeiro em reais por suposição."
+                )
+            if snapshot.asset_class == InvestmentClass.CRYPTO:
+                reasons.append(
+                    "Risco e liquidez podem ser analisados, mas ainda não há "
+                    "modelo validado de preço/risco de custódia para recomendar aporte em criptomoedas."
+                )
+            if snapshot.asset_class in {
+                InvestmentClass.BDR, InvestmentClass.INTERNATIONAL,
+            } and snapshot.valuation_status == ValuationStatus.INSUFFICIENT_DATA:
+                reasons.append(
+                    "Sem faixa de avaliação verificável para recomendar "
+                    "novo aporte em ação internacional ou BDR."
                 )
             if snapshot.current_price is None:
                 reasons.append("Cotação atual indispensável não disponível.")
