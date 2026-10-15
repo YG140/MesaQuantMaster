@@ -22,6 +22,19 @@ export function AssetsPage() {
   const [query, setQuery] = useState("");
   const [asset, setAsset] = useState<MarketAsset | null>(null);
   const [comparison, setComparison] = useState<string[]>([]);
+  const [externalType, setExternalType] = useState<"crypto" | "international" | "global_etf">("crypto");
+  const [externalTicker, setExternalTicker] = useState("");
+  const [externalName, setExternalName] = useState("");
+  const [externalExchange, setExternalExchange] = useState("");
+  const [externalCurrency, setExternalCurrency] = useState("USD");
+  const normalizedExternalTicker = externalTicker.trim().toUpperCase();
+  const exchangeRequired = externalType !== "crypto"
+    || !["BTC", "ETH", "SOL", "ADA", "XRP"].includes(normalizedExternalTicker);
+  const externalFormValid = /^[A-Z0-9][A-Z0-9.\-]{0,18}$/.test(normalizedExternalTicker)
+    && externalName.trim().length > 0
+    && (!exchangeRequired || externalExchange.trim().length > 0)
+    && (externalType !== "crypto" || !externalExchange.trim()
+      || /^COINGECKO:[a-z0-9][a-z0-9-]{1,80}$/i.test(externalExchange.trim()));
   const assets = useQuery({ queryKey: ["assets"], queryFn: () => endpoints.assets(token!) });
 
   // Seleção via URL (?ativo=PETR4) -- alimentada pela busca global do
@@ -64,6 +77,32 @@ export function AssetsPage() {
     },
     onSuccess: async () => queryClient.invalidateQueries({ queryKey: ["assets"] }),
   });
+  const createExternal = useMutation({
+    mutationFn: () => endpoints.createAsset(token!, {
+      ticker: normalizedExternalTicker,
+      name: externalName.trim(),
+      asset_type: externalType,
+      sector: null,
+      country: externalType === "crypto" ? null : "US",
+      currency: externalType === "crypto" ? "USD" : externalCurrency,
+      exchange: externalExchange.trim().toUpperCase() || null,
+    }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["assets"] });
+      setAsset({
+        ticker: normalizedExternalTicker,
+        name: externalName.trim(),
+        asset_type: externalType,
+        sector: null,
+        country: null,
+        currency: externalCurrency,
+        exchange: externalExchange.trim().toUpperCase() || null,
+        current_price: null,
+        last_updated: null,
+        provider: "Cadastro do usuário",
+      });
+    },
+  });
   const intelligence = useQuery({ queryKey: ["asset-intelligence", asset?.ticker], queryFn: () => endpoints.assetIntelligence(token!, asset!.ticker), enabled: Boolean(asset) });
   const analysis = useMutation({ mutationFn: () => endpoints.analyzeAssets(token!, comparison) });
   const selectAsset = (next: MarketAsset) => {
@@ -96,6 +135,35 @@ export function AssetsPage() {
         <SearchAutocomplete token={token!} query={query} onQueryChange={setQuery} onSelect={selectAsset} />
         {asset ? <div className="asset-card"><div><span>Código</span><strong>{asset.ticker}</strong></div><div><span>Nome</span><strong>{display(asset.name)}</strong></div><div><span>Preço atual demonstrativo</span><strong>{formatMoney(asset.current_price)}</strong></div></div> : null}
         <Button type="button" disabled={!asset || createAsset.isPending} onClick={() => createAsset.mutate()}>Cadastrar ativo</Button>
+      </Card>
+      <Card title="Cadastrar criptomoeda ou ativo internacional" className="market-assets-card">
+        <p className="helper">Use os identificadores exatos do provedor. O cadastro não confirma cotação até a API externa responder. As chaves ficam somente no servidor.</p>
+        <form className="external-asset-form" onSubmit={(event) => { event.preventDefault(); if (externalFormValid) createExternal.mutate(); }}>
+          <label>Mercado
+            <select value={externalType} onChange={(event) => { setExternalType(event.target.value as "crypto" | "international" | "global_etf"); setExternalExchange(""); }} aria-label="Mercado externo">
+              <option value="crypto">Criptomoeda</option>
+              <option value="international">Ação internacional</option>
+              <option value="global_etf">ETF internacional</option>
+            </select>
+          </label>
+          <label>Ticker
+            <input value={externalTicker} onChange={(event) => setExternalTicker(event.target.value.toUpperCase())} placeholder={externalType === "crypto" ? "BTC" : externalType === "global_etf" ? "QQQ" : "MSFT"} maxLength={19} required />
+          </label>
+          <label>Nome
+            <input value={externalName} onChange={(event) => setExternalName(event.target.value)} placeholder="Nome completo do ativo" maxLength={180} required />
+          </label>
+          <label>{externalType === "crypto" ? "CoinGecko ID (opcional para BTC, ETH, SOL, ADA e XRP)" : "Bolsa (NASDAQ, NYSE etc.)"}
+            <input value={externalExchange} onChange={(event) => setExternalExchange(event.target.value)} placeholder={externalType === "crypto" ? "COINGECKO:bitcoin" : "NASDAQ"} maxLength={50} required={exchangeRequired} />
+          </label>
+          {externalType !== "crypto" ? <label>Moeda da cotação
+            <select value={externalCurrency} onChange={(event) => setExternalCurrency(event.target.value)}>
+              {["USD", "EUR", "GBP", "CAD", "JPY", "CHF", "AUD"].map((value) => <option value={value} key={value}>{value}</option>)}
+            </select>
+          </label> : null}
+          <Button type="submit" disabled={!externalFormValid || createExternal.isPending}>Cadastrar e analisar</Button>
+        </form>
+        {createExternal.isSuccess ? <p role="status" className="helper">Cadastro salvo. A cotação só estará disponível se o provedor externo estiver configurado e conseguir validar o ativo.</p> : null}
+        {createExternal.isError ? <ErrorState message="Não foi possível cadastrar este ativo. Verifique o ticker, a identidade e a existência de cadastro duplicado." /> : null}
       </Card>
       <Card title="Ativos cadastrados" className="market-assets-card">
         {assets.data?.length ? <ResponsiveTable><table><thead><tr><th>Ativo</th><th>Nome</th><th>Tipo</th><th>Bolsa</th><th>Moeda</th></tr></thead><tbody>{assets.data.map((item) => <tr key={item.id}><td>{item.ticker}</td><td>{item.name}</td><td>{item.asset_type}</td><td>{display(item.exchange)}</td><td>{item.currency}</td></tr>)}</tbody></table></ResponsiveTable> : <p>Nenhum ativo cadastrado.</p>}
