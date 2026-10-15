@@ -327,6 +327,9 @@ class AssetIntelligenceSnapshot(BaseModel):
     market_updated_at: datetime | None = None
     indicators: list[NormalizedIndicator]
     quality_score: Decimal | None = None
+    # Nota original, antes da comparação setorial, para evitar dupla contagem
+    # quando o universo é analisado em lotes e enriquecido novamente.
+    sector_baseline_scores: dict[str, Decimal | None] = Field(default_factory=dict)
     valuation_score: Decimal | None = None
     income_score: Decimal | None = None
     growth_score: Decimal | None = None
