@@ -88,7 +88,10 @@ class ScoringEngine:
         coverage = (
             Decimal(len(available)) / Decimal(len(applicable)) * Decimal("100")
         ).quantize(Decimal("0.01"))
-        if coverage < MINIMUM_SCORE_COVERAGE:
+        if coverage < MINIMUM_SCORE_COVERAGE and asset_class not in {
+            InvestmentClass.ETF, InvestmentClass.BDR,
+            InvestmentClass.INTERNATIONAL, InvestmentClass.CRYPTO,
+        }:
             return ScoreBreakdown(
                 available_indicators=len(available),
                 missing_indicators=len(missing),
