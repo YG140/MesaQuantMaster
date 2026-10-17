@@ -17,6 +17,8 @@ from app.repositories.operation_repository import OperationRepository
 from app.repositories.manual_indicator_repository import ManualIndicatorRepository
 from app.repositories.indicator_snapshot_repository import IndicatorSnapshotRepository
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
+from app.repositories.portfolio_recommendation_history_repository import PortfolioRecommendationHistoryRepository
+from app.schemas.portfolio_recommendation_history import RecommendationHistorySummary, RecommendationHistoryDetail
 from app.repositories.cvm_financial_repository import CvmFinancialRepository
 from app.repositories.cvm_fii_repository import CvmFiiRepository
 from app.schemas.intelligence import (
@@ -222,7 +224,74 @@ def build_portfolio(
     current_user: User = Depends(get_current_active_user),
 ):
     service = get_service(db)
-    return service.build_portfolio(current_user.id, data)
+    response = service.build_portfolio(current_user.id, data)
+    # Append exactly one user-scoped decision for every successful explicit
+    # build, even with an empty selection. If storage fails, do not claim
+    # that the recommendation was saved.
+    entry = PortfolioRecommendationHistoryRepository(db).save(
+        current_user.id, data, response
+    )
+    return response.model_copy(update={"history_id": entry.id})
+
+
+@router.get(
+    "/recommendation-history",
+    response_model=list[RecommendationHistorySummary],
+)
+def list_recommendation_history(
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    if not 1 <= limit <= 100 or offset < 0:
+        raise HTTPException(status_code=422, detail="Paginação inválida.")
+    repo = PortfolioRecommendationHistoryRepository(db)
+    return [
+        RecommendationHistorySummary(
+            id=item.id,
+            generated_at=_aware_datetime(item.generated_at),
+            created_at=_aware_datetime(item.created_at),
+            engine_version=item.engine_version,
+            status=item.status,
+            selected_count=item.selected_count,
+            considered_count=item.considered_count,
+            content_sha256=item.content_sha256,
+        )
+        for item in repo.list_for_user(current_user.id, limit=limit, offset=offset)
+    ]
+
+
+@router.get(
+    "/recommendation-history/{run_id}",
+    response_model=RecommendationHistoryDetail,
+)
+def get_recommendation_history(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    repo = PortfolioRecommendationHistoryRepository(db)
+    item = repo.get_for_user(current_user.id, run_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Registro não encontrado.")
+    try:
+        evidence = repo.verify(item)
+    except ValueError:
+        raise HTTPException(
+            status_code=409, detail="Registro histórico com integridade comprometida."
+        )
+    return RecommendationHistoryDetail(
+        id=item.id,
+        generated_at=_aware_datetime(item.generated_at),
+        created_at=_aware_datetime(item.created_at),
+        engine_version=item.engine_version,
+        status=item.status,
+        selected_count=item.selected_count,
+        considered_count=item.considered_count,
+        content_sha256=item.content_sha256,
+        record=evidence,
+    )
 
 
 @router.post("/assets/analyze", response_model=BatchAssetAnalysisResponse)
