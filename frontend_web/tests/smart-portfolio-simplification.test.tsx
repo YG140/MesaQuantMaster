@@ -14,7 +14,7 @@ async function openBuilder() {
   renderWithProviders(<AppRouter />, "/planejar?secao=montar-carteira");
   await user.click(await screen.findByRole("tab", { name: "Montar carteira" }, { timeout: 10_000 }));
   await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" });
-  await waitFor(() => expect(screen.getByLabelText("Patrimônio que quero alcançar")).toHaveValue("R$ 1.000.000,00"));
+  await waitFor(() => expect(screen.getByLabelText("Patrimônio que quero alcançar")).toHaveValue("1.000.000,00"));
   return user;
 }
 
