@@ -271,13 +271,27 @@ class SmartPortfolioEngine:
                 and Decimal("0") < pair[0].snapshot.current_price <= request.available_amount
             ]
             ranked = []
-            highest_price = Decimal("0")
             for pair in affordable:
-                price = pair[0].snapshot.current_price
-                proposed_high = max(highest_price, price)
-                if proposed_high * (len(ranked) + 1) <= request.available_amount:
-                    ranked.append(pair)
-                    highest_price = proposed_high
+                proposed = [*ranked, pair]
+                proposed_weights = cls.allocate(request, proposed, strategy)
+                # Só amplia a cesta se TODOS os ativos continuarem com peso
+                # suficiente para ao menos a menor quantidade negociável.
+                if all(
+                    request.available_amount
+                    * proposed_weights.get(item.snapshot.symbol, Decimal("0"))
+                    / HUNDRED
+                    >= item.snapshot.current_price
+                    * (
+                        Decimal("1")
+                        if item.snapshot.asset_class in {
+                            InvestmentClass.STOCK, InvestmentClass.FII,
+                            InvestmentClass.ETF, InvestmentClass.BDR,
+                        }
+                        else Decimal("0.01")
+                    )
+                    for item, _ in proposed
+                ):
+                    ranked = proposed
             replacement_pool = affordable
         else:
             ranked = scored[: request.max_assets]
