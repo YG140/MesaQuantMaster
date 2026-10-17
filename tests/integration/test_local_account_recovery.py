@@ -58,7 +58,7 @@ def test_full_user_and_portfolio_recovery_without_other_users():
     assert (parsed.host or "") in ("127.0.0.1", "localhost")
     assert parsed.database == "mesa_quant_ci"
     target_db = "mesa_quant_recovery_ci"
-    target_url = str(parsed.set(database=target_db))
+    target_url = parsed.set(database=target_db).render_as_string(hide_password=False)
 
     engine = create_engine(src_url)
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
