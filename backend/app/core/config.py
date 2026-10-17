@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     MAX_REQUEST_BODY_BYTES: int = 2097152
     SECURITY_HSTS_ENABLED: bool = False
     SECURITY_HSTS_MAX_AGE_SECONDS: int = 31536000
+    AUTH_PUBLIC_REGISTRATION_ENABLED: bool = True
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USERNAME: str = ""
