@@ -21,6 +21,8 @@ from app.schemas.intelligence import (
 from app.engines.financial_planning_engine import (
     FinancialDiagnosisEngine,
     FinancialProjectionEngine,
+    FinancialProfileContext,
+    apply_policy_to_planning_request,
 )
 from app.schemas.market_intelligence import (
     AssetIntelligenceSnapshot,
@@ -208,7 +210,7 @@ class PortfolioStrategy:
             # "alta"); needs_liquidity no scoring é binário -- "moderada"
             # e "alta" mapeiam para necessidade real de liquidez, só
             # "baixa" mapeia para False (ver auditoria, seção 16).
-            needs_liquidity=policy.liquidity_need in {"moderada", "alta"},
+            needs_liquidity=policy.liquidity_need in {"moderada", "média", "alta"},
             # Override operacional só pode ser MAIS restritivo que a
             # política, nunca mais permissivo (seção 11) -- min(), nunca
             # max().
@@ -246,6 +248,7 @@ class SmartPortfolioEngine:
         batch_size: int = 0,
         batch_count: int = 0,
         holdings: list[PortfolioHolding] | None = None,
+        financial_profile: FinancialProfileContext | None = None,
     ) -> BuildPortfolioResponse:
         now = datetime.now(timezone.utc)
         strategy = (
@@ -253,7 +256,8 @@ class SmartPortfolioEngine:
             if policy is not None
             else PortfolioStrategy.from_request(request)
         )
-        diagnosis = FinancialDiagnosisEngine.diagnose(request)
+        request = apply_policy_to_planning_request(request, policy)
+        diagnosis = FinancialDiagnosisEngine.diagnose(request, financial_profile)
         projections = FinancialProjectionEngine.project(request)
         eligible, exclusions = cls.eligibility(strategy, candidates)
         scored = cls.score(strategy, eligible)

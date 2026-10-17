@@ -52,6 +52,12 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem("mesa_quant_session", "planejar-visual-token"));
   await page.route("**/users/me", route => route.fulfill({ json: { id: "user-1", name: "Yury Gabriel", email: "yury@example.com", is_active: true, is_superuser: false, created_at: "2026-07-15T00:00:00Z" } }));
   await page.route("**/investor-profile/status", route => route.fulfill({ json: { status: "complete", version: 1, last_reviewed_at: null, confirmed_at: "2026-08-30T12:00:00Z", updated_at: "2026-08-30T12:00:00Z" } }));
+  await page.route("**/investor-profile", route => route.fulfill({ json: {
+    id: "investor-profile-1", user_id: "user-1", status: "complete", version: 1,
+    primary_objective: "crescimento_patrimonial", initial_contribution: "0",
+    monthly_contribution: "900", confirmed_at: "2026-08-30T12:00:00Z",
+    dimensions: { overall_classification: "Moderado" },
+  } }));
   await page.route("**/intelligence/policy", route => route.fulfill({ json: policy }));
   await page.route("**/intelligence/build-portfolio", async route => {
     expect(Number(route.request().postDataJSON().available_amount)).toBe(10000);
@@ -70,6 +76,7 @@ for (const viewport of [
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto("/planejar?secao=montar-carteira", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByRole("heading", { name: "Monte uma carteira para o seu momento" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Configurações avançadas")).toHaveCount(0);
     await page.getByRole("button", { name: "Montar minha carteira" }).click();
     const result = page.getByRole("heading", { name: "Sua carteira recomendada" });
     await expect(result).toBeVisible();

@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.engines.indicator_catalog import MACRO_INDICATOR_REGISTRY
 from app.models.user import User
 from app.repositories.asset_repository import AssetRepository
+from app.repositories.investor_profile_repository import InvestorProfileRepository
 from app.repositories.brokerage_repository import BrokerageRepository
 from app.repositories.operation_repository import OperationRepository
 from app.repositories.manual_indicator_repository import ManualIndicatorRepository
@@ -73,6 +74,7 @@ def get_service(db: Session) -> PortfolioIntelligenceService:
         policy_repository=policy_repository,
         asset_repository=asset_repository,
         market_intelligence_service=market_intelligence,
+        investor_profile_repository=InvestorProfileRepository(db),
     )
 
 

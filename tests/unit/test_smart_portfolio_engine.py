@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.engines.financial_planning_engine import FinancialProfileContext
 from app.engines.smart_portfolio_engine import (
     LEGACY_SOURCE,
     POLICY_SOURCE,
@@ -1623,3 +1624,31 @@ def test_builder_uses_next_eligible_stock_when_best_ranked_is_overweight():
     assert [asset.symbol for asset in result.assets] == ["BBBB3"]
     assert "AAAA3" in {asset.symbol for asset in result.exclusions}
     assert result.assets[0].score == Decimal("70.00")
+
+
+def test_confirmed_policy_drives_projection_and_risk_even_if_request_disagrees():
+    actual_policy = policy(
+        [policy_allocation("Ações", 50), policy_allocation("Tesouro Direto", 50)],
+        monthly_contribution=Decimal("300"),
+        investment_horizon="1_a_3_anos",
+        maximum_weight_per_asset=Decimal("10"),
+        emergency_reserve_months=6,
+    )
+    result = SmartPortfolioEngine.build(
+        request(
+            monthly_contribution=Decimal("99999"),
+            horizon="longo prazo",
+            max_percentage_per_asset=Decimal("90"),
+            needs_liquidity=False,
+        ),
+        [candidate("POL3")],
+        policy=actual_policy,
+        financial_profile=FinancialProfileContext(
+            emergency_reserve_months=2,
+            has_relevant_debt=True,
+        ),
+    )
+    assert result.diagnosis.phase == "protection"
+    # Três anos, R$300/mês, nunca os R$99999 fornecidos pela tela.
+    assert result.projections[0].total_contributed == Decimal("20800.00")
+    assert all(asset.recommended_percentage <= Decimal("10") for asset in result.assets)

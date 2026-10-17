@@ -9,10 +9,13 @@ from app.engines.intelligence_engine import (
     PortfolioIntelligenceEngine,
 )
 from app.engines.smart_portfolio_engine import PortfolioCandidate, PortfolioHolding, SmartPortfolioEngine
+from app.engines.financial_planning_engine import FinancialProfileContext
 from app.engines.sector_relative_valuation import PeerAsset, enrich_sector_valuations
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
 from app.repositories.asset_repository import AssetRepository
+from app.repositories.investor_profile_repository import InvestorProfileRepository
+from app.schemas.investor_profile import OnboardingStatus
 from app.schemas.intelligence import (
     BuildPortfolioRequest,
     BuildPortfolioResponse,
@@ -45,11 +48,13 @@ class PortfolioIntelligenceService:
         policy_repository: PortfolioPolicyRepository,
         asset_repository: AssetRepository | None = None,
         market_intelligence_service: MarketIntelligenceService | None = None,
+        investor_profile_repository: InvestorProfileRepository | None = None,
     ):
         self.portfolio_service = portfolio_service
         self.policy_repository = policy_repository
         self.asset_repository = asset_repository
         self.market_intelligence_service = market_intelligence_service
+        self.investor_profile_repository = investor_profile_repository
 
     def get_policy(self, user_id) -> PortfolioPolicyRead | None:
         policy = self.policy_repository.get_by_user(user_id)
@@ -127,8 +132,21 @@ class PortfolioIntelligenceService:
         # defensivo já usado para asset_repository/
         # market_intelligence_service abaixo).
         policy = self.get_policy(user_id) if self.policy_repository is not None else None
+        profile = (
+            self.investor_profile_repository.get_by_user(user_id)
+            if policy is not None and self.investor_profile_repository is not None
+            else None
+        )
+        financial_profile = (
+            FinancialProfileContext(
+                emergency_reserve_months=profile.emergency_reserve_months,
+                has_relevant_debt=profile.has_relevant_debt,
+            )
+            if profile is not None and profile.status == OnboardingStatus.COMPLETE.value
+            else None
+        )
         if self.asset_repository is None or self.market_intelligence_service is None:
-            return SmartPortfolioEngine.build(data, [], policy=policy)
+            return SmartPortfolioEngine.build(data, [], policy=policy, financial_profile=financial_profile)
 
         # Apenas posições persistidas pelo usuário autenticado. O frontend não
         # pode forjar holdings para alterar limites e pareceres.
@@ -172,7 +190,7 @@ class PortfolioIntelligenceService:
         universe_considered = len(considered_assets)
 
         if not considered_assets:
-            legacy = PortfolioBuilderEngine.build(data, policy)
+            legacy = PortfolioBuilderEngine.build(data, policy, financial_profile=financial_profile)
             return legacy.model_copy(
                 update={
                     "unallocated_amount": data.available_amount.quantize(
@@ -298,6 +316,7 @@ class PortfolioIntelligenceService:
             data,
             candidates,
             policy=policy,
+            financial_profile=financial_profile,
             holdings=holdings,
             provider_errors=[item.message for item in errors],
             universe_total=universe_total,

@@ -497,9 +497,9 @@ export type BuildPortfolioRequest = {
   monthly_contribution: string;
   needs_income: boolean;
   needs_liquidity: boolean;
-  volatility_tolerance: string;
+  volatility_tolerance?: string;
   max_percentage_per_asset: string;
-  max_percentage_per_class: string;
+  max_percentage_per_class?: string;
   max_percentage_per_sector: string;
   allowed_classes: string[];
   prohibited_classes: string[];
