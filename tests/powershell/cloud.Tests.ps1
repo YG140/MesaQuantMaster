@@ -16,7 +16,8 @@ Describe "Modo sincronizado PC e APK" {
             "https://usuario:senha@mesa-quant-master-web.onrender.com/",
             "https://mesa-quant-master-web.onrender.com/#token"
         ) | ForEach-Object {
-            { Assert-PublicCloudWebUri -Url $_ } | Should Throw
+            $invalidUrl = $_
+            { Assert-PublicCloudWebUri -Url $invalidUrl } | Should Throw
         }
     }
 
