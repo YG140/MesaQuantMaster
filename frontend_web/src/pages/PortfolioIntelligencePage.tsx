@@ -1,6 +1,6 @@
 import { ResponsiveTable } from "../components/ui/ResponsiveTable";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useState, type ReactNode, type SetStateAction } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { EmptyState } from "../components/feedback/EmptyState";
 import { ErrorState } from "../components/feedback/ErrorState";
@@ -223,7 +223,7 @@ function FutureFinancial() {
   const data = queryClient.getQueryData<BuildPortfolioResponse>(["portfolio-projection", token]);
 
   if (!data) {
-    return <div className="card"><p>Gere uma carteira com suas premissas para visualizar projeções, cenários, capacidade mensal, reserva e liberdade financeira.</p><Link className="button button-secondary" to="/planejar?secao=montar-carteira">Informar premissas e gerar projeção</Link></div>;
+    return <div className="card"><p>Monte uma carteira usando o Perfil do Investidor para visualizar projeções e cenários. Valores financeiros que não estão no perfil permanecem não informados.</p><Link className="button button-secondary" to="/planejar?secao=montar-carteira">Montar carteira e gerar projeção</Link></div>;
   }
 
   return <div className="page-stack">
