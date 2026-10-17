@@ -147,6 +147,19 @@ def test_full_user_and_portfolio_recovery_without_other_users():
             dict(id=uuid4(),user_id=one,asset_id=asset,action="test",
                  operation_count=1,before_json="{}",after_json="{}",created_at=now)
         ])
+        from hashlib import sha256
+        evidence = "{}"
+        digest = sha256(evidence.encode("utf-8")).hexdigest()
+        conn.execute(table(conn, "portfolio_recommendation_runs").insert(), [
+            dict(id=uuid4(),user_id=one,generated_at=now,created_at=now,
+                 engine_version="smart_portfolio_engine-v1",policy_id=policy,
+                 status="partial",selected_count=1,considered_count=2,
+                 content_sha256=digest,record_json=evidence),
+            dict(id=uuid4(),user_id=another,generated_at=now,created_at=now,
+                 engine_version="smart_portfolio_engine-v1",policy_id=None,
+                 status="unavailable",selected_count=0,considered_count=1,
+                 content_sha256=digest,record_json=evidence),
+        ])
     source.dispose()
 
     with patch("scripts.migrate_local_account_to_neon.assert_endpoints"):
@@ -156,6 +169,7 @@ def test_full_user_and_portfolio_recovery_without_other_users():
         assert preview["operations"] == 1
         assert preview["portfolio_policies"] == 1
         assert preview["portfolio_policy_allocations"] == 1
+        assert preview["portfolio_recommendation_runs"] == 1
         target = create_engine(target_url)
         with target.connect() as conn:
             assert conn.execute(select(text("COUNT(*)")).select_from(table(conn,"users"))).scalar_one() == 0
@@ -172,6 +186,11 @@ def test_full_user_and_portfolio_recovery_without_other_users():
             assert conn.execute(select(table(conn,"operations").c.quantity)).scalar_one() == Decimal("4")
             assets = conn.execute(select(table(conn,"assets").c.ticker)).scalars().all()
             assert assets == ["TEST11"]
+            history = conn.execute(select(table(conn,"portfolio_recommendation_runs"))).mappings().all()
+            assert len(history) == 1
+            assert history[0]["user_id"] == one
+            assert history[0]["record_json"] == "{}"
+            assert history[0]["selected_count"] == 1
             assert set(inspect(conn).get_table_names()) >= {"users","operations","assets"}
         target.dispose()
         with pytest.raises(MigrationBlocked,match="já possui registros"):
