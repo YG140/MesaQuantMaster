@@ -1,20 +1,17 @@
 import { ResponsiveTable } from "../components/ui/ResponsiveTable";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { useEffect, useState, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { EmptyState } from "../components/feedback/EmptyState";
 import { ErrorState } from "../components/feedback/ErrorState";
 import { LoadingState } from "../components/feedback/LoadingState";
 import { CurrencyInput } from "../components/forms/CurrencyInput";
-import { DecimalInput } from "../components/forms/DecimalInput";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { Input } from "../components/ui/Input";
 import { MetricCard } from "../components/ui/MetricCard";
 import { DataStatusBadge } from "../components/ui/DataBadges";
 import { ScoreGauge } from "../components/ui/ScoreGauge";
 import { SectionHeader } from "../components/ui/SectionHeader";
-import { Select } from "../components/ui/Select";
 import { useAuth } from "../features/auth/useAuth";
 import {
   continueOrReviewInvestorProfile,
@@ -29,9 +26,6 @@ import type {
   AssetIntelligenceSnapshot,
   BuildPortfolioResponse,
   PortfolioIntelligence,
-  PortfolioPolicy,
-  PortfolioPolicyAllocation,
-  PortfolioPolicyPayload,
 } from "../types/api";
 import {
   formatDateTimeBR,
@@ -58,38 +52,6 @@ function formatPriceWithCurrency(value: string | number | null, currency: string
 
 const areas = ["Diagnóstico", "Montar carteira", "Futuro financeiro"] as const;
 type IntelligenceArea = (typeof areas)[number];
-const classes = [
-  "Caixa",
-  "Reserva de emergência",
-  "Tesouro Direto",
-  "Renda fixa bancária",
-  "Crédito privado",
-  "Fundos de investimento",
-  "Ações",
-  "FIIs",
-  "ETFs",
-  "BDRs",
-  "Ativos internacionais",
-  "Criptomoedas",
-  "Outros",
-];
-
-type PolicyDraft = {
-  name: string;
-  objective: string;
-  risk_profile: string;
-  investment_horizon: string;
-  monthly_contribution: string;
-  liquidity_need: string;
-  income_need: boolean;
-  emergency_reserve_months: string;
-  maximum_weight_per_asset: string;
-  maximum_weight_per_sector: string;
-  maximum_weight_per_issuer: string;
-  rebalance_tolerance: string;
-  allocations: Array<Omit<PortfolioPolicyAllocation, "id">>;
-};
-
 export function PortfolioIntelligencePage() {
   const { token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -243,97 +205,45 @@ function FutureFinancial() {
 
 function Strategy() {
   const { token } = useAuth();
-  const queryClient = useQueryClient();
   const policy = useQuery({
     queryKey: ["portfolio-policy", token],
     queryFn: () => endpoints.portfolioPolicy(token!),
     enabled: Boolean(token),
   });
-  const [draft, setDraft] = useState<PolicyDraft>(emptyDraft());
-  useEffect(() => {
-    setDraft(policy.data ? draftFromPolicy(policy.data) : emptyDraft());
-  }, [policy.data]);
-
-  const validation = validateDraft(draft);
-  const save = useMutation({
-    mutationFn: () => endpoints.savePortfolioPolicy(token!, payloadFromDraft(draft)),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["portfolio-policy", token] }),
-        queryClient.invalidateQueries({ queryKey: ["portfolio-intelligence", token] }),
-      ]);
-    },
-  });
-
   if (policy.isLoading) return <LoadingState label="Carregando estratégia..." />;
   if (policy.error) return <ErrorState message="Não foi possível carregar sua estratégia." />;
+  if (!policy.data) return <Card title="Minha estratégia">
+    <p>Conclua e confirme seu Perfil do Investidor para gerar automaticamente a estratégia.</p>
+  </Card>;
 
-  return (
-    <div className="page-stack">
-      {!policy.data ? (
-        <div className="warning-box">Configure sua estratégia para receber análises e sugestões personalizadas.</div>
-      ) : null}
-      {save.isSuccess ? <div className="success-box">Estratégia salva com sucesso.</div> : null}
-      {save.error ? <ErrorState message={save.error instanceof Error ? save.error.message : "Não foi possível salvar a estratégia."} /> : null}
-      <Card title="Minha estratégia">
-        <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); if (validation.valid) save.mutate(); }}>
-          <Input label="Nome" value={draft.name} onChange={(event) => updateDraft(setDraft, { name: event.target.value })} />
-          <CurrencyInput label="Aporte mensal" value={draft.monthly_contribution} onChange={(event) => updateDraft(setDraft, { monthly_contribution: event.target.value })} />
-          <Select label="Objetivo" value={draft.objective} onChange={(event) => updateDraft(setDraft, { objective: event.target.value })}>
-            <option value="reserva">Reserva</option>
-            <option value="renda">Renda</option>
-            <option value="crescimento patrimonial">Crescimento patrimonial</option>
-            <option value="preservação de capital">Preservação de capital</option>
-          </Select>
-          <Select label="Perfil de risco" value={draft.risk_profile} onChange={(event) => updateDraft(setDraft, { risk_profile: event.target.value })}>
-            <option value="conservador">Conservador</option>
-            <option value="moderado">Moderado</option>
-            <option value="arrojado">Arrojado</option>
-          </Select>
-          <Select label="Prazo" value={draft.investment_horizon} onChange={(event) => updateDraft(setDraft, { investment_horizon: event.target.value })}>
-            <option value="curto prazo">Curto prazo</option>
-            <option value="médio prazo">Médio prazo</option>
-            <option value="longo prazo">Longo prazo</option>
-          </Select>
-          <Select label="Necessidade de liquidez" value={draft.liquidity_need} onChange={(event) => updateDraft(setDraft, { liquidity_need: event.target.value })}>
-            <option value="baixa">Baixa</option>
-            <option value="média">Média</option>
-            <option value="alta">Alta</option>
-          </Select>
-          <Input label="Meses de reserva" inputMode="numeric" value={draft.emergency_reserve_months} onChange={(event) => updateDraft(setDraft, { emergency_reserve_months: event.target.value.replace(/\D/g, "") })} />
-          <DecimalInput label="Máximo por ativo (%)" value={draft.maximum_weight_per_asset} onChange={(event) => updateDraft(setDraft, { maximum_weight_per_asset: event.target.value })} />
-          <DecimalInput label="Máximo por setor (%)" value={draft.maximum_weight_per_sector} onChange={(event) => updateDraft(setDraft, { maximum_weight_per_sector: event.target.value })} />
-          <DecimalInput label="Máximo por emissor (%)" value={draft.maximum_weight_per_issuer} onChange={(event) => updateDraft(setDraft, { maximum_weight_per_issuer: event.target.value })} />
-          <DecimalInput label="Tolerância de rebalanceamento (%)" value={draft.rebalance_tolerance} onChange={(event) => updateDraft(setDraft, { rebalance_tolerance: event.target.value })} />
-          <label className="field"><span>Necessidade de renda</span><input type="checkbox" checked={draft.income_need} onChange={(event) => updateDraft(setDraft, { income_need: event.target.checked })} /></label>
-          <div className="span-2">
-            <strong>Total da alocação: {formatPercent(validation.total)}</strong>
-            {validation.errors.map((error) => <p key={error} className="helper error-text">{error}</p>)}
-          </div>
-          <ResponsiveTable className="table-wrap span-2">
-            <table>
-              <thead><tr><th>Classe</th><th>Habilitada</th><th>Alvo</th><th>Mínimo</th><th>Máximo</th></tr></thead>
-              <tbody>
-                {draft.allocations.map((item) => (
-                  <tr key={item.asset_class}>
-                    <td>{item.asset_class}</td>
-                    <td><input type="checkbox" checked={item.enabled} onChange={(event) => updateAllocation(setDraft, item.asset_class, { enabled: event.target.checked })} /></td>
-                    <td><DecimalInput label={`Alvo ${item.asset_class}`} value={String(item.target_percentage)} onChange={(event) => updateAllocation(setDraft, item.asset_class, { target_percentage: event.target.value })} /></td>
-                    <td><DecimalInput label={`Mínimo ${item.asset_class}`} value={String(item.minimum_percentage)} onChange={(event) => updateAllocation(setDraft, item.asset_class, { minimum_percentage: event.target.value })} /></td>
-                    <td><DecimalInput label={`Máximo ${item.asset_class}`} value={String(item.maximum_percentage)} onChange={(event) => updateAllocation(setDraft, item.asset_class, { maximum_percentage: event.target.value })} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ResponsiveTable>
-          <div className="button-row span-2">
-            <Button type="submit" disabled={!validation.valid || save.isPending}>{save.isPending ? "Salvando..." : "Salvar estratégia"}</Button>
-            <Button type="button" variant="secondary" onClick={() => setDraft(policy.data ? draftFromPolicy(policy.data) : emptyDraft())}>Restaurar valores salvos</Button>
-          </div>
-        </form>
-      </Card>
-    </div>
-  );
+  const applied = policy.data;
+  const allocations = applied.allocations.filter((item) => item.enabled);
+  const total = allocations.reduce((sum, item) => sum + (parseBrazilianNumber(item.target_percentage) ?? 0), 0);
+  return <Card title="Minha estratégia">
+    <p className="helper">Configuração gerada pelo Perfil do Investidor. Para modificar objetivos, restrições ou limites, revise seu perfil no cartão acima.</p>
+    <dl className="settings-facts">
+      <div><dt>Objetivo</dt><dd>{applied.objective}</dd></div>
+      <div><dt>Classificação de risco</dt><dd>{applied.risk_profile}</dd></div>
+      <div><dt>Horizonte</dt><dd>{applied.investment_horizon}</dd></div>
+      <div><dt>Aporte mensal</dt><dd>{formatMoney(applied.monthly_contribution)}</dd></div>
+      <div><dt>Necessidade de liquidez</dt><dd>{applied.liquidity_need}</dd></div>
+      <div><dt>Limite por ativo</dt><dd>{formatPercent(applied.maximum_weight_per_asset)}</dd></div>
+      <div><dt>Limite por setor</dt><dd>{formatPercent(applied.maximum_weight_per_sector)}</dd></div>
+      <div><dt>Limite por emissor</dt><dd>{formatPercent(applied.maximum_weight_per_issuer)}</dd></div>
+    </dl>
+    <strong>Total da alocação: {formatPercent(total)}</strong>
+    <ResponsiveTable className="table-wrap">
+      <table>
+        <thead><tr><th>Classe</th><th>Alvo</th><th>Mínimo</th><th>Máximo</th></tr></thead>
+        <tbody>{allocations.map((item) => <tr key={item.asset_class}>
+          <td>{item.asset_class}</td>
+          <td>{formatPercent(item.target_percentage)}</td>
+          <td>{formatPercent(item.minimum_percentage)}</td>
+          <td>{formatPercent(item.maximum_percentage)}</td>
+        </tr>)}</tbody>
+      </table>
+    </ResponsiveTable>
+  </Card>;
 }
 
 function Overview({ data }: { data: PortfolioIntelligence }) {
@@ -866,114 +776,6 @@ function TextList({ items, fallback = "Dados insuficientes para calcular." }: { 
   const visible = items.filter(Boolean);
   if (!visible.length) return <p>{fallback}</p>;
   return <ul>{visible.map((item) => <li key={item}>{item}</li>)}</ul>;
-}
-
-function emptyDraft(): PolicyDraft {
-  return {
-    name: "Minha estratégia",
-    objective: "crescimento patrimonial",
-    risk_profile: "moderado",
-    investment_horizon: "médio prazo",
-    monthly_contribution: "0",
-    liquidity_need: "média",
-    income_need: false,
-    emergency_reserve_months: "6",
-    maximum_weight_per_asset: "20",
-    maximum_weight_per_sector: "30",
-    maximum_weight_per_issuer: "30",
-    rebalance_tolerance: "5",
-    allocations: classes.map((assetClass) => ({
-      asset_class: assetClass,
-      target_percentage: "0",
-      minimum_percentage: "0",
-      maximum_percentage: "0",
-      enabled: false,
-    })),
-  };
-}
-
-function draftFromPolicy(policy: PortfolioPolicy): PolicyDraft {
-  const byClass = new Map(policy.allocations.map((item) => [item.asset_class, item]));
-  return {
-    name: policy.name,
-    objective: policy.objective,
-    risk_profile: policy.risk_profile,
-    investment_horizon: policy.investment_horizon,
-    monthly_contribution: String(policy.monthly_contribution),
-    liquidity_need: policy.liquidity_need,
-    income_need: policy.income_need,
-    emergency_reserve_months: String(policy.emergency_reserve_months),
-    maximum_weight_per_asset: String(policy.maximum_weight_per_asset),
-    maximum_weight_per_sector: String(policy.maximum_weight_per_sector),
-    maximum_weight_per_issuer: String(policy.maximum_weight_per_issuer),
-    rebalance_tolerance: String(policy.rebalance_tolerance),
-    allocations: classes.map((assetClass) => {
-      const saved = byClass.get(assetClass);
-      return {
-        asset_class: assetClass,
-        target_percentage: String(saved?.target_percentage ?? "0"),
-        minimum_percentage: String(saved?.minimum_percentage ?? "0"),
-        maximum_percentage: String(saved?.maximum_percentage ?? "0"),
-        enabled: saved?.enabled ?? false,
-      };
-    }),
-  };
-}
-
-function payloadFromDraft(draft: PolicyDraft): PortfolioPolicyPayload {
-  return {
-    name: draft.name,
-    objective: draft.objective,
-    risk_profile: draft.risk_profile,
-    investment_horizon: draft.investment_horizon,
-    monthly_contribution: normalizeDecimalForApi(draft.monthly_contribution),
-    liquidity_need: draft.liquidity_need,
-    income_need: draft.income_need,
-    emergency_reserve_months: Number.parseInt(draft.emergency_reserve_months, 10) || 0,
-    maximum_weight_per_asset: normalizeDecimalForApi(draft.maximum_weight_per_asset),
-    maximum_weight_per_sector: normalizeDecimalForApi(draft.maximum_weight_per_sector),
-    maximum_weight_per_issuer: normalizeDecimalForApi(draft.maximum_weight_per_issuer),
-    rebalance_tolerance: normalizeDecimalForApi(draft.rebalance_tolerance),
-    allocations: draft.allocations.map((item) => ({
-      asset_class: item.asset_class,
-      target_percentage: normalizeDecimalForApi(item.target_percentage),
-      minimum_percentage: normalizeDecimalForApi(item.minimum_percentage),
-      maximum_percentage: normalizeDecimalForApi(item.maximum_percentage),
-      enabled: item.enabled,
-    })),
-  };
-}
-
-function validateDraft(draft: PolicyDraft) {
-  const errors = [];
-  const enabled = draft.allocations.filter((item) => item.enabled);
-  const total = enabled.reduce((sum, item) => sum + (parseBrazilianNumber(item.target_percentage) ?? 0), 0);
-  if (!enabled.length) errors.push("Habilite pelo menos uma classe.");
-  if (Math.abs(total - 100) > 0.0001) errors.push("A soma das classes habilitadas deve ser exatamente 100%.");
-  for (const item of draft.allocations) {
-    const target = parseBrazilianNumber(item.target_percentage) ?? 0;
-    const minimum = parseBrazilianNumber(item.minimum_percentage) ?? 0;
-    const maximum = parseBrazilianNumber(item.maximum_percentage) ?? 0;
-    if ([target, minimum, maximum].some((value) => value < 0)) errors.push("Percentuais não podem ser negativos.");
-    if (minimum > target) errors.push(`Em ${item.asset_class}, o mínimo não pode ser maior que o alvo.`);
-    if (target > maximum) errors.push(`Em ${item.asset_class}, o alvo não pode ser maior que o máximo.`);
-  }
-  return { total, errors: [...new Set(errors)], valid: errors.length === 0 };
-}
-
-function updateDraft(setDraft: (value: SetStateAction<PolicyDraft>) => void, value: Partial<PolicyDraft>) {
-  setDraft((current) => ({ ...current, ...value }));
-}
-
-function updateAllocation(
-  setDraft: (value: SetStateAction<PolicyDraft>) => void,
-  assetClass: string,
-  value: Partial<PolicyDraft["allocations"][number]>,
-) {
-  setDraft((current) => ({
-    ...current,
-    allocations: current.allocations.map((item) => item.asset_class === assetClass ? { ...item, ...value } : item),
-  }));
 }
 
 function assetSignalLabel(score: string | number, confidence: string) {
