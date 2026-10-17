@@ -300,6 +300,10 @@ class FinancialDiagnosis(BaseModel):
     confidence: str
 
 
+class WealthGoalSetting(BaseModel):
+    wealth_goal_amount: Decimal = Field(gt=0, lt=Decimal("10000000000000000"))
+
+
 class ContributionPriority(BaseModel):
     priority: int
     symbol: str
@@ -369,6 +373,17 @@ class BuildPortfolioResponse(BaseModel):
         "Simulação educacional, não constitui ordem de compra e não garante retorno."
     )
     generated_at: datetime
+
+
+class FinancialFutureResponse(BaseModel):
+    goal: FinancialFreedomGoal
+    diagnosis: FinancialDiagnosis
+    projections: list[ProjectionScenario]
+    valuation_note: str | None = None
+    disclaimer: str = (
+        "Simulação educacional baseada em cenários hipotéticos; "
+        "não é promessa de rentabilidade nem recomendação de compra."
+    )
 
 
 class Opportunity(BaseModel):
