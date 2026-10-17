@@ -9,7 +9,12 @@ from app.engines.intelligence_engine import (
     PortfolioIntelligenceEngine,
 )
 from app.engines.smart_portfolio_engine import PortfolioCandidate, PortfolioHolding, SmartPortfolioEngine
-from app.engines.financial_planning_engine import FinancialProfileContext
+from app.engines.financial_planning_engine import (
+    FinancialProfileContext,
+    FinancialDiagnosisEngine,
+    FinancialProjectionEngine,
+    apply_policy_to_planning_request,
+)
 from app.engines.sector_relative_valuation import PeerAsset, enrich_sector_valuations
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
@@ -19,6 +24,8 @@ from app.schemas.investor_profile import OnboardingStatus
 from app.schemas.intelligence import (
     BuildPortfolioRequest,
     BuildPortfolioResponse,
+    FinancialFutureResponse,
+    WealthGoalSetting,
     PortfolioIntelligenceResponse,
     PortfolioPolicyAllocationRead,
     PortfolioPolicyRead,
@@ -114,6 +121,78 @@ class PortfolioIntelligenceService:
         portfolio = self.portfolio_service.calculate(user_id)
         policy = self.get_policy(user_id)
         return PortfolioIntelligenceEngine.build(portfolio, policy)
+
+    def get_wealth_goal(self, user_id) -> WealthGoalSetting | None:
+        if self.investor_profile_repository is None:
+            return None
+        profile = self.investor_profile_repository.get_by_user(user_id)
+        if profile is None or profile.wealth_goal_amount is None:
+            return None
+        return WealthGoalSetting(wealth_goal_amount=profile.wealth_goal_amount)
+
+    def save_wealth_goal(self, user_id, setting: WealthGoalSetting) -> WealthGoalSetting:
+        if self.investor_profile_repository is None:
+            raise ValueError("Repositório do perfil indisponível.")
+        profile = self.investor_profile_repository.get_by_user(user_id)
+        if profile is None or profile.status != OnboardingStatus.COMPLETE.value:
+            raise ValueError("Confirme o Perfil do Investidor antes de definir a meta.")
+        profile.wealth_goal_amount = setting.wealth_goal_amount
+        self.investor_profile_repository.save(profile)
+        return setting
+
+    def get_financial_future(self, user_id) -> FinancialFutureResponse | None:
+        """Projeção independente da tela Montar carteira e vinculada ao usuário."""
+        setting = self.get_wealth_goal(user_id)
+        policy = self.get_policy(user_id)
+        if setting is None or policy is None or self.portfolio_service is None:
+            return None
+        portfolio = self.portfolio_service.calculate(user_id)
+        current = sum(
+            (
+                position.market_value
+                if position.market_value is not None and position.market_value > 0
+                else position.invested_amount
+            )
+            for position in portfolio.positions
+        )
+        planning = BuildPortfolioRequest(
+            available_amount=Decimal("1"),  # exigido pelo schema legado de montagem; não aplicado ao patrimônio
+            objective=policy.objective,
+            horizon=policy.investment_horizon,
+            risk_profile=policy.risk_profile,
+            monthly_contribution=policy.monthly_contribution,
+            current_financial_assets=current,
+            wealth_goal_amount=setting.wealth_goal_amount,
+        )
+        planning = apply_policy_to_planning_request(planning, policy)
+        profile = (
+            self.investor_profile_repository.get_by_user(user_id)
+            if self.investor_profile_repository is not None
+            else None
+        )
+        context = (
+            FinancialProfileContext(
+                emergency_reserve_months=profile.emergency_reserve_months,
+                has_relevant_debt=profile.has_relevant_debt,
+            )
+            if profile is not None and profile.status == OnboardingStatus.COMPLETE.value
+            else None
+        )
+        projections = FinancialProjectionEngine.project(planning)
+        missing_quotes = [
+            p.ticker for p in portfolio.positions
+            if p.market_value is None or p.market_value <= 0
+        ]
+        return FinancialFutureResponse(
+            goal=FinancialProjectionEngine.freedom_goal(planning, projections),
+            diagnosis=FinancialDiagnosisEngine.diagnose(planning, context),
+            projections=projections,
+            valuation_note=(
+                "Posições sem cotação atual estimadas pelo custo registrado: "
+                + ", ".join(missing_quotes)
+                if missing_quotes else None
+            ),
+        )
 
     def build_portfolio(
         self, user_id, data: BuildPortfolioRequest
