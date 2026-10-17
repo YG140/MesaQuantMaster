@@ -51,6 +51,11 @@ def raise_auth_error(error: AuthError, default_status: int = 400) -> None:
 
 @router.post("/register", response_model=UserResponse, status_code=201)
 def register(user: UserCreate, service: AuthService = Depends(get_auth_service)):
+    if not settings.AUTH_PUBLIC_REGISTRATION_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cadastro público desabilitado nesta instalação.",
+        )
     try:
         return service.register(user.name, user.email, user.password)
     except AuthError as error:
