@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$NoBrowser,
+    [switch]$Cloud,
+    [string]$CloudWebUrl = "https://mesa-quant-master-web.onrender.com/",
     [switch]$SkipDatabaseCheck,
     [switch]$DedicatedWindow,
     [ValidateRange(5, 600)]
@@ -301,9 +303,30 @@ function Invoke-MesaQuantMaster {
 if ($MyInvocation.InvocationName -ne ".") {
     $exitCode = 0
     try {
-        Invoke-MesaQuantMaster -NoBrowser:$NoBrowser `
-            -SkipDatabaseCheck:$SkipDatabaseCheck `
-            -StartupTimeoutSeconds $StartupTimeoutSeconds
+        if ($Cloud) {
+            # Nao inicia backend local: a mesma aplicacao web da nuvem atende PC e APK.
+            # O banco local e preservado; migracao da conta/carteira e etapa separada.
+            $cloudUri = $null
+            if (
+                -not [System.Uri]::TryCreate($CloudWebUrl, [System.UriKind]::Absolute, [ref]$cloudUri) -or
+                $cloudUri.Scheme -ne "https" -or
+                $cloudUri.Host -in @("localhost", "127.0.0.1", "::1") -or
+                $cloudUri.UserInfo
+            ) {
+                throw "Informe uma URL HTTPS publica do site Mesa Quant Master para -CloudWebUrl."
+            }
+            Write-Host "Mesa Quant Master - modo sincronizado (nuvem)"
+            Write-Host "Site: $($cloudUri.AbsoluteUri)"
+            Write-Host "IMPORTANTE: este modo nao transfere sua carteira antiga automaticamente."
+            if (-not $NoBrowser) {
+                [void](Open-MesaQuantMasterBrowser -Url $cloudUri.AbsoluteUri)
+            }
+        }
+        else {
+            Invoke-MesaQuantMaster -NoBrowser:$NoBrowser `
+                -SkipDatabaseCheck:$SkipDatabaseCheck `
+                -StartupTimeoutSeconds $StartupTimeoutSeconds
+        }
     }
     catch {
         Write-Host "Erro: $($_.Exception.Message)" -ForegroundColor Red
