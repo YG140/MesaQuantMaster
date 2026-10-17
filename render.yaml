@@ -1,16 +1,17 @@
-# API Android + PostgreSQL persistente. Requer conta Render conectada.
-# Planos pagos deliberados: serviços gratuitos podem hibernar e o banco gratuito
-# não tem garantias de persistência adequadas para carteira pessoal.
+# Mesa Quant Master — alternativa gratuita para testes e uso pessoal leve.
+# Banco fora da Render: use PostgreSQL Neon Free via DATABASE_URL (secreto).
+# NÃO cria serviços pagos, bancos Render, discos ou jobs.
 services:
   - type: web
     name: mesa-quant-master-api
     runtime: python
-    plan: 0.5c-512mb
+    plan: free
     region: virginia
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    preDeployCommand: alembic upgrade head
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Render Free não permite preDeployCommand. As migrações ocorrem na
+    # inicialização da instância, antes da API aceitar requisições.
+    startCommand: bash scripts/start-free.sh
     healthCheckPath: /ready
     envVars:
       - key: PYTHON_VERSION
@@ -26,9 +27,7 @@ services:
       - key: FRONTEND_ORIGINS
         value: https://localhost
       - key: DATABASE_URL
-        fromDatabase:
-          name: mesa-quant-master-db
-          property: connectionString
+        sync: false  # Colar no Render o URL TLS da Neon, nunca no GitHub
       - key: SECRET_KEY
         generateValue: true
       - key: FRONTEND_PUBLIC_URL
@@ -40,8 +39,6 @@ services:
       - key: TWELVEDATA_API_KEY
         sync: false
 
-  # Web HTTPS complementar para ativação de contas/recuperação de senha
-  # e acesso alternativo ao APK. Endereço de API é configurado no painel.
   - type: web
     name: mesa-quant-master-web
     runtime: static
@@ -54,12 +51,4 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_BASE_URL
-        sync: false
-
-databases:
-  - name: mesa-quant-master-db
-    databaseName: mesa_quant_master
-    user: mesa_quant
-    plan: 0.1c-256mb
-    region: virginia
-    ipAllowList: []
+        sync: false  # URL pública HTTPS da API gerada pela Render
