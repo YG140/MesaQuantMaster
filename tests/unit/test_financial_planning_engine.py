@@ -94,3 +94,40 @@ def test_profile_with_sufficient_reserve_and_no_debt_permits_accumulation():
     assert diagnosis.phase == "accumulation"
     assert diagnosis.reserve_months_covered == Decimal("8")
     assert not diagnosis.debt_alerts
+
+
+def test_patromonial_goal_has_priority_over_passive_income():
+    data = request(wealth_goal_amount=Decimal("500000"))
+    goal = FinancialProjectionEngine.freedom_goal(
+        data, FinancialProjectionEngine.project(data)
+    )
+    assert goal.required_wealth == Decimal("500000.00")
+
+
+def test_goal_reports_first_month_not_full_projection_horizon():
+    data = request(
+        wealth_goal_amount=Decimal("21000"),
+        current_financial_assets=Decimal("20000"),
+        monthly_contribution=Decimal("1000"),
+        projection_years=10,
+    )
+    goal = FinancialProjectionEngine.freedom_goal(
+        data, FinancialProjectionEngine.project(data)
+    )
+    assert goal.estimated_months == 1
+    assert goal.estimated_years == 1
+
+
+def test_goal_already_reached_and_unreachable_within_horizon():
+    reached = request(wealth_goal_amount=Decimal("10000"))
+    future = request(wealth_goal_amount=Decimal("100000000000"), projection_years=2)
+    a = FinancialProjectionEngine.freedom_goal(
+        reached, FinancialProjectionEngine.project(reached)
+    )
+    b = FinancialProjectionEngine.freedom_goal(
+        future, FinancialProjectionEngine.project(future)
+    )
+    assert a.estimated_months == 0
+    assert a.estimated_years == 0
+    assert b.estimated_months is None
+    assert b.estimated_years is None
