@@ -1705,3 +1705,15 @@ def test_goal_prioritizes_real_growth_score_without_ignoring_profile():
     assert [item.symbol for item in result.assets] == ["BBBB3"]
     assert result.freedom_goal.required_wealth == Decimal("500000.00")
     assert result.freedom_goal.gap == Decimal("490000.00")
+
+
+
+def test_legacy_budget_without_explicit_cap_preserves_ten_asset_default():
+    legacy = BuildPortfolioRequest(
+        available_amount=Decimal("1000"),
+        objective="crescimento",
+        horizon="longo prazo",
+        risk_profile="moderado",
+    )
+    assert legacy.available_amount == Decimal("1000")
+    assert legacy.max_assets == 10
