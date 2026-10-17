@@ -589,6 +589,15 @@ export type BuildPortfolioResponse = {
   generated_at: string;
 };
 
+export type WealthGoalSetting = { wealth_goal_amount: string | number };
+export type FinancialFutureResponse = {
+  goal: BuildPortfolioResponse["freedom_goal"];
+  diagnosis: BuildPortfolioResponse["diagnosis"];
+  projections: BuildPortfolioResponse["projections"];
+  valuation_note: string | null;
+  disclaimer: string;
+};
+
 export type NormalizedIndicator = {
   key: string;
   label: string;
