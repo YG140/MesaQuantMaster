@@ -17,6 +17,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.engines.b3_historical_price_audit import B3HistoricalPriceAudit
+from app.providers.b3.exceptions import B3ProviderError
 from app.schemas.portfolio_validation import WalkForwardRequest
 
 
@@ -33,7 +34,7 @@ def main() -> int:
             args.request.read_text(encoding="utf-8")
         )
         report = B3HistoricalPriceAudit.verify(request, args.archive)
-    except (OSError, ValueError, ValidationError) as exc:
+    except (OSError, ValueError, ValidationError, B3ProviderError) as exc:
         parser.error(f"Auditoria recusada: {exc}")
     # Não cria relatório parcial se houver preço conflitante.
     args.output.write_text(
