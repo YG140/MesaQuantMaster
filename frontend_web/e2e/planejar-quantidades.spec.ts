@@ -59,6 +59,9 @@ test.beforeEach(async ({ page }) => {
     dimensions: { overall_classification: "Moderado" },
   } }));
   await page.route("**/intelligence/policy", route => route.fulfill({ json: policy }));
+  await page.route("**/intelligence/financial-goal", route =>
+    route.fulfill({ json: { wealth_goal_amount: "1000000" } }),
+  );
   await page.route("**/intelligence/build-portfolio", async route => {
     expect(Number(route.request().postDataJSON().available_amount)).toBe(10000);
     await route.fulfill({ json: response });
@@ -77,6 +80,7 @@ for (const viewport of [
     await page.goto("/planejar?secao=montar-carteira", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByRole("heading", { name: "Monte uma carteira para o seu momento" })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText("Configurações avançadas")).toHaveCount(0);
+    await page.getByLabel("Aporte deste mês").fill("1000000");
     await page.getByRole("button", { name: "Montar minha carteira" }).click();
     const result = page.getByRole("heading", { name: "Sua carteira recomendada" });
     await expect(result).toBeVisible();
