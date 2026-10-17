@@ -470,8 +470,7 @@ describe("paginas autenticadas", () => {
     expect(screen.getByText("Patrimônio atual")).toBeInTheDocument();
     expect(screen.getByText("Carteira em formação")).toBeInTheDocument();
 
-    await user.click(screen.getAllByText("Diagnóstico")[0]);
-    expect(screen.getByText("Pontuação da carteira")).toBeInTheDocument();
+    expect(screen.getByText("Pontuação estrutural")).toBeInTheDocument();
     expect(screen.getAllByText("Há concentração relevante em uma única posição.").length).toBeGreaterThan(0);
 
     await user.click(screen.getAllByText("Recomendações")[0]);
