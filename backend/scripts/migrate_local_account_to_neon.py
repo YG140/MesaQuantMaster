@@ -253,7 +253,7 @@ def import_atomically(conn, manifest, tables) -> None:
 
 def migrate(
     source_url: str, target_url: str, email: str, *, apply: bool = False,
-    confirmed: bool = False,
+    confirmed: bool = False, expected_counts: dict[str, int] | None = None,
 ) -> dict[str, int]:
     assert_endpoints(source_url, target_url)
     source_engine = create_engine(source_url, poolclass=NullPool)
@@ -265,6 +265,9 @@ def migrate(
             with source.begin():
                 source.exec_driver_sql("SET TRANSACTION READ ONLY")
                 manifest = plan_for_email(source, email)
+                counts = {name: len(rows) for name, rows in manifest.items()}
+                if expected_counts is not None and counts != expected_counts:
+                    raise MigrationBlocked("A carteira local mudou desde a prévia. Reinicie a conferência.")
                 # Target never changes on dry run or on failed preflight.
                 if apply and confirmed:
                     with target_engine.begin() as destination:
@@ -273,7 +276,7 @@ def migrate(
                 else:
                     with target_engine.connect() as destination:
                         preflight(destination, manifest)
-                return {name: len(rows) for name, rows in manifest.items()}
+                return counts
     finally:
         source_engine.dispose()
         target_engine.dispose()
@@ -308,11 +311,7 @@ def main() -> int:
     if phrase != "MIGRAR":
         print("Importação cancelada sem alteração.")
         return 2
-    actual = migrate(src, dst, email, apply=True, confirmed=True)
-    if actual != counts:
-        raise MigrationBlocked(
-            "Dados locais mudaram entre prévia e aplicação; conferir manualmente."
-        )
+    migrate(src, dst, email, apply=True, confirmed=True, expected_counts=counts)
     print("Importação confirmada. IDs, operações e hash da senha preservados.")
     return 0
 
