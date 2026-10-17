@@ -488,7 +488,8 @@ export type PortfolioPolicy = {
 export type PortfolioPolicyPayload = Omit<PortfolioPolicy, "id" | "user_id" | "created_at" | "updated_at">;
 
 export type BuildPortfolioRequest = {
-  available_amount: string;
+  available_amount?: string;
+  desired_wealth?: string;
   objective: string;
   horizon: string;
   risk_profile: string;
@@ -503,7 +504,7 @@ export type BuildPortfolioRequest = {
   max_percentage_per_sector: string;
   allowed_classes: string[];
   prohibited_classes: string[];
-  max_assets: number;
+  max_assets?: number;
   net_monthly_income?: string;
   income_type?: string;
   essential_monthly_expenses?: string;
