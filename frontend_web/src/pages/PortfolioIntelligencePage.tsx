@@ -555,13 +555,12 @@ function BuildPortfolio() {
   });
   const policy = policyQuery.data ?? null;
   const appliedPolicyDefaults = useRef(false);
-  const [availableAmount, setAvailableAmount] = useState("10000");
+  const [desiredWealth, setDesiredWealth] = useState("");
   const [monthlyContribution, setMonthlyContribution] = useState("0");
   const [objective, setObjective] = useState("crescimento patrimonial");
   const [horizon, setHorizon] = useState("médio prazo");
   const [riskProfile, setRiskProfile] = useState("moderado");
   const [liquidity, setLiquidity] = useState("média");
-  const [maxAssets, setMaxAssets] = useState("10");
   const [maxAsset, setMaxAsset] = useState("20");
   const [maxClass, setMaxClass] = useState("40");
   const [income, setIncome] = useState("");
@@ -594,7 +593,7 @@ function BuildPortfolio() {
   };
   const mutation = useMutation({
     mutationFn: () => endpoints.buildPortfolio(token!, {
-      available_amount: normalizeDecimalForApi(availableAmount),
+      desired_wealth: normalizeDecimalForApi(desiredWealth),
       objective,
       horizon,
       risk_profile: riskProfile,
@@ -609,7 +608,6 @@ function BuildPortfolio() {
       max_percentage_per_sector: normalizeDecimalForApi(policy?.maximum_weight_per_sector ?? "30"),
       allowed_classes: allowed,
       prohibited_classes: prohibited,
-      max_assets: Number.parseInt(maxAssets, 10) || 1,
       ...(income ? { net_monthly_income: normalizeDecimalForApi(income) } : {}),
       ...(essentialExpenses ? { essential_monthly_expenses: normalizeDecimalForApi(essentialExpenses) } : {}),
       ...(totalExpenses ? { total_monthly_expenses: normalizeDecimalForApi(totalExpenses) } : {}),
@@ -633,15 +631,14 @@ function BuildPortfolio() {
   return (
     <div className="page-stack smart-portfolio-flow">
       <Card title="Monte uma carteira para o seu momento">
-        <p className="helper">Informe o essencial. Os demais parâmetros continuam disponíveis nas configurações avançadas.</p>
+        <p className="helper">Defina seu patrimônio-alvo e o aporte deste mês. O sistema seleciona automaticamente os ativos elegíveis que cabem no seu orçamento, respeitando o perfil de risco e a carteira já registrada.</p>
         <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-          <CurrencyInput label="Valor disponível para investir" value={availableAmount} onChange={(event) => setAvailableAmount(event.target.value)} />
-          <CurrencyInput label="Aporte mensal" value={monthlyContribution} onChange={(event) => setMonthlyContribution(event.target.value)} />
+          <CurrencyInput label="Patrimônio que deseja alcançar" value={desiredWealth} onChange={(event) => setDesiredWealth(event.target.value)} />
+          <CurrencyInput label="Valor que pretende investir neste mês" value={monthlyContribution} onChange={(event) => setMonthlyContribution(event.target.value)} />
           <Select label="Objetivo" value={objective} onChange={(event) => setObjective(event.target.value)}><option value="reserva">Reserva</option><option value="renda">Renda</option><option value="crescimento patrimonial">Crescimento patrimonial</option><option value="preservação de capital">Preservação de capital</option></Select>
           <Select label="Horizonte" value={horizon} onChange={(event) => setHorizon(event.target.value)}><option value="curto prazo">Curto prazo</option><option value="médio prazo">Médio prazo</option><option value="longo prazo">Longo prazo</option></Select>
           <Select label="Perfil de risco" value={riskProfile} onChange={(event) => setRiskProfile(event.target.value)}><option value="conservador">Conservador</option><option value="moderado">Moderado</option><option value="arrojado">Arrojado</option></Select>
-          <Input label="Quantidade máxima de ativos" inputMode="numeric" value={maxAssets} onChange={(event) => setMaxAssets(event.target.value.replace(/\D/g, ""))} />
           <details className="span-2 details-panel smart-advanced-settings">
             <summary>Configurações avançadas</summary>
             <div className="form-grid two">
@@ -664,22 +661,23 @@ function BuildPortfolio() {
             </div>
           </details>
           {mutation.error ? <div className="span-2"><ErrorState message="Não foi possível montar sua carteira agora. Seus dados foram preservados."><Button type="button" variant="secondary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>Tentar novamente</Button></ErrorState></div> : null}
-          <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button>
+          <Button type="submit" disabled={mutation.isPending || !(parseBrazilianNumber(monthlyContribution) ?? 0) || !(parseBrazilianNumber(desiredWealth) ?? 0)}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button>
         </form>
       </Card>
-      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={normalizeDecimalForApi(availableAmount)} /> : null}
+      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={normalizeDecimalForApi(monthlyContribution)} desiredWealth={normalizeDecimalForApi(desiredWealth)} /> : null}
     </div>
   );
 }
 
-function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; totalConsidered: string }) {
+function BuildResult({ data, totalConsidered, desiredWealth }: { data: BuildPortfolioResponse; totalConsidered: string; desiredWealth: string }) {
   const sortedAssets = [...data.assets].sort((left, right) => (parseBrazilianNumber(right.recommended_percentage) ?? 0) - (parseBrazilianNumber(left.recommended_percentage) ?? 0));
   return (
     <div className="page-stack smart-result">
       <Card title="Sua carteira recomendada">
         <div className="metric-grid compact smart-summary">
           <MetricCard label="Confiança" value={confidenceLabel(data.confidence)} />
-          <MetricCard label="Valor total considerado" value={formatMoney(totalConsidered)} />
+          <MetricCard label="Meta de patrimônio" value={formatMoney(desiredWealth)} />
+          <MetricCard label="Aporte deste mês" value={formatMoney(totalConsidered)} />
           <MetricCard label="Valor alocado" value={formatMoney(data.total_allocated_amount)} />
           <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
           <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />
