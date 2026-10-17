@@ -1,125 +1,135 @@
-# Publicar o Mesa Quant Master no celular (Render + APK)
+# Mesa Quant Master no Android — Render Free + Neon Free (teste pessoal)
 
-## Estado da entrega
+Esta configuração evita **mensalidades fixas obrigatórias**, respeitando as
+cotas dos planos gratuitos. A API, o site React e o banco **não estão
+automaticamente publicados** só por existir o `render.yaml`.
 
-O repositório inclui o código para a nuvem: FastAPI em HTTPS, PostgreSQL
-persistente, migrações de banco, site React para verificação de e-mails e
-recuperação de senha, e o workflow para gerar o APK Android usando a URL
-HTTPS real da API. **Nenhuma hospedagem é criada só por adicionar o YAML ao
-GitHub**: a conta Render deve autorizar a implantação.
+## O que é gratuito e o que não está garantido
 
-O Blueprint usa **planos pagos** (API 0.5c-512mb e banco 0.1c-256mb).
-Verifique o preço e os limites atuais no painel Render antes de confirmar a
-cobrança. O site estático React tem plano próprio e pode usar nível gratuito.
-Não usar PostgreSQL gratuito que expira ou serviços que suspendem acesso para
-armazenar uma carteira pessoal. Configure e teste backups.
+| Peça | Provedor | Plano previsto |
+| --- | --- | --- |
+| FastAPI HTTPS | Render Web Service | **Free** (`plan: free`) |
+| PostgreSQL persistente | Neon | **Free**, externo à Render |
+| Site React HTTPS | Render Static Site | Grátis dentro das cotas |
+| APK pessoal | GitHub Actions | Dentro das cotas do GitHub |
 
-## 1. Vincular o repositório privado ao Render
+**Limites críticos e riscos:**
+- Render Free suspende o serviço após **15 minutos sem acesso**; retornar
+  pode demorar cerca de um minuto ou mais. Há limites mensais de horas,
+  bandwidth e build minutes. Render pode cobrar tráfego/build excedente se
+  sua conta tiver forma de pagamento cadastrada. Defina limites de gasto e
+  monitore uso; "grátis" **não garante** zero em todos os cenários.
+- O disco do Render Free é **temporário**: não armazenar SQLite,
+  documentos, credenciais nem carteira financeira no disco local.
+- Neon Free tem limite de armazenamento, computação e tráfego
+  (consulte cotas atuais no painel). Não é backup garantido ou SLA de
+  produção; exporte backups periódicos e teste restauração.
+- Render Free não permite `preDeployCommand`; a API executa
+  `python -m alembic upgrade head` a cada inicialização e **só depois**
+  inicia o Uvicorn (veja `backend/scripts/start-free.sh`).
+- Render Free bloqueia SMTP de saída nas portas 25, 465 e 587.
+  O fluxo existente de verificação/recuperação por SMTP **não deve ser
+  prometido** sem um serviço de e-mail autorizado via HTTPS.
+- Provedores de dados externos (CoinGecko, Twelve Data) têm quotas
+  independentes e podem exigir API key mesmo no nível gratuito.
+- O APK debug para testes **não** é release assinado para Play Store.
 
-1. Entrar em <https://dashboard.render.com/> e conectar a conta GitHub com
-   permissão ao repositório privado `YG140/MesaQuantMaster`.
-2. Usar **New → Blueprint**, selecionar o projeto na branch `main`.
-   O arquivo `render.yaml` criará os recursos:
-   - `mesa-quant-master-api` (FastAPI, HTTPS);
-   - `mesa-quant-master-db` (PostgreSQL persistente, acesso interno);
-   - `mesa-quant-master-web` (React/HTTPS para acesso no computador,
-     recuperação de senha e confirmação de e-mail).
-3. Informar no painel Render os valores solicitados **sem colocar segredos
-   no GitHub**:
-   - `FRONTEND_PUBLIC_URL`: URL real do site web depois de criada;
-   - `VITE_API_BASE_URL`: URL **real da API HTTPS** no serviço estático;
-   - `BRAPI_API_KEY`, `COINGECKO_DEMO_API_KEY`, `TWELVEDATA_API_KEY`:
-     chaves obtidas nos respectivos provedores. Podem continuar vazias
-     temporariamente, mas análises que dependem delas falharão claramente.
-   - `SECRET_KEY` será gerada automaticamente pelo Render; não alterar
-     sem planejamento (invalida sessões existentes).
-4. O banco é privado no Render, com `DATABASE_URL` injetada
-   automaticamente (não digite nem compartilhe a senha). O deploy instala
-   Python e dependências, executa `alembic upgrade head` **antes** de
-   disponibilizar a versão, e inicia o FastAPI na porta atribuída.
+## 1. Criar ou conectar Neon Free
 
-## 2. Domínios e autenticação
+1. Conectar o aplicativo **Neon** no ChatGPT, ou entrar em
+   <https://console.neon.tech/> e criar um projeto PostgreSQL no plano
+   **Free**. Escolher uma região próxima à API Render, se possível.
+2. No painel Neon, copiar a **connection string Postgres** da base
+   escolhida, com `sslmode=require` e hostname do Neon
+   (`*.neon.tech`). Por exemplo:
+   ```text
+   postgresql://USUARIO:SENHA@ENDERECO-REAL.neon.tech/NOME_BANCO?sslmode=require
+   ```
+   Este texto é somente um **exemplo**, não funciona como credencial.
+3. Não compartilhar, registrar em commit ou colocar o URL de conexão
+   no site React, APK, README, mensagens ou logs. Inserir o valor somente
+   na variável secreta `DATABASE_URL` da API no Render. Se a Neon
+   sugerir URI pooled, conferir compatibilidade com migrações Alembic;
+   usar URL direto TLS para migrações que exigem transações.
 
-Quando o Render informar as URLs **reais** (sem presumir que uma URL
-de exemplo esteja livre):
+O código em `backend/app/core/database.py` usa pool pequeno, verificação
+prévia da conexão e reciclagem de conexões, adequado à suspensão da Neon.
+A API recusa SQLite em produção. O banco Neon persiste fora do disco
+temporário da Render, mas exige backups próprios.
 
-1. Em `mesa-quant-master-api` → Environment, alterar
-   `FRONTEND_ORIGINS` para duas origens, separadas por vírgula:
+## 2. Criar os serviços gratuitos na Render
+
+A Render já pode estar conectada à conversa; ainda é necessário que a
+conta Render tenha permissão GitHub para ler o **repositório privado**
+`YG140/MesaQuantMaster`. No painel da Render:
+
+1. Ir em **New → Blueprint**, selecionar o repositório e a branch
+   `main`. O `render.yaml` cria **somente**:
+   - `mesa-quant-master-api`: serviço Python **Free**;
+   - `mesa-quant-master-web`: site estático React.
+   **Não** cria banco de dados, volume nem recurso pago.
+2. Durante a configuração das variáveis `sync: false`, informar:
+   - API → `DATABASE_URL`: **URI TLS Neon real, mantida secreta**.
+   - API → `FRONTEND_PUBLIC_URL`: URL HTTPS real do site web.
+   - Web → `VITE_API_BASE_URL`: URL HTTPS real da API.
+   - API → `BRAPI_API_KEY`, `COINGECKO_DEMO_API_KEY`,
+     `TWELVEDATA_API_KEY`: opcionais; valores ficam secretos no
+     servidor, jamais no APK.
+   - `SECRET_KEY` é gerada automaticamente pela Render.
+3. Após a criação dos dois domínios, adicionar à variável
+   `FRONTEND_ORIGINS` da API:
    ```text
    https://localhost,https://DOMINIO-WEB-REAL.onrender.com
    ```
-   `https://localhost` é o origin do WebView Capacitor Android, **não**
-   indica que o backend roda no computador. Use somente domínios reais;
-   sem `/` final.
-2. Configurar `FRONTEND_PUBLIC_URL` com a URL exata HTTPS do site web,
-   e `VITE_API_BASE_URL` no serviço web com a URL exata HTTPS da API.
-   O React lê esse último valor **durante o build**: faça deploy novo após
-   alterar a variável.
-3. Reiniciar API após alterar origens; confirmar site, cadastro,
-   recuperação de conta e chamadas autenticadas. A URL pública da API
-   deve responder:
-   - `GET /`: `application = "Mesa Quant Master"`;
-   - `GET /health`: `status = "healthy"`;
-   - `GET /ready`: `status = "ready"` **somente com PostgreSQL acessível**.
-4. Criar uma conta (ou usar o fluxo existente de autenticação do sistema).
-   **O banco cloud inicia vazio.** `alembic` cria a estrutura, mas não
-   importa automaticamente usuários, transações, carteiras e perfis locais
-   do computador. Usar a importação da carteira com revisão das posições,
-   ou realizar uma migração segura e explicitamente autorizada com backup.
+   Substituir pelo domínio **real**. `https://localhost` é a origem
+   interna do WebView Capacitor Android, não o endereço do computador.
+4. Fazer novo deploy do site após configurar `VITE_API_BASE_URL`, pois
+   Vite incorpora esse valor durante a compilação.
+5. Testar API depois que ela acordar:
+   - `GET /`: `application: Mesa Quant Master`;
+   - `GET /health`: `status: healthy`;
+   - `GET /ready`: `status: ready` se Neon responde a `SELECT 1`.
+   Sem banco acessível, ela **não deve** indicar pronta.
+6. Confirmar login/autenticação e endpoints no navegador. Cuidado com
+   os fluxos de e-mail: SMTP 25/465/587 **não funciona** na Render Free.
 
-## 3. Gerar o APK que funciona sem o computador
+O banco remoto começa **vazio**. As migrações criam o esquema, mas não
+movem automaticamente usuários, transações nem dados da carteira local.
+Planejar migração segura com backup se houver dados a preservar.
 
-1. Abrir <https://github.com/YG140/MesaQuantMaster/actions/workflows/android-apk.yml>
-   no GitHub, entrar em **Run workflow** na branch `main`.
-2. Preencher `api_base_url` com a **URL real HTTPS** da API (sem barra
-   final), ou configurar a variável do repositório `MESA_API_BASE_URL`.
-3. O pipeline exige URL HTTPS pública, verifica raiz + `/health`,
-   compila a interface com o servidor correto, gera o projeto Android
-   Capacitor e disponibiliza o APK de testes na seção **Artifacts**.
-4. Baixar o ZIP `MesaQuantMaster-Android-debug`, extrair
-   `app-debug.apk` e instalar no aparelho Android. O computador poderá
-   ficar desligado; o app continuará dependendo de internet, do Render
-   ativo e das chaves que habilitam as fontes financeiras.
+## 3. APK Android real
 
-**Limite de distribuição:** APK debug é para teste pessoal, não para Play
-Store. A chave de debug do runner GitHub pode mudar entre builds. Para
-atualizações estáveis/Play Store ainda é necessário adicionar um processo
-de assinatura de release com chave privada persistente e armazenamento
-seguro de sessão no Android. Não use dados altamente sensíveis antes de
-revisão de segurança da autenticação.
+1. Depois que a API responder corretamente, abrir:
+   <https://github.com/YG140/MesaQuantMaster/actions/workflows/android-apk.yml>
+2. Selecionar **Run workflow** na `main`.
+3. Informar `api_base_url` com a URL HTTPS verdadeira da API Render,
+   sem barra final (ou usar variável de repositório `MESA_API_BASE_URL`).
+4. O workflow verifica HTTPS, `/`, `/health` e `/ready` antes
+   de disponibilizar o APK de uso pessoal. Compila React/Capacitor e
+   produz o artifact `MesaQuantMaster-Android-debug`.
+5. Baixar, extrair `app-debug.apk` e instalar no Android. O computador
+   poderá ficar desligado; o celular ainda precisa de internet, Neon
+   disponível e a API Render acordada.
 
-## 4. Banco e saúde operacional
+Uma compilação Android de teste com URL substituta **não** comprova
+funcionamento de ponta a ponta com o backend hospedado.
 
-- `APP_ENV=production` impede iniciar com SQLite, segredo inseguro,
-  Swagger ligado, DEBUG habilitado ou frontend HTTP.
-- Exigir HTTPS e origem do app, não aceitar CORS `*`.
-- `/ready` verifica `SELECT 1` no banco; sem acesso retorna 503.
-- Verificar backups automáticos oferecidos pelo plano, política de
-  retenção, restauração de teste, métricas, alarmes e limite de custo.
-- As APIs públicas de mercado podem exigir planos/quotas. Não colocar
-  chaves em React, GitHub, APK, comentários ou código.
-- Não migrar dados reais por simples importação de banco SQLite diretamente
-  sobre uma base PostgreSQL existente. Revisar antes o esquema e backups.
+## 4. Cuidados com dados financeiros
 
-## 5. Câmbio oficial (referência de leitura)
+- Não revelar credenciais ou importar carteira financeira real antes
+  de validar autenticação e backups no ambiente gratuito.
+- A PTAX BCB USD/BRL é **referência informativa**, não taxa de
+  compra e venda, e não inclui IOF ou spread; ordens internacionais
+  executáveis continuam bloqueadas até existir câmbio de execução e
+  registro histórico da moeda de aquisição.
+- Monitorar quotas de Render, Neon, CoinGecko e Twelve Data, ajustar
+  universo de ativos conforme o plano e parar se atingir limites.
+- Não usar ping artificial para impedir a hibernação grátis; aceitar
+  a suspensão faz parte do acordo de uso do serviço.
 
-`GET /market/fx/usd-brl` autentica o usuário e consulta a PTAX venda de
-fechamento do Banco Central do Brasil, selecionando o último registro
-válido de até seis dias. Na interface de ativos internacionais em USD,
-exibe a taxa e o preço por unidade convertido **apenas como referência**.
-A taxa **não** inclui spread de corretora, IOF, taxas e impostos e não
-pode ser confundida com preço executável.
+## Documentação oficial
 
-A conversão FX **não foi acoplada às ordens e aos saldos realizados**, pois
-as operações antigas não registram explicitamente moeda histórica de
-aquisição. Alterar preços sem migrar essa informação produziria
-lucros/perdas falsos. A compra automática de ativos precificados em
-moeda estrangeira segue bloqueada até essa evolução; a cotação informativa
-é verificável, não um atalho inseguro para aportes em BRL.
-
-## Links
-
-- [Render — Blueprints](https://render.com/docs/infrastructure-as-code)
-- [Render — referência de render.yaml](https://render.com/docs/blueprint-spec)
-- [BCB — PTAX oficial](https://dadosabertos.bcb.gov.br/dataset/dolar-americano-usd-todos-os-boletins-diarios)
-- [Guia de mercado internacional](backend/PROVEDORES_GLOBAIS_E_CRIPTO.md)
+- [Render Free](https://render.com/docs/free)
+- [Render Blueprints](https://render.com/docs/infrastructure-as-code)
+- [Neon Free](https://neon.com/pricing)
+- [Neon — conexão PostgreSQL](https://neon.com/docs/connect/connect-from-any-app)
