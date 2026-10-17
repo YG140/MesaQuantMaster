@@ -10,6 +10,12 @@ def assert_production_ready(settings) -> None:
     database = make_url(settings.DATABASE_URL)
     if not database.drivername.startswith("postgresql"):
         errors.append("DATABASE_URL deve ser PostgreSQL persistente em produção")
+    # Conexão externa ao Neon deve exigir criptografia TLS; nunca aceite
+    # string simplificada sem sslmode ao lidar com carteira financeira.
+    if (database.host or "").endswith(".neon.tech") and database.query.get("sslmode") not in {
+        "require", "verify-ca", "verify-full"
+    }:
+        errors.append("Banco Neon exige sslmode=require (ou validação TLS superior)")
     secret = settings.SECRET_KEY.strip()
     if len(secret) < 32 or secret in {"change-me-in-local-env", "secret", "development"}:
         errors.append("SECRET_KEY deve ser uma chave forte de pelo menos 32 caracteres")
