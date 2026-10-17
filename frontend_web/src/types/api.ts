@@ -503,7 +503,7 @@ export type BuildPortfolioRequest = {
   max_percentage_per_sector: string;
   allowed_classes: string[];
   prohibited_classes: string[];
-  max_assets: number;
+  max_assets: number | null;
   net_monthly_income?: string;
   income_type?: string;
   essential_monthly_expenses?: string;
