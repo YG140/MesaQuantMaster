@@ -51,7 +51,7 @@ class WalkForwardPeriod(BaseModel):
     profile_recorded_at: datetime
     request: BuildPortfolioRequest
     candidates: list[HistoricalCandidate] = Field(min_length=1, max_length=50)
-    realized_returns: list[AdjustedReturnInterval] = Field(min_length=1, max_length=50)
+    realized_returns: list[AdjustedReturnInterval] = Field(default_factory=list, max_length=50)
     benchmark: BenchmarkInterval
 
 
