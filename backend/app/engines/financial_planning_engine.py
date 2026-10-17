@@ -111,8 +111,10 @@ class FinancialProjectionEngine:
         initial = (
             data.current_financial_assets
             if data.current_financial_assets is not None
-            else data.available_amount
+            else (Decimal("0") if data.max_assets is None else data.available_amount)
         )
+        # No modo mensal o primeiro aporte já entra no laço da projeção;
+        # não somá-lo duas vezes como patrimônio inicial.
         inflation = (
             data.inflation_rate / HUNDRED if data.inflation_rate is not None else None
         )
@@ -174,6 +176,8 @@ class FinancialProjectionEngine:
 
     @staticmethod
     def required_wealth(data: BuildPortfolioRequest) -> Decimal | None:
+        if data.desired_wealth is not None:
+            return data.desired_wealth.quantize(CENT)
         if data.desired_monthly_income is None:
             return None
         base = data.desired_monthly_income * TWELVE / (data.withdrawal_rate / HUNDRED)
