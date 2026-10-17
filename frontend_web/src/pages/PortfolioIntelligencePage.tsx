@@ -541,130 +541,83 @@ function Rebalancing({ data }: { data: PortfolioIntelligence }) {
 function BuildPortfolio() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
-  // "Montar carteira" busca a política diretamente (mesma query/endpoint
-  // que Strategy usa: portfolio-policy -> GET /intelligence/policy) em vez
-  // de receber via prop de intelligence.data.policy -- desacopla esta
-  // área de uma eventual falha de /intelligence/portfolio (Correção
-  // interface, resiliência). Ausência/erro de política nunca bloqueia o
-  // formulário: os campos simplesmente seguem com os defaults abaixo até
-  // (se) a política real chegar.
   const policyQuery = useQuery({
     queryKey: ["portfolio-policy", token],
     queryFn: () => endpoints.portfolioPolicy(token!),
     enabled: Boolean(token),
   });
+  const profileQuery = useQuery({
+    queryKey: ["investor-profile", token],
+    queryFn: () => investorProfileEndpoints.get(token!),
+    enabled: Boolean(token),
+  });
   const policy = policyQuery.data ?? null;
-  const appliedPolicyDefaults = useRef(false);
+  // O valor desta simulação é operacional. Risco, objetivos, alocação,
+  // concentração e aporte recorrente vêm exclusivamente do perfil confirmado.
   const [availableAmount, setAvailableAmount] = useState("10000");
-  const [monthlyContribution, setMonthlyContribution] = useState("0");
-  const [objective, setObjective] = useState("crescimento patrimonial");
-  const [horizon, setHorizon] = useState("médio prazo");
-  const [riskProfile, setRiskProfile] = useState("moderado");
-  const [liquidity, setLiquidity] = useState("média");
-  const [maxAssets, setMaxAssets] = useState("10");
-  const [maxAsset, setMaxAsset] = useState("20");
-  const [maxClass, setMaxClass] = useState("40");
-  const [income, setIncome] = useState("");
-  const [essentialExpenses, setEssentialExpenses] = useState("");
-  const [totalExpenses, setTotalExpenses] = useState("");
-  const [reserve, setReserve] = useState("");
-  const [debt, setDebt] = useState("0");
-  const [currentAssets, setCurrentAssets] = useState("");
-  const [desiredIncome, setDesiredIncome] = useState("");
-  const [projectionYears, setProjectionYears] = useState("20");
-  const [allowed, setAllowed] = useState<string[]>([]);
-  const [prohibited, setProhibited] = useState<string[]>([]);
 
   useEffect(() => {
-    if (appliedPolicyDefaults.current || policyQuery.isLoading || !policy) return;
-    appliedPolicyDefaults.current = true;
-    setMonthlyContribution(String(policy.monthly_contribution ?? "0"));
-    setObjective(policy.objective ?? "crescimento patrimonial");
-    setHorizon(policy.investment_horizon ?? "médio prazo");
-    setRiskProfile(policy.risk_profile ?? "moderado");
-    setLiquidity(policy.liquidity_need ?? "média");
-    setMaxAsset(String(policy.maximum_weight_per_asset ?? "20"));
-    setAllowed(policy.allocations.filter((item) => item.enabled).map((item) => item.asset_class));
-  }, [policy, policyQuery.isLoading]);
-  const toggleClass = (assetClass: string, target: "allowed" | "prohibited") => {
-    const setter = target === "allowed" ? setAllowed : setProhibited;
-    const otherSetter = target === "allowed" ? setProhibited : setAllowed;
-    setter((current) => current.includes(assetClass) ? current.filter((item) => item !== assetClass) : [...current, assetClass]);
-    otherSetter((current) => current.filter((item) => item !== assetClass));
-  };
+    const initial = profileQuery.data?.initial_contribution;
+    if (initial != null && (parseBrazilianNumber(initial) ?? 0) > 0) {
+      setAvailableAmount(String(initial));
+    }
+  }, [profileQuery.data?.initial_contribution]);
+
   const mutation = useMutation({
-    mutationFn: () => endpoints.buildPortfolio(token!, {
-      available_amount: normalizeDecimalForApi(availableAmount),
-      objective,
-      horizon,
-      risk_profile: riskProfile,
-      needs_emergency_reserve: true,
-      emergency_months: policy?.emergency_reserve_months ?? 6,
-      monthly_contribution: normalizeDecimalForApi(monthlyContribution),
-      needs_income: policy?.income_need ?? false,
-      needs_liquidity: liquidity !== "baixa",
-      volatility_tolerance: "moderada",
-      max_percentage_per_asset: normalizeDecimalForApi(maxAsset),
-      max_percentage_per_class: normalizeDecimalForApi(maxClass),
-      max_percentage_per_sector: normalizeDecimalForApi(policy?.maximum_weight_per_sector ?? "30"),
-      allowed_classes: allowed,
-      prohibited_classes: prohibited,
-      max_assets: Number.parseInt(maxAssets, 10) || 1,
-      ...(income ? { net_monthly_income: normalizeDecimalForApi(income) } : {}),
-      ...(essentialExpenses ? { essential_monthly_expenses: normalizeDecimalForApi(essentialExpenses) } : {}),
-      ...(totalExpenses ? { total_monthly_expenses: normalizeDecimalForApi(totalExpenses) } : {}),
-      ...(reserve ? { emergency_reserve: normalizeDecimalForApi(reserve) } : {}),
-      high_cost_debt: normalizeDecimalForApi(debt),
-      ...(currentAssets ? { current_financial_assets: normalizeDecimalForApi(currentAssets) } : {}),
-      ...(desiredIncome ? { desired_monthly_income: normalizeDecimalForApi(desiredIncome) } : {}),
-      projection_years: Number.parseInt(projectionYears, 10) || 20,
-      reinvest_income: true,
-    }),
+    mutationFn: () => {
+      if (!policy || profileQuery.data?.status !== "complete") {
+        throw new Error("Confirme seu Perfil do Investidor antes de montar uma carteira.");
+      }
+      return endpoints.buildPortfolio(token!, {
+        available_amount: normalizeDecimalForApi(availableAmount),
+        objective: policy.objective,
+        horizon: policy.investment_horizon,
+        risk_profile: policy.risk_profile,
+        needs_emergency_reserve: true,
+        emergency_months: policy.emergency_reserve_months,
+        monthly_contribution: String(policy.monthly_contribution),
+        needs_income: policy.income_need,
+        needs_liquidity: policy.liquidity_need !== "baixa",
+        max_percentage_per_asset: String(policy.maximum_weight_per_asset),
+        max_percentage_per_sector: String(policy.maximum_weight_per_sector),
+        // A política persistida define as classes e os alvos; não há
+        // overrides manuais para ampliar limites nem restringir classes.
+        allowed_classes: policy.allocations.filter((item) => item.enabled).map((item) => item.asset_class),
+        prohibited_classes: [],
+        max_assets: 10,
+        reinvest_income: true,
+      });
+    },
     onSuccess: (data) => queryClient.setQueryData(["portfolio-projection", token], data),
   });
 
-  // Mesmo padrão de Strategy: aguarda a própria política resolver antes de
-  // expor o formulário, garantindo que os defaults (allowed/objective/
-  // etc., aplicados pelo useEffect acima) já estejam corretos quando o
-  // formulário aparece -- nunca depende de /intelligence/portfolio, só da
-  // própria política (portfolio-policy), independente e rápida.
-  if (policyQuery.isLoading) return <LoadingState label="Carregando dados para montar a carteira..." />;
+  if (policyQuery.isLoading || profileQuery.isLoading) {
+    return <LoadingState label="Carregando seu perfil para montar a carteira..." />;
+  }
+  if (policyQuery.error || profileQuery.error) {
+    return <ErrorState message="Não foi possível consultar o perfil e a estratégia de investimentos.">
+      <Button type="button" variant="secondary" onClick={() => { void policyQuery.refetch(); void profileQuery.refetch(); }}>
+        Tentar novamente
+      </Button>
+    </ErrorState>;
+  }
+  if (!policy || profileQuery.data?.status !== "complete") {
+    return <Card title="Finalize o Perfil do Investidor">
+      <p>Para montar uma carteira, conclua e confirme seu Perfil do Investidor. Objetivos, risco, horizonte, liquidez, limites e classes serão definidos automaticamente.</p>
+      <p className="helper">Use o botão de continuar ou revisar no cartão Perfil do Investidor acima.</p>
+    </Card>;
+  }
 
   return (
     <div className="page-stack smart-portfolio-flow">
       <Card title="Monte uma carteira para o seu momento">
-        <p className="helper">Informe o essencial. Os demais parâmetros continuam disponíveis nas configurações avançadas.</p>
+        <p className="helper">Sua estratégia é aplicada automaticamente a partir do Perfil do Investidor. Informe apenas o valor disponível para esta simulação.</p>
+        <p className="helper">Perfil aplicado: {policy.risk_profile} • {policy.investment_horizon} • aporte mensal de {formatMoney(policy.monthly_contribution)}. Para alterar a estratégia, revise seu Perfil do Investidor.</p>
         <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
           <CurrencyInput label="Valor disponível para investir" value={availableAmount} onChange={(event) => setAvailableAmount(event.target.value)} />
-          <CurrencyInput label="Aporte mensal" value={monthlyContribution} onChange={(event) => setMonthlyContribution(event.target.value)} />
-          <Select label="Objetivo" value={objective} onChange={(event) => setObjective(event.target.value)}><option value="reserva">Reserva</option><option value="renda">Renda</option><option value="crescimento patrimonial">Crescimento patrimonial</option><option value="preservação de capital">Preservação de capital</option></Select>
-          <Select label="Horizonte" value={horizon} onChange={(event) => setHorizon(event.target.value)}><option value="curto prazo">Curto prazo</option><option value="médio prazo">Médio prazo</option><option value="longo prazo">Longo prazo</option></Select>
-          <Select label="Perfil de risco" value={riskProfile} onChange={(event) => setRiskProfile(event.target.value)}><option value="conservador">Conservador</option><option value="moderado">Moderado</option><option value="arrojado">Arrojado</option></Select>
-          <Input label="Quantidade máxima de ativos" inputMode="numeric" value={maxAssets} onChange={(event) => setMaxAssets(event.target.value.replace(/\D/g, ""))} />
-          <details className="span-2 details-panel smart-advanced-settings">
-            <summary>Configurações avançadas</summary>
-            <div className="form-grid two">
-              <Select label="Necessidade de liquidez" value={liquidity} onChange={(event) => setLiquidity(event.target.value)}><option value="baixa">Baixa</option><option value="média">Média</option><option value="alta">Alta</option></Select>
-              <DecimalInput label="Limite por ativo (%)" value={maxAsset} onChange={(event) => setMaxAsset(event.target.value)} />
-              <DecimalInput label="Limite por classe (%)" value={maxClass} onChange={(event) => setMaxClass(event.target.value)} />
-              <CurrencyInput label="Renda mensal líquida" value={income} onChange={(event) => setIncome(event.target.value)} />
-              <CurrencyInput label="Despesas essenciais" value={essentialExpenses} onChange={(event) => setEssentialExpenses(event.target.value)} />
-              <CurrencyInput label="Despesas mensais totais" value={totalExpenses} onChange={(event) => setTotalExpenses(event.target.value)} />
-              <CurrencyInput label="Reserva de emergência atual" value={reserve} onChange={(event) => setReserve(event.target.value)} />
-              <CurrencyInput label="Dívidas de alto custo" value={debt} onChange={(event) => setDebt(event.target.value)} />
-              <CurrencyInput label="Patrimônio financeiro atual" value={currentAssets} onChange={(event) => setCurrentAssets(event.target.value)} />
-              <CurrencyInput label="Renda mensal desejada" value={desiredIncome} onChange={(event) => setDesiredIncome(event.target.value)} />
-              <Input label="Anos da projeção" inputMode="numeric" value={projectionYears} onChange={(event) => setProjectionYears(event.target.value.replace(/\D/g, ""))} />
-              <div className="span-2 class-restrictions">
-                <strong>Classes permitidas e proibidas</strong>
-                <p className="helper">Sem seleção em “permitida”, todas as classes não proibidas podem ser avaliadas.</p>
-                {classes.map((assetClass) => <div key={assetClass} className="class-restriction-row"><span>{assetClass}</span><label><input type="checkbox" checked={allowed.includes(assetClass)} onChange={() => toggleClass(assetClass, "allowed")} /> Permitida</label><label><input type="checkbox" checked={prohibited.includes(assetClass)} onChange={() => toggleClass(assetClass, "prohibited")} /> Proibida</label></div>)}
-              </div>
-            </div>
-          </details>
           {mutation.error ? <div className="span-2"><ErrorState message="Não foi possível montar sua carteira agora. Seus dados foram preservados."><Button type="button" variant="secondary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>Tentar novamente</Button></ErrorState></div> : null}
-          <Button type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button>
+          <div className="span-2"><Button type="submit" disabled={mutation.isPending || (parseBrazilianNumber(availableAmount) ?? 0) <= 0}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button></div>
         </form>
       </Card>
       {mutation.data ? <BuildResult data={mutation.data} totalConsidered={normalizeDecimalForApi(availableAmount)} /> : null}
