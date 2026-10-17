@@ -58,7 +58,7 @@ def test_every_explicit_portfolio_build_creates_a_private_immutable_decision(cli
     assert result["integrity_verified"] is True
     assert result["record"]["validation_status"] == "recommendation_record_only"
     assert result["record"]["totals"]["unallocated"] == first.json()["unallocated_amount"]
-    assert result["record"]["generated_at"] == first.json()["generated_at"]
+    assert datetime.fromisoformat(result["record"]["generated_at"]) == datetime.fromisoformat(first.json()["generated_at"])
     assert result["record"]["status"] == first.json()["status"]
     assert result["record"]["assets"] == []
     assert result["record"]["schema_version"] == 1
