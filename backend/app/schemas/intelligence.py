@@ -125,7 +125,9 @@ class BuildPortfolioRequest(BaseModel):
     max_percentage_per_sector: Decimal = Decimal("30")
     allowed_classes: list[str] = Field(default_factory=list)
     prohibited_classes: list[str] = Field(default_factory=list)
-    max_assets: int = Field(default=10, ge=1, le=50)
+    # None: determina a quantidade elegível pelo orçamento e preço real.
+    # Números explícitos mantêm compatibilidade com clientes antigos.
+    max_assets: int | None = Field(default=10, ge=1)
     net_monthly_income: Decimal | None = Field(default=None, ge=0)
     income_type: str | None = None
     essential_monthly_expenses: Decimal | None = Field(default=None, ge=0)
@@ -136,6 +138,7 @@ class BuildPortfolioRequest(BaseModel):
     current_financial_assets: Decimal | None = Field(default=None, ge=0)
     annual_contribution_growth: Decimal | None = None
     desired_monthly_income: Decimal | None = Field(default=None, ge=0)
+    wealth_goal_amount: Decimal | None = Field(default=None, gt=0)
     preserve_principal: bool = True
     projection_years: int = Field(default=20, ge=1, le=60)
     inflation_rate: Decimal | None = Field(default=None, ge=-20, le=100)
@@ -299,6 +302,10 @@ class FinancialDiagnosis(BaseModel):
     confidence: str
 
 
+class WealthGoalSetting(BaseModel):
+    wealth_goal_amount: Decimal = Field(gt=0, lt=Decimal("10000000000000000"))
+
+
 class ContributionPriority(BaseModel):
     priority: int
     symbol: str
@@ -328,6 +335,7 @@ class FinancialFreedomGoal(BaseModel):
     gap: Decimal | None = None
     achieved_percentage: Decimal | None = None
     estimated_years: int | None = None
+    estimated_months: int | None = None
     withdrawal_rate: Decimal
     safety_margin: Decimal
     risks: list[str] = Field(default_factory=list)
@@ -367,6 +375,17 @@ class BuildPortfolioResponse(BaseModel):
         "Simulação educacional, não constitui ordem de compra e não garante retorno."
     )
     generated_at: datetime
+
+
+class FinancialFutureResponse(BaseModel):
+    goal: FinancialFreedomGoal
+    diagnosis: FinancialDiagnosis
+    projections: list[ProjectionScenario]
+    valuation_note: str | None = None
+    disclaimer: str = (
+        "Simulação educacional baseada em cenários hipotéticos; "
+        "não é promessa de rentabilidade nem recomendação de compra."
+    )
 
 
 class Opportunity(BaseModel):

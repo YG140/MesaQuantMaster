@@ -9,7 +9,6 @@ import { CurrencyInput } from "../components/forms/CurrencyInput";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { MetricCard } from "../components/ui/MetricCard";
-import { DataStatusBadge } from "../components/ui/DataBadges";
 import { ScoreGauge } from "../components/ui/ScoreGauge";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { useAuth } from "../features/auth/useAuth";
@@ -90,8 +89,8 @@ export function PortfolioIntelligencePage() {
       {area === "Diagnóstico" ? <IntelligenceDependentSections intelligence={intelligence} /> : null}
       {area === "Montar carteira" ? <BuildPortfolio /> : null}
       {area === "Futuro financeiro" ? <div className="intelligence-sections">
-        <details open><summary>Minha estratégia</summary><Strategy /></details>
-        <details open><summary>Projeções, cenários e liberdade financeira</summary><FutureFinancial /></details>
+        <details open><summary>Minha meta e projeções</summary><FutureFinancial /></details>
+        <details><summary>Estratégia do Perfil do Investidor</summary><Strategy /></details>
       </div> : null}
     </div>
   );
@@ -113,8 +112,8 @@ function IntelligenceDependentSections({ intelligence }: { intelligence: UseQuer
       ) : null}
       {intelligence.data ? (
         <>
-          <details open><summary>Visão geral</summary><Overview data={intelligence.data} /></details>
-          <details><summary>Diagnóstico</summary><Diagnosis data={intelligence.data} /></details>
+          <details open><summary>Como está minha carteira?</summary><Diagnosis data={intelligence.data} /></details>
+          <details><summary>Todos os números da carteira</summary><Overview data={intelligence.data} /></details>
           <details><summary>Recomendações</summary><Recommendations data={intelligence.data} /></details>
           <details><summary>Rebalanceamento</summary><Rebalancing data={intelligence.data} /></details>
         </>
@@ -181,24 +180,55 @@ function InvestorProfileSummary() {
 
 function FutureFinancial() {
   const { token } = useAuth();
-  const queryClient = useQueryClient();
-  const data = queryClient.getQueryData<BuildPortfolioResponse>(["portfolio-projection", token]);
+  const future = useQuery({
+    queryKey: ["financial-future", token],
+    queryFn: () => endpoints.financialFuture(token!),
+    enabled: Boolean(token),
+  });
+  if (future.isLoading) return <LoadingState label="Atualizando seu futuro financeiro..." />;
+  if (future.error) return <ErrorState message="Não foi possível calcular seu futuro financeiro. A carteira e a meta permanecem salvas.">
+    <Button variant="secondary" type="button" onClick={() => { void future.refetch(); }}>Tentar novamente</Button>
+  </ErrorState>;
+  if (!future.data) return <Card title="Defina sua meta patrimonial">
+    <p>Informe sua meta em Montar Carteira. Ela ficará salva na conta e poderá ser acompanhada aqui, tanto no computador quanto no aplicativo.</p>
+    <Link className="button button-secondary" to="/planejar?secao=montar-carteira">Definir minha meta</Link>
+  </Card>;
 
-  if (!data) {
-    return <div className="card"><p>Monte uma carteira usando o Perfil do Investidor para visualizar projeções e cenários. Valores financeiros que não estão no perfil permanecem não informados.</p><Link className="button button-secondary" to="/planejar?secao=montar-carteira">Montar carteira e gerar projeção</Link></div>;
-  }
-
+  const data = future.data;
+  const months = data.goal.estimated_months;
+  const timeToGoal = months == null
+    ? "Não atingida no horizonte simulado"
+    : months === 0 ? "Meta já atingida"
+    : `${Math.floor(months / 12)} ano(s) e ${months % 12} mês(es)`;
   return <div className="page-stack">
-    <div className="metric-grid compact">
-      <MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} />
-      <MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} />
-      <MetricCard label="Patrimônio necessário" value={formatMoney(data.freedom_goal.required_wealth)} />
-      <MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} />
-    </div>
-    <Card title="Cenários projetados">
-      <ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable>
-      <TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} />
+    <Card title="Meu caminho até a meta">
+      <div className="metric-grid compact">
+        <MetricCard label="Patrimônio registrado" value={formatMoney(data.goal.current_wealth)} />
+        <MetricCard label="Meta de patrimônio" value={formatMoney(data.goal.required_wealth)} />
+        <MetricCard label="Falta para a meta" value={formatMoney(data.goal.gap)} />
+        <MetricCard label="Progresso" value={formatPercent(data.goal.achieved_percentage)} />
+        <MetricCard label="Prazo estimado (cenário central)" value={timeToGoal} />
+      </div>
+      <p className="helper">O tempo é uma simulação, não uma previsão garantida. Usa o aporte recorrente e o horizonte definidos no Perfil do Investidor.</p>
+      {data.valuation_note ? <p className="warning-box">{data.valuation_note}</p> : null}
+    </Card>
+    <Card title="Cenários do futuro">
+      <ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total contribuído</th><th>Patrimônio estimado</th><th>Em reais de hoje</th><th>Renda mensal hipotética</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}>
+        <td>{({ stress: "Estresse", conservative: "Conservador", central: "Central", optimistic: "Otimista" } as Record<string, string>)[item.name] ?? item.name}</td>
+        <td>{formatMoney(item.total_contributed)}</td>
+        <td>{formatMoney(item.projected_wealth)}</td>
+        <td>{item.real_projected_wealth == null ? "Inflação não informada" : formatMoney(item.real_projected_wealth)}</td>
+        <td>{formatMoney(item.estimated_periodic_income)}</td>
+      </tr>)}</tbody></table></ResponsiveTable>
+      <details><summary>Reserva, capacidade e premissas</summary>
+        <div className="metric-grid compact">
+          <MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} />
+          <MetricCard label="Reserva recomendada (se calculável)" value={formatMoney(data.diagnosis.reserve_target)} />
+        </div>
+        <TextList items={data.diagnosis.priority_actions} />
+      </details>
       <p className="helper smart-disclaimer">{data.disclaimer}</p>
+      <Button variant="secondary" type="button" onClick={() => { void future.refetch(); }} disabled={future.isFetching}>{future.isFetching ? "Atualizando..." : "Atualizar projeção"}</Button>
     </Card>
   </div>;
 }
@@ -276,40 +306,37 @@ function Overview({ data }: { data: PortfolioIntelligence }) {
 
 function Diagnosis({ data }: { data: PortfolioIntelligence }) {
   const diagnosis = data.diagnosis;
-  return (
-    <div className="page-stack">
+  const score = parseBrazilianNumber(diagnosis.portfolio_score);
+  const state = score == null
+    ? "Avaliação ainda parcial"
+    : score >= 75 ? "Boa aderência estrutural"
+    : score >= 50 ? "Atenção a alguns pontos"
+    : "Revisão prioritária";
+  return <div className="page-stack">
+    <Card title="Resumo do diagnóstico">
+      <h3>{state}</h3>
+      <p>A avaliação considera distribuição, concentração, limites do seu perfil e cobertura de cotações. Não mede a qualidade fundamentalista de todos os ativos nem garante retorno.</p>
+      <div className="metric-grid compact">
+        <MetricCard label="Pontuação estrutural" value={diagnosis.portfolio_score == null ? "Não calculável com segurança" : formatPercent(diagnosis.portfolio_score)} />
+        <MetricCard label="Risco por concentração" value={diagnosis.risk_level} />
+        <MetricCard label="Qualidade dos dados" value={diagnosis.data_quality} />
+      </div>
+    </Card>
+    <Card title="O que precisa de atenção">
+      <TextList items={diagnosis.warnings} fallback="Nenhum alerta estrutural identificado com os dados atuais." />
+      <h3>O que já está bom</h3>
+      <TextList items={diagnosis.strengths} fallback="Aguardando dados suficientes." />
+    </Card>
+    <details><summary>Indicadores e distribuição detalhados</summary>
       <div className="score-grid">
-        <ScoreGauge label="Score da carteira" value={diagnosis.portfolio_score} />
-        <ScoreGauge label="Diversificação" value={diagnosis.diversification_score} />
-        <ScoreGauge label="Concentração" value={diagnosis.concentration_score} />
-        <ScoreGauge label="Liquidez" value={diagnosis.liquidity_score} />
-        <ScoreGauge label="Renda" value={diagnosis.income_score} />
+        <ScoreGauge label="Diversificação estrutural" value={diagnosis.diversification_score} />
+        <ScoreGauge label="Baixa concentração" value={diagnosis.concentration_score} />
       </div>
-      <div className="two-column">
-        <Card title="Diagnóstico">
-          <div className="button-row"><DataStatusBadge status={data.overview.market_data_status} /><span className="badge">Risco: {diagnosis.risk_level}</span><span className="badge">Qualidade: {diagnosis.data_quality}</span></div>
-          <div className="metric-grid compact">
-            <MetricCard label="Pontuação da carteira" value={formatPercent(diagnosis.portfolio_score)} />
-            <MetricCard label="Diversificação" value={formatPercent(diagnosis.diversification_score)} />
-            <MetricCard label="Concentração" value={formatPercent(diagnosis.concentration_score)} />
-            <MetricCard label="Liquidez" value={diagnosis.liquidity_score === null ? "Indisponível" : formatPercent(diagnosis.liquidity_score)} />
-            <MetricCard label="Renda" value={diagnosis.income_score === null ? "Indisponível" : formatPercent(diagnosis.income_score)} />
-          </div>
-        </Card>
-        <Card title="Pontos de atenção">
-          <TextList items={diagnosis.warnings.length ? diagnosis.warnings : ["Nenhum alerta crítico com os dados disponíveis."]} />
-          <h3>Forças</h3>
-          <TextList items={diagnosis.strengths} />
-          <h3>Fraquezas</h3>
-          <TextList items={diagnosis.weaknesses} />
-        </Card>
-      </div>
-      <Card title="Distribuição por classe">
-        <ClassAllocationTable items={diagnosis.class_allocations} />
-        {diagnosis.unclassified_assets.length ? <p className="helper">Sem classe identificada: {diagnosis.unclassified_assets.join(", ")}.</p> : null}
-      </Card>
-    </div>
-  );
+      <p className="helper">Liquidez e renda não recebem nota sem dados de proventos, volumes e condições de resgate.</p>
+      <ClassAllocationTable items={diagnosis.class_allocations} />
+      {diagnosis.unclassified_assets.length ? <p className="helper">Ativos sem classificação: {diagnosis.unclassified_assets.join(", ")}.</p> : null}
+    </details>
+  </div>;
 }
 
 function Recommendations({ data }: { data: PortfolioIntelligence }) {
@@ -462,24 +489,33 @@ function BuildPortfolio() {
     enabled: Boolean(token),
   });
   const policy = policyQuery.data ?? null;
-  // O valor desta simulação é operacional. Risco, objetivos, alocação,
-  // concentração e aporte recorrente vêm exclusivamente do perfil confirmado.
-  const [availableAmount, setAvailableAmount] = useState("10000");
-
+  const savedGoal = useQuery({
+    queryKey: ["financial-goal", token],
+    queryFn: () => endpoints.financialGoal(token!),
+    enabled: Boolean(token),
+  });
+  const [goalAmount, setGoalAmount] = useState("");
+  const [monthlyAmount, setMonthlyAmount] = useState("");
   useEffect(() => {
-    const initial = profileQuery.data?.initial_contribution;
-    if (initial != null && (parseBrazilianNumber(initial) ?? 0) > 0) {
-      setAvailableAmount(String(initial));
-    }
-  }, [profileQuery.data?.initial_contribution]);
+    if (savedGoal.data?.wealth_goal_amount != null) setGoalAmount(String(savedGoal.data.wealth_goal_amount));
+  }, [savedGoal.data?.wealth_goal_amount]);
+  useEffect(() => {
+    if (policy?.monthly_contribution != null) setMonthlyAmount(String(policy.monthly_contribution));
+  }, [policy?.monthly_contribution]);
 
   const mutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!policy || profileQuery.data?.status !== "complete") {
         throw new Error("Confirme seu Perfil do Investidor antes de montar uma carteira.");
       }
+      const wealthGoal = normalizeDecimalForApi(goalAmount);
+      await endpoints.saveFinancialGoal(token!, wealthGoal);
+      void queryClient.invalidateQueries({ queryKey: ["financial-goal", token] });
+      void queryClient.invalidateQueries({ queryKey: ["financial-future", token] });
       return endpoints.buildPortfolio(token!, {
-        available_amount: normalizeDecimalForApi(availableAmount),
+        available_amount: normalizeDecimalForApi(monthlyAmount),
+        wealth_goal_amount: wealthGoal,
+        current_financial_assets: "0",
         objective: policy.objective,
         horizon: policy.investment_horizon,
         risk_profile: policy.risk_profile,
@@ -494,7 +530,7 @@ function BuildPortfolio() {
         // overrides manuais para ampliar limites nem restringir classes.
         allowed_classes: policy.allocations.filter((item) => item.enabled).map((item) => item.asset_class),
         prohibited_classes: [],
-        max_assets: 10,
+        max_assets: null,
         reinvest_income: true,
       });
     },
@@ -521,16 +557,17 @@ function BuildPortfolio() {
   return (
     <div className="page-stack smart-portfolio-flow">
       <Card title="Monte uma carteira para o seu momento">
-        <p className="helper">Sua estratégia é aplicada automaticamente a partir do Perfil do Investidor. Informe apenas o valor disponível para esta simulação.</p>
+        <p className="helper">Sua estratégia é aplicada automaticamente a partir do Perfil do Investidor. Informe sua meta de patrimônio e o aporte deste mês. O sistema determina quantos ativos cabem no valor informado.</p>
         <p className="helper">Perfil aplicado: {policy.risk_profile} • {policy.investment_horizon} • aporte mensal de {formatMoney(policy.monthly_contribution)}. Para alterar a estratégia, revise seu Perfil do Investidor.</p>
         <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-          <CurrencyInput label="Valor disponível para investir" value={availableAmount} onChange={(event) => setAvailableAmount(event.target.value)} />
+          <CurrencyInput label="Patrimônio que quero alcançar" value={goalAmount} onChange={(event) => setGoalAmount(event.target.value)} />
+          <CurrencyInput label="Aporte deste mês" value={monthlyAmount} onChange={(event) => setMonthlyAmount(event.target.value)} />
           {mutation.error ? <div className="span-2"><ErrorState message="Não foi possível montar sua carteira agora. Seus dados foram preservados."><Button type="button" variant="secondary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>Tentar novamente</Button></ErrorState></div> : null}
-          <div className="span-2"><Button type="submit" disabled={mutation.isPending || (parseBrazilianNumber(availableAmount) ?? 0) <= 0}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button></div>
+          <div className="span-2"><Button type="submit" disabled={mutation.isPending || (parseBrazilianNumber(monthlyAmount) ?? 0) <= 0 || (parseBrazilianNumber(goalAmount) ?? 0) <= 0}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button></div>
         </form>
       </Card>
-      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={normalizeDecimalForApi(availableAmount)} /> : null}
+      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={normalizeDecimalForApi(monthlyAmount)} /> : null}
     </div>
   );
 }
@@ -542,7 +579,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
       <Card title="Sua carteira recomendada">
         <div className="metric-grid compact smart-summary">
           <MetricCard label="Confiança" value={confidenceLabel(data.confidence)} />
-          <MetricCard label="Valor total considerado" value={formatMoney(totalConsidered)} />
+          <MetricCard label="Aporte deste mês" value={formatMoney(totalConsidered)} />
           <MetricCard label="Valor alocado" value={formatMoney(data.total_allocated_amount)} />
           <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
           <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />

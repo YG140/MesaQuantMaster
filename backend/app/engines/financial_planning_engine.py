@@ -226,6 +226,9 @@ class FinancialProjectionEngine:
 
     @staticmethod
     def required_wealth(data: BuildPortfolioRequest) -> Decimal | None:
+        # Meta patrimonial informada prevalece sobre a meta derivada de renda.
+        if data.wealth_goal_amount is not None:
+            return data.wealth_goal_amount.quantize(CENT)
         if data.desired_monthly_income is None:
             return None
         base = data.desired_monthly_income * TWELVE / (data.withdrawal_rate / HUNDRED)
@@ -248,11 +251,39 @@ class FinancialProjectionEngine:
             else None
         )
         central = next((item for item in projections if item.name == "central"), None)
-        years = (
-            data.projection_years
-            if required and central and central.projected_wealth >= required
-            else None
-        )
+        # Detecta o primeiro mês da meta usando as MESMAS regras do cenário
+        # central em project(), sem confundir prazo do gráfico com prazo da meta.
+        months = None
+        if required is not None and central is not None:
+            wealth = (
+                data.current_financial_assets
+                if data.current_financial_assets is not None
+                else data.available_amount
+            )
+            monthly = data.monthly_contribution
+            contribution_growth = (data.annual_contribution_growth or Decimal("0")) / HUNDRED
+            appreciation = (cls.SCENARIOS["central"][0] - data.annual_cost_rate) / HUNDRED / TWELVE
+            income_rate = (
+                cls.SCENARIOS["central"][1] / HUNDRED
+                * (Decimal("1") - data.tax_rate / HUNDRED) / TWELVE
+            )
+            if wealth >= required:
+                months = 0
+            else:
+                for year in range(data.projection_years):
+                    for month in range(12):
+                        wealth += monthly
+                        income = wealth * income_rate
+                        wealth += wealth * appreciation
+                        if data.reinvest_income:
+                            wealth += income
+                        if wealth >= required:
+                            months = year * 12 + month + 1
+                            break
+                    if months is not None:
+                        break
+                    monthly *= Decimal("1") + contribution_growth
+        years = (months + 11) // 12 if months is not None else None
         return FinancialFreedomGoal(
             desired_monthly_income=data.desired_monthly_income,
             required_wealth=required,
@@ -260,6 +291,7 @@ class FinancialProjectionEngine:
             gap=gap,
             achieved_percentage=achieved,
             estimated_years=years,
+            estimated_months=months,
             withdrawal_rate=data.withdrawal_rate,
             safety_margin=data.safety_margin,
             risks=[

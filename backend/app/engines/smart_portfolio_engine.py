@@ -261,7 +261,42 @@ class SmartPortfolioEngine:
         projections = FinancialProjectionEngine.project(request)
         eligible, exclusions = cls.eligibility(strategy, candidates)
         scored = cls.score(strategy, eligible)
-        ranked = scored[: request.max_assets]
+        if request.max_assets is None:
+            # Seleção automática sem limite arbitrário de ativos: cada ativo
+            # adicional precisa caber em uma cota de orçamento que permita
+            # ao menos uma unidade pelo preço de referência disponível.
+            affordable = [
+                pair for pair in scored
+                if pair[0].snapshot.current_price is not None
+                and Decimal("0") < pair[0].snapshot.current_price <= request.available_amount
+            ]
+            ranked = []
+            for pair in affordable:
+                proposed = [*ranked, pair]
+                proposed_weights = cls.allocate(request, proposed, strategy)
+                # Só amplia a cesta se TODOS os ativos continuarem com peso
+                # suficiente para ao menos a menor quantidade negociável.
+                if all(
+                    request.available_amount
+                    * proposed_weights.get(item.snapshot.symbol, Decimal("0"))
+                    / HUNDRED
+                    >= item.snapshot.current_price
+                    * (
+                        Decimal("1")
+                        if item.snapshot.asset_class in {
+                            InvestmentClass.STOCK, InvestmentClass.FII,
+                            InvestmentClass.ETF, InvestmentClass.BDR,
+                        }
+                        else Decimal("0.01")
+                    )
+                    for item, _ in proposed
+                ):
+                    ranked = proposed
+            replacement_pool = affordable
+        else:
+            ranked = scored[: request.max_assets]
+            replacement_pool = scored
+        max_selected = len(ranked)
         percentages = cls.allocate(request, ranked, strategy)
         holding_notes: dict[str, str] = {}
         blocked_by_holdings = []
@@ -285,9 +320,9 @@ class SmartPortfolioEngine:
                     if percentages.get(pair[0].snapshot.symbol, Decimal("0")) > 0
                 ]
                 replacements = []
-                for pair in scored:
+                for pair in replacement_pool:
                     symbol = pair[0].snapshot.symbol
-                    if symbol not in attempted and len(ranked) + len(replacements) < request.max_assets:
+                    if symbol not in attempted and len(ranked) + len(replacements) < max_selected:
                         attempted.add(symbol)
                         replacements.append(pair)
                 if not replacements:

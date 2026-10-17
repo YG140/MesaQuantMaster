@@ -8,6 +8,8 @@ import type {
   Brokerage,
   BuildPortfolioRequest,
   BuildPortfolioResponse,
+  WealthGoalSetting,
+  FinancialFutureResponse,
   DashboardSummary,
   InitialPortfolioImport,
   InvestmentCreate,
@@ -100,6 +102,14 @@ export const endpoints = {
     apiRequest<PortfolioIntelligence>("/intelligence/portfolio", { token }),
   portfolioPolicy: (token: string) =>
     apiRequest<PortfolioPolicy | null>("/intelligence/policy", { token }),
+  financialGoal: (token: string) =>
+    apiRequest<WealthGoalSetting | null>("/intelligence/financial-goal", { token }),
+  saveFinancialGoal: (token: string, amount: string) =>
+    apiRequest<WealthGoalSetting>("/intelligence/financial-goal", {
+      method: "PUT", token, body: { wealth_goal_amount: amount },
+    }),
+  financialFuture: (token: string) =>
+    apiRequest<FinancialFutureResponse | null>("/intelligence/financial-future", { token }),
   savePortfolioPolicy: (token: string, payload: PortfolioPolicyPayload) =>
     apiRequest<PortfolioPolicy>("/intelligence/policy", {
       method: "PUT",
