@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal
 
 from app.schemas.intelligence import (
@@ -14,9 +15,19 @@ HUNDRED = Decimal("100")
 TWELVE = Decimal("12")
 
 
+@dataclass(frozen=True)
+class FinancialProfileContext:
+    """Fatos declarados e confirmados no perfil, sem criar valores monetários."""
+    emergency_reserve_months: int | None = None
+    has_relevant_debt: bool | None = None
+
+
 class FinancialDiagnosisEngine:
     @staticmethod
-    def diagnose(data: BuildPortfolioRequest) -> FinancialDiagnosis:
+    def diagnose(
+        data: BuildPortfolioRequest,
+        financial_profile: FinancialProfileContext | None = None,
+    ) -> FinancialDiagnosis:
         missing = [
             label
             for value, label in (
@@ -51,15 +62,25 @@ class FinancialDiagnosisEngine:
                 reserve_months = (
                     data.emergency_reserve / data.essential_monthly_expenses
                 ).quantize(CENT)
+        # O questionário guarda meses cobertos e presença de dívida, não
+        # reais exatos. Usar os fatos conhecidos sem inventar montantes.
+        if reserve_months is None and financial_profile is not None:
+            if financial_profile.emergency_reserve_months is not None:
+                reserve_months = Decimal(financial_profile.emergency_reserve_months)
         debts = []
-        if data.high_cost_debt is not None and data.high_cost_debt > 0:
+        has_debt = bool(data.high_cost_debt is not None and data.high_cost_debt > 0)
+        if financial_profile is not None and financial_profile.has_relevant_debt:
+            has_debt = True
+        if has_debt:
             debts.append(
                 "Existe dívida de custo elevado; priorize sua redução antes de ampliar risco."
             )
         reserve_short = (
-            reserve_target is not None
-            and data.emergency_reserve is not None
-            and data.emergency_reserve < reserve_target
+            (reserve_target is not None
+             and data.emergency_reserve is not None
+             and data.emergency_reserve < reserve_target)
+            or (reserve_months is not None
+                and reserve_months < Decimal(data.emergency_months))
         )
         required = FinancialProjectionEngine.required_wealth(data)
         if debts or reserve_short:
