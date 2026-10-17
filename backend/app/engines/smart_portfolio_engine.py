@@ -210,7 +210,7 @@ class PortfolioStrategy:
             # "alta"); needs_liquidity no scoring é binário -- "moderada"
             # e "alta" mapeiam para necessidade real de liquidez, só
             # "baixa" mapeia para False (ver auditoria, seção 16).
-            needs_liquidity=policy.liquidity_need in {"moderada", "alta"},
+            needs_liquidity=policy.liquidity_need in {"moderada", "média", "alta"},
             # Override operacional só pode ser MAIS restritivo que a
             # política, nunca mais permissivo (seção 11) -- min(), nunca
             # max().
