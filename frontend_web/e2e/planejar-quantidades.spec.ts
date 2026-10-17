@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 const policy = {
   id: "policy-1", user_id: "user-1", name: "Estratégia determinística",
   objective: "crescimento patrimonial", risk_profile: "moderado",
-  investment_horizon: "longo prazo", monthly_contribution: "900",
+  investment_horizon: "longo prazo", monthly_contribution: "10000",
   liquidity_need: "média", income_need: false, emergency_reserve_months: 6,
   maximum_weight_per_asset: "60", maximum_weight_per_sector: "70",
   maximum_weight_per_issuer: "60", rebalance_tolerance: "5",
@@ -54,7 +54,10 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/investor-profile/status", route => route.fulfill({ json: { status: "complete", version: 1, last_reviewed_at: null, confirmed_at: "2026-08-30T12:00:00Z", updated_at: "2026-08-30T12:00:00Z" } }));
   await page.route("**/intelligence/policy", route => route.fulfill({ json: policy }));
   await page.route("**/intelligence/build-portfolio", async route => {
-    expect(Number(route.request().postDataJSON().available_amount)).toBe(10000);
+    expect(route.request().postDataJSON().available_amount).toBeUndefined();
+    expect(route.request().postDataJSON().max_assets).toBeUndefined();
+    expect(Number(route.request().postDataJSON().monthly_contribution)).toBe(10000);
+    expect(Number(route.request().postDataJSON().desired_wealth)).toBe(1000000);
     await route.fulfill({ json: response });
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -70,7 +73,9 @@ for (const viewport of [
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto("/planejar?secao=montar-carteira", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByRole("heading", { name: "Monte uma carteira para o seu momento" })).toBeVisible({ timeout: 30_000 });
-    await page.getByRole("button", { name: "Montar minha carteira" }).click();
+    await page.getByLabel("Patrimônio que deseja alcançar").fill("100000000");
+    await page.getByLabel("Patrimônio que deseja alcançar").fill("100000000");
+  await page.getByRole("button", { name: "Montar minha carteira" }).click();
     const result = page.getByRole("heading", { name: "Sua carteira recomendada" });
     await expect(result).toBeVisible();
     await result.scrollIntoViewIfNeeded();
