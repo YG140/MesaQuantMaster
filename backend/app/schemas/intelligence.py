@@ -110,7 +110,10 @@ class PortfolioOverview(BaseModel):
 
 
 class BuildPortfolioRequest(BaseModel):
-    available_amount: Decimal = Field(gt=0)
+    # O novo fluxo recebe somente o aporte do mês; chamadas legadas podem
+    # continuar informando available_amount explicitamente.
+    available_amount: Decimal | None = Field(default=None, gt=0)
+    desired_wealth: Decimal | None = Field(default=None, gt=0)
     objective: str
     horizon: str
     risk_profile: str
@@ -125,7 +128,9 @@ class BuildPortfolioRequest(BaseModel):
     max_percentage_per_sector: Decimal = Decimal("30")
     allowed_classes: list[str] = Field(default_factory=list)
     prohibited_classes: list[str] = Field(default_factory=list)
-    max_assets: int = Field(default=10, ge=1, le=50)
+    # None: seleção automática por orçamento, preço e qualidade; valor
+    # explícito mantém compatibilidade com integrações legadas.
+    max_assets: int | None = Field(default=None, ge=1)
     net_monthly_income: Decimal | None = Field(default=None, ge=0)
     income_type: str | None = None
     essential_monthly_expenses: Decimal | None = Field(default=None, ge=0)
@@ -161,6 +166,10 @@ class BuildPortfolioRequest(BaseModel):
             )
         if self.monthly_contribution < 0:
             raise ValueError("Aporte mensal não pode ser negativo.")
+        if self.available_amount is None:
+            if self.monthly_contribution <= 0:
+                raise ValueError("Informe um aporte mensal positivo para montar a carteira.")
+            self.available_amount = self.monthly_contribution
         return self
 
 
