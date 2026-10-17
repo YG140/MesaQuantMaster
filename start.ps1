@@ -300,27 +300,42 @@ function Invoke-MesaQuantMaster {
     }
 }
 
+function Assert-PublicCloudWebUri {
+    param([Parameter(Mandatory = $true)][string]$Url)
+
+    $uri = $null
+    if (
+        -not [System.Uri]::TryCreate($Url, [System.UriKind]::Absolute, [ref]$uri) -or
+        $uri.Scheme -ne "https" -or
+        $uri.Host -in @("localhost", "127.0.0.1", "::1") -or
+        $uri.UserInfo -or
+        $uri.Fragment
+    ) {
+        throw "Informe uma URL HTTPS publica do site Mesa Quant Master para -CloudWebUrl."
+    }
+    return $uri
+}
+
+function Invoke-MesaQuantMasterCloud {
+    param(
+        [string]$CloudWebUrl = "https://mesa-quant-master-web.onrender.com/",
+        [switch]$NoBrowser
+    )
+    # A mesma interface web da nuvem atende PC e APK; nenhum dado local e movido.
+    $cloudUri = Assert-PublicCloudWebUri -Url $CloudWebUrl
+    Write-Host "Mesa Quant Master - modo sincronizado (nuvem)"
+    Write-Host "Site: $($cloudUri.AbsoluteUri)"
+    Write-Host "IMPORTANTE: este modo nao transfere sua carteira antiga automaticamente."
+    if (-not $NoBrowser) {
+        [void](Open-MesaQuantMasterBrowser -Url $cloudUri.AbsoluteUri)
+    }
+}
+
 if ($MyInvocation.InvocationName -ne ".") {
     $exitCode = 0
     try {
         if ($Cloud) {
-            # Nao inicia backend local: a mesma aplicacao web da nuvem atende PC e APK.
-            # O banco local e preservado; migracao da conta/carteira e etapa separada.
-            $cloudUri = $null
-            if (
-                -not [System.Uri]::TryCreate($CloudWebUrl, [System.UriKind]::Absolute, [ref]$cloudUri) -or
-                $cloudUri.Scheme -ne "https" -or
-                $cloudUri.Host -in @("localhost", "127.0.0.1", "::1") -or
-                $cloudUri.UserInfo
-            ) {
-                throw "Informe uma URL HTTPS publica do site Mesa Quant Master para -CloudWebUrl."
-            }
-            Write-Host "Mesa Quant Master - modo sincronizado (nuvem)"
-            Write-Host "Site: $($cloudUri.AbsoluteUri)"
-            Write-Host "IMPORTANTE: este modo nao transfere sua carteira antiga automaticamente."
-            if (-not $NoBrowser) {
-                [void](Open-MesaQuantMasterBrowser -Url $cloudUri.AbsoluteUri)
-            }
+            Invoke-MesaQuantMasterCloud -CloudWebUrl $CloudWebUrl -NoBrowser:$NoBrowser
         }
         else {
             Invoke-MesaQuantMaster -NoBrowser:$NoBrowser `
