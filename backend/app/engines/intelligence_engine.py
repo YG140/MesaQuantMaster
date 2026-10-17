@@ -632,14 +632,17 @@ class PortfolioBuilderEngine:
     def build(
         request: BuildPortfolioRequest,
         policy: PortfolioPolicyRead | None = None,
+        financial_profile=None,
     ) -> BuildPortfolioResponse:
         now = datetime.now(timezone.utc)
         from app.engines.financial_planning_engine import (
             FinancialDiagnosisEngine,
             FinancialProjectionEngine,
+            apply_policy_to_planning_request,
         )
 
-        diagnosis = FinancialDiagnosisEngine.diagnose(request)
+        request = apply_policy_to_planning_request(request, policy)
+        diagnosis = FinancialDiagnosisEngine.diagnose(request, financial_profile)
         projections = FinancialProjectionEngine.project(request)
         planning = {
             "diagnosis": diagnosis,
