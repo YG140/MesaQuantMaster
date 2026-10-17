@@ -90,8 +90,8 @@ export function PortfolioIntelligencePage() {
       {area === "Diagnóstico" ? <IntelligenceDependentSections intelligence={intelligence} /> : null}
       {area === "Montar carteira" ? <BuildPortfolio /> : null}
       {area === "Futuro financeiro" ? <div className="intelligence-sections">
-        <details open><summary>Minha estratégia</summary><Strategy /></details>
-        <details open><summary>Projeções, cenários e liberdade financeira</summary><FutureFinancial /></details>
+        <details open><summary>Minha meta e projeções</summary><FutureFinancial /></details>
+        <details><summary>Estratégia do Perfil do Investidor</summary><Strategy /></details>
       </div> : null}
     </div>
   );
@@ -113,8 +113,8 @@ function IntelligenceDependentSections({ intelligence }: { intelligence: UseQuer
       ) : null}
       {intelligence.data ? (
         <>
-          <details open><summary>Visão geral</summary><Overview data={intelligence.data} /></details>
-          <details><summary>Diagnóstico</summary><Diagnosis data={intelligence.data} /></details>
+          <details open><summary>Como está minha carteira?</summary><Diagnosis data={intelligence.data} /></details>
+          <details><summary>Todos os números da carteira</summary><Overview data={intelligence.data} /></details>
           <details><summary>Recomendações</summary><Recommendations data={intelligence.data} /></details>
           <details><summary>Rebalanceamento</summary><Rebalancing data={intelligence.data} /></details>
         </>
@@ -181,24 +181,55 @@ function InvestorProfileSummary() {
 
 function FutureFinancial() {
   const { token } = useAuth();
-  const queryClient = useQueryClient();
-  const data = queryClient.getQueryData<BuildPortfolioResponse>(["portfolio-projection", token]);
+  const future = useQuery({
+    queryKey: ["financial-future", token],
+    queryFn: () => endpoints.financialFuture(token!),
+    enabled: Boolean(token),
+  });
+  if (future.isLoading) return <LoadingState label="Atualizando seu futuro financeiro..." />;
+  if (future.error) return <ErrorState message="Não foi possível calcular seu futuro financeiro. A carteira e a meta permanecem salvas.">
+    <Button variant="secondary" type="button" onClick={() => { void future.refetch(); }}>Tentar novamente</Button>
+  </ErrorState>;
+  if (!future.data) return <Card title="Defina sua meta patrimonial">
+    <p>Informe sua meta em Montar Carteira. Ela ficará salva na conta e poderá ser acompanhada aqui, tanto no computador quanto no aplicativo.</p>
+    <Link className="button button-secondary" to="/planejar?secao=montar-carteira">Definir minha meta</Link>
+  </Card>;
 
-  if (!data) {
-    return <div className="card"><p>Monte uma carteira usando o Perfil do Investidor para visualizar projeções e cenários. Valores financeiros que não estão no perfil permanecem não informados.</p><Link className="button button-secondary" to="/planejar?secao=montar-carteira">Montar carteira e gerar projeção</Link></div>;
-  }
-
+  const data = future.data;
+  const months = data.goal.estimated_months;
+  const timeToGoal = months == null
+    ? "Não atingida no horizonte simulado"
+    : months === 0 ? "Meta já atingida"
+    : `${Math.floor(months / 12)} ano(s) e ${months % 12} mês(es)`;
   return <div className="page-stack">
-    <div className="metric-grid compact">
-      <MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} />
-      <MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} />
-      <MetricCard label="Patrimônio necessário" value={formatMoney(data.freedom_goal.required_wealth)} />
-      <MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} />
-    </div>
-    <Card title="Cenários projetados">
-      <ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable>
-      <TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} />
+    <Card title="Meu caminho até a meta">
+      <div className="metric-grid compact">
+        <MetricCard label="Patrimônio registrado" value={formatMoney(data.goal.current_wealth)} />
+        <MetricCard label="Meta de patrimônio" value={formatMoney(data.goal.required_wealth)} />
+        <MetricCard label="Falta para a meta" value={formatMoney(data.goal.gap)} />
+        <MetricCard label="Progresso" value={formatPercent(data.goal.achieved_percentage)} />
+        <MetricCard label="Prazo estimado (cenário central)" value={timeToGoal} />
+      </div>
+      <p className="helper">O tempo é uma simulação, não uma previsão garantida. Usa o aporte recorrente e o horizonte definidos no Perfil do Investidor.</p>
+      {data.valuation_note ? <p className="warning-box">{data.valuation_note}</p> : null}
+    </Card>
+    <Card title="Cenários do futuro">
+      <ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total contribuído</th><th>Patrimônio estimado</th><th>Em reais de hoje</th><th>Renda mensal hipotética</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}>
+        <td>{({ stress: "Estresse", conservative: "Conservador", central: "Central", optimistic: "Otimista" } as Record<string, string>)[item.name] ?? item.name}</td>
+        <td>{formatMoney(item.total_contributed)}</td>
+        <td>{formatMoney(item.projected_wealth)}</td>
+        <td>{item.real_projected_wealth == null ? "Inflação não informada" : formatMoney(item.real_projected_wealth)}</td>
+        <td>{formatMoney(item.estimated_periodic_income)}</td>
+      </tr>)}</tbody></table></ResponsiveTable>
+      <details><summary>Reserva, capacidade e premissas</summary>
+        <div className="metric-grid compact">
+          <MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} />
+          <MetricCard label="Reserva recomendada (se calculável)" value={formatMoney(data.diagnosis.reserve_target)} />
+        </div>
+        <TextList items={data.diagnosis.priority_actions} />
+      </details>
       <p className="helper smart-disclaimer">{data.disclaimer}</p>
+      <Button variant="secondary" type="button" onClick={() => { void future.refetch(); }} disabled={future.isFetching}>{future.isFetching ? "Atualizando..." : "Atualizar projeção"}</Button>
     </Card>
   </div>;
 }
@@ -276,40 +307,37 @@ function Overview({ data }: { data: PortfolioIntelligence }) {
 
 function Diagnosis({ data }: { data: PortfolioIntelligence }) {
   const diagnosis = data.diagnosis;
-  return (
-    <div className="page-stack">
+  const score = parseBrazilianNumber(diagnosis.portfolio_score);
+  const state = score == null
+    ? "Avaliação ainda parcial"
+    : score >= 75 ? "Boa aderência estrutural"
+    : score >= 50 ? "Atenção a alguns pontos"
+    : "Revisão prioritária";
+  return <div className="page-stack">
+    <Card title="Resumo do diagnóstico">
+      <h3>{state}</h3>
+      <p>A avaliação considera distribuição, concentração, limites do seu perfil e cobertura de cotações. Não mede a qualidade fundamentalista de todos os ativos nem garante retorno.</p>
+      <div className="metric-grid compact">
+        <MetricCard label="Pontuação estrutural" value={diagnosis.portfolio_score == null ? "Não calculável com segurança" : formatPercent(diagnosis.portfolio_score)} />
+        <MetricCard label="Risco por concentração" value={diagnosis.risk_level} />
+        <MetricCard label="Qualidade dos dados" value={diagnosis.data_quality} />
+      </div>
+    </Card>
+    <Card title="O que precisa de atenção">
+      <TextList items={diagnosis.warnings} fallback="Nenhum alerta estrutural identificado com os dados atuais." />
+      <h3>O que já está bom</h3>
+      <TextList items={diagnosis.strengths} fallback="Aguardando dados suficientes." />
+    </Card>
+    <details><summary>Indicadores e distribuição detalhados</summary>
       <div className="score-grid">
-        <ScoreGauge label="Score da carteira" value={diagnosis.portfolio_score} />
-        <ScoreGauge label="Diversificação" value={diagnosis.diversification_score} />
-        <ScoreGauge label="Concentração" value={diagnosis.concentration_score} />
-        <ScoreGauge label="Liquidez" value={diagnosis.liquidity_score} />
-        <ScoreGauge label="Renda" value={diagnosis.income_score} />
+        <ScoreGauge label="Diversificação estrutural" value={diagnosis.diversification_score} />
+        <ScoreGauge label="Baixa concentração" value={diagnosis.concentration_score} />
       </div>
-      <div className="two-column">
-        <Card title="Diagnóstico">
-          <div className="button-row"><DataStatusBadge status={data.overview.market_data_status} /><span className="badge">Risco: {diagnosis.risk_level}</span><span className="badge">Qualidade: {diagnosis.data_quality}</span></div>
-          <div className="metric-grid compact">
-            <MetricCard label="Pontuação da carteira" value={formatPercent(diagnosis.portfolio_score)} />
-            <MetricCard label="Diversificação" value={formatPercent(diagnosis.diversification_score)} />
-            <MetricCard label="Concentração" value={formatPercent(diagnosis.concentration_score)} />
-            <MetricCard label="Liquidez" value={diagnosis.liquidity_score === null ? "Indisponível" : formatPercent(diagnosis.liquidity_score)} />
-            <MetricCard label="Renda" value={diagnosis.income_score === null ? "Indisponível" : formatPercent(diagnosis.income_score)} />
-          </div>
-        </Card>
-        <Card title="Pontos de atenção">
-          <TextList items={diagnosis.warnings.length ? diagnosis.warnings : ["Nenhum alerta crítico com os dados disponíveis."]} />
-          <h3>Forças</h3>
-          <TextList items={diagnosis.strengths} />
-          <h3>Fraquezas</h3>
-          <TextList items={diagnosis.weaknesses} />
-        </Card>
-      </div>
-      <Card title="Distribuição por classe">
-        <ClassAllocationTable items={diagnosis.class_allocations} />
-        {diagnosis.unclassified_assets.length ? <p className="helper">Sem classe identificada: {diagnosis.unclassified_assets.join(", ")}.</p> : null}
-      </Card>
-    </div>
-  );
+      <p className="helper">Liquidez e renda não recebem nota sem dados de proventos, volumes e condições de resgate.</p>
+      <ClassAllocationTable items={diagnosis.class_allocations} />
+      {diagnosis.unclassified_assets.length ? <p className="helper">Ativos sem classificação: {diagnosis.unclassified_assets.join(", ")}.</p> : null}
+    </details>
+  </div>;
 }
 
 function Recommendations({ data }: { data: PortfolioIntelligence }) {
