@@ -134,7 +134,7 @@ def test_sec_rejects_future_filing_unrelated_units_or_unverified_fields(asset_fa
     ], "USD":[
         {"val": 2000, "end":"2029-12-31","filed":"2029-03-20","form":"10-K",
          "accn":"0000320193-29-000001"}
-    ]}}}}}}
+    ]}}}}}
     client, _ = sec_client(facts=bad)
     service = verified_service(db_session, client)
     service._cache.clear()
