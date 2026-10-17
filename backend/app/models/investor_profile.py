@@ -35,6 +35,7 @@ class InvestorProfile(Base):
     horizon: Mapped[str | None] = mapped_column(String(30), nullable=True)
     initial_contribution: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     monthly_contribution: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    wealth_goal_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     contribution_stability: Mapped[str | None] = mapped_column(String(20), nullable=True)
     income_range: Mapped[str | None] = mapped_column(String(30), nullable=True)
     investable_net_worth_range: Mapped[str | None] = mapped_column(String(30), nullable=True)
