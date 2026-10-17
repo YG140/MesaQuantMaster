@@ -69,6 +69,7 @@ jobs:
       - name: Test one-account recovery from local Postgres to isolated Neon-like Postgres
         env:
           ACCOUNT_RECOVERY_CI: "1"
+          ACCOUNT_RECOVERY_SOURCE_URL: postgresql://mesa_ci:temporary-ci-only@localhost:5432/mesa_quant_ci
         run: python -m pytest -q tests/integration/test_local_account_recovery.py
 
       - name: Check migration schema agrees with application models
