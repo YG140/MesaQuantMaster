@@ -256,8 +256,14 @@ class SmartPortfolioEngine:
         diagnosis = FinancialDiagnosisEngine.diagnose(request)
         projections = FinancialProjectionEngine.project(request)
         eligible, exclusions = cls.eligibility(strategy, candidates)
-        scored = cls.score(strategy, eligible)
-        ranked = scored[: request.max_assets]
+        scored = cls.score(strategy, eligible, request)
+        # Sem número arbitrário de posições: adiciona oportunidades por
+        # mérito e desde que cada compra ainda caiba no aporte do mês.
+        ranked = (
+            cls._select_monthly_opportunities(request, scored, strategy, holdings)
+            if request.max_assets is None
+            else scored[: request.max_assets]
+        )
         percentages = cls.allocate(request, ranked, strategy)
         holding_notes: dict[str, str] = {}
         blocked_by_holdings = []
@@ -283,8 +289,13 @@ class SmartPortfolioEngine:
                 replacements = []
                 for pair in scored:
                     symbol = pair[0].snapshot.symbol
-                    if symbol not in attempted and len(ranked) + len(replacements) < request.max_assets:
+                    capacity = request.max_assets if request.max_assets is not None else len(scored)
+                    if symbol not in attempted and len(ranked) + len(replacements) < capacity:
                         attempted.add(symbol)
+                        if request.max_assets is None and not cls._all_positions_executable(
+                            request, ranked + replacements + [pair], strategy, holdings
+                        ):
+                            continue
                         replacements.append(pair)
                 if not replacements:
                     percentages = cls.allocate(request, ranked, strategy)
@@ -417,7 +428,17 @@ class SmartPortfolioEngine:
             preflight=preflight,
             strategy_summary=(
                 f"Objetivo {strategy.objective}; perfil {strategy.risk_profile}; "
-                f"horizonte {strategy.horizon}; até {request.max_assets} ativos."
+                f"horizonte {strategy.horizon}; "
+                + (
+                    "quantidade de ativos automática conforme oportunidades, "
+                    "orçamento mensal e possibilidade de executar as compras."
+                    if request.max_assets is None
+                    else f"até {request.max_assets} ativos."
+                )
+                + (
+                    f" Patrimônio-alvo: R$ {request.desired_wealth:.2f}."
+                    if request.desired_wealth is not None else ""
+                )
                 + (
                     # Nunca afirma que a origem é o onboarding do Perfil do
                     # Investidor: a policy pode ter sido criada por lá OU
@@ -607,7 +628,49 @@ class SmartPortfolioEngine:
         return "Categorias reais de scoring insuficientes para uma análise confiável."
 
     @classmethod
-    def score(cls, strategy, candidates):
+    def _all_positions_executable(cls, request, ranked, strategy, holdings=None):
+        """Só seleciona uma posição se todas as selecionadas ainda puderem
+        receber ao menos a menor unidade negociável, após os limites do perfil
+        e a concentração já detida. O orçamento é o aporte, nunca a meta."""
+        percentages = cls.allocate(request, ranked, strategy)
+        if holdings:
+            percentages, _ = limit_new_contributions(
+                request, ranked, strategy, percentages, holdings, cls.class_label
+            )
+        for candidate, _ in ranked:
+            allocation = percentages.get(candidate.snapshot.symbol, Decimal("0"))
+            price = candidate.snapshot.current_price
+            if allocation <= 0 or price is None or price <= 0:
+                return False
+            step = (
+                Decimal("1") if candidate.snapshot.asset_class in {
+                    InvestmentClass.STOCK, InvestmentClass.FII,
+                    InvestmentClass.ETF, InvestmentClass.BDR
+                } else Decimal("0.01")
+            )
+            amount = request.available_amount * allocation / HUNDRED
+            if amount < price * step:
+                return False
+        return True
+
+    @classmethod
+    def _select_monthly_opportunities(cls, request, scored, strategy, holdings):
+        if not scored:
+            return []
+        # O corte é relativo ao melhor score realmente calculado neste mês:
+        # não acrescentar ativos muito inferiores só para inflar a quantidade.
+        minimum_score = scored[0][1] * Decimal("0.75")
+        selected = []
+        for pair in scored:
+            if pair[1] < minimum_score:
+                break
+            proposal = selected + [pair]
+            if cls._all_positions_executable(request, proposal, strategy, holdings):
+                selected = proposal
+        return selected
+
+    @classmethod
+    def score(cls, strategy, candidates, request=None):
         ranked = []
         for candidate in candidates:
             snapshot = candidate.snapshot
@@ -629,6 +692,18 @@ class SmartPortfolioEngine:
                 score = score * Decimal("0.8") + snapshot.liquidity_score * Decimal(
                     "0.2"
                 )
+            # Meta patrimonial influencia o ranking de crescimento, quando
+            # explicitamente informada e ainda não alcançada; não remove
+            # gates de elegibilidade nem flexibiliza limites de risco.
+            if (
+                request is not None
+                and request.desired_wealth is not None
+                and (request.current_financial_assets is None
+                     or request.current_financial_assets < request.desired_wealth)
+                and "cresci" in strategy.objective.casefold()
+                and snapshot.growth_score is not None
+            ):
+                score = score * Decimal("0.85") + snapshot.growth_score * Decimal("0.15")
             ranked.append((candidate, score.quantize(CENT)))
         return sorted(ranked, key=lambda item: (-item[1], item[0].snapshot.symbol))
 
@@ -879,7 +954,10 @@ class SmartPortfolioEngine:
         # existir, ver PortfolioStrategy); reinvest_income é puramente
         # operacional (não existe em PortfolioPolicy) e continua vindo do
         # request.
-        monthly_contribution = strategy.monthly_contribution
+        monthly_contribution = (
+            request.monthly_contribution
+            if request.max_assets is None else strategy.monthly_contribution
+        )
         if monthly_contribution <= 0:
             return []
         if phase == "protection":
@@ -891,6 +969,19 @@ class SmartPortfolioEngine:
                     suggested_amount=monthly_contribution.quantize(CENT),
                     reason="Priorizar reserva de emergência e dívidas de alto custo antes de elevar o risco.",
                 )
+            ]
+        if request.max_assets is None:
+            return [
+                ContributionPriority(
+                    priority=index,
+                    symbol=asset.symbol,
+                    asset_class=asset.asset_class,
+                    suggested_amount=asset.executable_amount,
+                    reason="Quantidade executável selecionada para o aporte deste mês.",
+                    uses_income=request.reinvest_income,
+                )
+                for index, asset in enumerate(assets, 1)
+                if asset.executable_amount > 0
             ]
         remaining = monthly_contribution
         result = []
