@@ -190,7 +190,7 @@ class PortfolioIntelligenceService:
         universe_considered = len(considered_assets)
 
         if not considered_assets:
-            legacy = PortfolioBuilderEngine.build(data, policy)
+            legacy = PortfolioBuilderEngine.build(data, policy, financial_profile=financial_profile)
             return legacy.model_copy(
                 update={
                     "unallocated_amount": data.available_amount.quantize(
