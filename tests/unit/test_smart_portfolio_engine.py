@@ -1656,9 +1656,8 @@ def test_confirmed_policy_drives_projection_and_risk_even_if_request_disagrees()
 
 def test_automatic_asset_count_follows_affordability_not_a_user_maximum():
     candidates = [
-        candidate("AUTOA3", current_price=Decimal("60")),
-        candidate("AUTOB3", current_price=Decimal("60")),
-        candidate("AUTOC3", current_price=Decimal("60")),
+        candidate(f"AUTO{i}3", current_price=Decimal("10"), sector=f"Setor{i}")
+        for i in range(6)
     ]
     smaller = SmartPortfolioEngine.build(
         request(available_amount=Decimal("100"), max_assets=None), candidates
@@ -1666,7 +1665,7 @@ def test_automatic_asset_count_follows_affordability_not_a_user_maximum():
     larger = SmartPortfolioEngine.build(
         request(available_amount=Decimal("200"), max_assets=None), candidates
     )
-    assert len(smaller.assets) == 1
-    assert len(larger.assets) == 3
+    assert len(smaller.assets) == 4
+    assert len(larger.assets) == 6
     assert smaller.total_allocated_amount <= Decimal("100")
     assert larger.total_allocated_amount <= Decimal("200")
