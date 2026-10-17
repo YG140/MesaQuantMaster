@@ -61,3 +61,22 @@ def test_financial_freedom_target_applies_withdrawal_rate_and_safety_margin():
 
     assert goal.required_wealth == Decimal("1800000.00")
     assert goal.gap == Decimal("1780000.00")
+
+
+def test_direct_wealth_target_overrides_income_derived_target():
+    data = request(desired_wealth=Decimal("750000"))
+    goal = FinancialProjectionEngine.freedom_goal(
+        data, FinancialProjectionEngine.project(data)
+    )
+    assert goal.required_wealth == Decimal("750000.00")
+    assert goal.current_wealth == Decimal("20000")
+    assert goal.gap == Decimal("730000.00")
+
+
+def test_monthly_budget_is_not_counted_twice_as_initial_wealth():
+    data = request(
+        available_amount=None, monthly_contribution=Decimal("300"),
+        current_financial_assets=None, max_assets=None
+    )
+    scenarios = FinancialProjectionEngine.project(data)
+    assert scenarios[0].total_contributed == Decimal("36000.00")
