@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.models.asset import Asset
 from app.repositories.cvm_financial_repository import CvmFinancialRepository
+from app.repositories.cvm_fii_repository import CvmFiiRepository
 from app.services.market_cache import TTLCache
 
 SEC_ROOT = "https://data.sec.gov"
@@ -36,7 +37,7 @@ CACHE_TTL = 3600
 class OfficialFact(BaseModel):
     metric: str
     value: Decimal
-    currency: str
+    unit: str
     period_end: date
     period_start: date | None = None
     filed_at: date | None = None
@@ -121,7 +122,7 @@ def _sec_fact(payload: dict, metric: str, now: datetime, url: str) -> OfficialFa
         possibilities, key=lambda row: (row[0], row[1], row[2])
     )
     return OfficialFact(
-        metric=metric, value=value, currency="USD", period_start=starting,
+        metric=metric, value=value, unit="USD", period_start=starting,
         period_end=ending, filed_at=filed, document_type=form,
         accession=accession, source="SEC EDGAR XBRL / us-gaap",
         source_url=url, acquired_at=now, detail=f"us-gaap:{tag}",
@@ -133,9 +134,10 @@ class OfficialSourceVerificationService:
 
     _cache: TTLCache[dict] = TTLCache()
 
-    def __init__(self, cvm_repository: CvmFinancialRepository, *, client: httpx.Client | None = None,
+    def __init__(self, cvm_repository: CvmFinancialRepository, *, fii_repository: CvmFiiRepository | None = None, client: httpx.Client | None = None,
                  user_agent: str | None = None):
         self.cvm_repository = cvm_repository
+        self.fii_repository = fii_repository
         self.client = client
         self.user_agent = (user_agent if user_agent is not None else settings.SEC_USER_AGENT).strip()
 
@@ -188,7 +190,7 @@ class OfficialSourceVerificationService:
             if value is None:
                 continue
             facts.append(OfficialFact(
-                metric=metric, value=value, currency="BRL",
+                metric=metric, value=value, unit="BRL",
                 period_start=document.period_start,
                 period_end=document.period_end,
                 # CVM reference_date is NOT the public filing date.
@@ -209,6 +211,45 @@ class OfficialSourceVerificationService:
                  "Não há prova do horário de publicação original; data de competência não é data de publicação.",
                  "Métricas com períodos distintos não são diretamente comparáveis.",
              ])
+
+    def verify_fii(self, asset: Asset) -> OfficialVerification:
+        now = _now()
+        base = dict(symbol=asset.ticker, asset_class=asset.asset_type,
+                    market="B3", checked_at=now)
+        if not asset.is_active:
+            return OfficialVerification(**base, status="no_data",
+                warnings=["FII inativo no cadastro."])
+        if self.fii_repository is None:
+            return OfficialVerification(**base, status="source_unavailable",
+                warnings=["Repositório oficial de FIIs indisponível."])
+        issuer = self.fii_repository.linked_issuer(asset.id)
+        if issuer is None:
+            return OfficialVerification(**base, status="not_linked",
+                warnings=["FII ainda não vinculado à CVM por CNPJ."])
+        doc = self.fii_repository.latest_vacancy_document(issuer.id)
+        fact = None
+        if doc is not None:
+            vacancy = _finite(doc.area_weighted_vacancy_rate)
+            if vacancy is not None and 0 <= vacancy <= 1 and doc.property_count > 0:
+                fact = OfficialFact(
+                    metric="vacancy_rate", value=vacancy, unit="ratio",
+                    period_end=doc.reference_date, document_type="INF_TRIMESTRAL",
+                    source="CVM FII Dados Abertos (arquivo importado)",
+                    source_url="https://dados.cvm.gov.br/dataset/fii-doc-inf_trimestral",
+                    acquired_at=now,
+                    detail=(f"CNPJ:{issuer.cnpj}; imóveis:{doc.property_count}; "
+                            f"versão:{doc.version}; método:{doc.aggregation_method}; "
+                            f"coletado_em:{doc.collected_at.isoformat()}"),
+                )
+        return OfficialVerification(
+            **base, status="verified_filing" if fact else "no_data",
+            issuer_name=issuer.official_name, issuer_id=f"CNPJ:{issuer.cnpj}",
+            facts=[fact] if fact else [],
+            warnings=[
+                "Consulta de vacância já importada da CVM, não de preço negociado na B3.",
+                "Não representa receita, rendimento distribuído ou retorno total do FII.",
+            ],
+        )
 
     def verify_sec(self, asset: Asset, cik: str | None) -> OfficialVerification:
         now = _now()
