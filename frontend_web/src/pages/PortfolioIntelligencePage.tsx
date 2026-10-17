@@ -9,7 +9,6 @@ import { CurrencyInput } from "../components/forms/CurrencyInput";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { MetricCard } from "../components/ui/MetricCard";
-import { DataStatusBadge } from "../components/ui/DataBadges";
 import { ScoreGauge } from "../components/ui/ScoreGauge";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { useAuth } from "../features/auth/useAuth";
@@ -490,24 +489,33 @@ function BuildPortfolio() {
     enabled: Boolean(token),
   });
   const policy = policyQuery.data ?? null;
-  // O valor desta simulação é operacional. Risco, objetivos, alocação,
-  // concentração e aporte recorrente vêm exclusivamente do perfil confirmado.
-  const [availableAmount, setAvailableAmount] = useState("10000");
-
+  const savedGoal = useQuery({
+    queryKey: ["financial-goal", token],
+    queryFn: () => endpoints.financialGoal(token!),
+    enabled: Boolean(token),
+  });
+  const [goalAmount, setGoalAmount] = useState("");
+  const [monthlyAmount, setMonthlyAmount] = useState("");
   useEffect(() => {
-    const initial = profileQuery.data?.initial_contribution;
-    if (initial != null && (parseBrazilianNumber(initial) ?? 0) > 0) {
-      setAvailableAmount(String(initial));
-    }
-  }, [profileQuery.data?.initial_contribution]);
+    if (savedGoal.data?.wealth_goal_amount != null) setGoalAmount(String(savedGoal.data.wealth_goal_amount));
+  }, [savedGoal.data?.wealth_goal_amount]);
+  useEffect(() => {
+    if (policy?.monthly_contribution != null) setMonthlyAmount(String(policy.monthly_contribution));
+  }, [policy?.monthly_contribution]);
 
   const mutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!policy || profileQuery.data?.status !== "complete") {
         throw new Error("Confirme seu Perfil do Investidor antes de montar uma carteira.");
       }
+      const wealthGoal = normalizeDecimalForApi(goalAmount);
+      await endpoints.saveFinancialGoal(token!, wealthGoal);
+      void queryClient.invalidateQueries({ queryKey: ["financial-goal", token] });
+      void queryClient.invalidateQueries({ queryKey: ["financial-future", token] });
       return endpoints.buildPortfolio(token!, {
-        available_amount: normalizeDecimalForApi(availableAmount),
+        available_amount: normalizeDecimalForApi(monthlyAmount),
+        wealth_goal_amount: wealthGoal,
+        current_financial_assets: "0",
         objective: policy.objective,
         horizon: policy.investment_horizon,
         risk_profile: policy.risk_profile,
@@ -522,7 +530,7 @@ function BuildPortfolio() {
         // overrides manuais para ampliar limites nem restringir classes.
         allowed_classes: policy.allocations.filter((item) => item.enabled).map((item) => item.asset_class),
         prohibited_classes: [],
-        max_assets: 10,
+        max_assets: null,
         reinvest_income: true,
       });
     },
@@ -549,16 +557,17 @@ function BuildPortfolio() {
   return (
     <div className="page-stack smart-portfolio-flow">
       <Card title="Monte uma carteira para o seu momento">
-        <p className="helper">Sua estratégia é aplicada automaticamente a partir do Perfil do Investidor. Informe apenas o valor disponível para esta simulação.</p>
+        <p className="helper">Sua estratégia é aplicada automaticamente a partir do Perfil do Investidor. Informe sua meta de patrimônio e o aporte deste mês. O sistema determina quantos ativos cabem no valor informado.</p>
         <p className="helper">Perfil aplicado: {policy.risk_profile} • {policy.investment_horizon} • aporte mensal de {formatMoney(policy.monthly_contribution)}. Para alterar a estratégia, revise seu Perfil do Investidor.</p>
         <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-          <CurrencyInput label="Valor disponível para investir" value={availableAmount} onChange={(event) => setAvailableAmount(event.target.value)} />
+          <CurrencyInput label="Patrimônio que quero alcançar" value={goalAmount} onChange={(event) => setGoalAmount(event.target.value)} />
+          <CurrencyInput label="Aporte deste mês" value={monthlyAmount} onChange={(event) => setMonthlyAmount(event.target.value)} />
           {mutation.error ? <div className="span-2"><ErrorState message="Não foi possível montar sua carteira agora. Seus dados foram preservados."><Button type="button" variant="secondary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>Tentar novamente</Button></ErrorState></div> : null}
-          <div className="span-2"><Button type="submit" disabled={mutation.isPending || (parseBrazilianNumber(availableAmount) ?? 0) <= 0}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button></div>
+          <div className="span-2"><Button type="submit" disabled={mutation.isPending || (parseBrazilianNumber(monthlyAmount) ?? 0) <= 0 || (parseBrazilianNumber(goalAmount) ?? 0) <= 0}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button></div>
         </form>
       </Card>
-      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={normalizeDecimalForApi(availableAmount)} /> : null}
+      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={normalizeDecimalForApi(monthlyAmount)} /> : null}
     </div>
   );
 }
@@ -570,7 +579,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
       <Card title="Sua carteira recomendada">
         <div className="metric-grid compact smart-summary">
           <MetricCard label="Confiança" value={confidenceLabel(data.confidence)} />
-          <MetricCard label="Valor total considerado" value={formatMoney(totalConsidered)} />
+          <MetricCard label="Aporte deste mês" value={formatMoney(totalConsidered)} />
           <MetricCard label="Valor alocado" value={formatMoney(data.total_allocated_amount)} />
           <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
           <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />
