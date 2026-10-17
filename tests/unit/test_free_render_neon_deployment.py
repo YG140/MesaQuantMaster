@@ -45,6 +45,10 @@ def test_free_start_script_runs_migrations_before_server_and_does_not_log_secret
     content = start.read_text(encoding="utf-8")
     assert "set -euo pipefail" in content
     assert "python -m alembic upgrade head" in content
+    assert "assert_production_ready(settings)" in content
+    assert content.index("assert_production_ready(settings)") < content.index(
+        "python -m alembic upgrade head"
+    )
     assert "exec uvicorn app.main:app" in content
     assert content.index("python -m alembic upgrade head") < content.index(
         "exec uvicorn app.main:app"
