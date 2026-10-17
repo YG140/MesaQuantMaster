@@ -294,6 +294,11 @@ class PortfolioIntelligenceService:
                     if asset is not None else None
                 ),
             ))
+        # Para a meta de patrimônio usar a carteira real do usuário
+        # autenticado, quando ele não informou um valor manualmente.
+        if data.current_financial_assets is None:
+            current_wealth = sum((item.value for item in holdings), Decimal("0"))
+            data = data.model_copy(update={"current_financial_assets": current_wealth})
         return SmartPortfolioEngine.build(
             data,
             candidates,
