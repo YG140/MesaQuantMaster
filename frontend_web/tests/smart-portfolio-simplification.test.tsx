@@ -14,6 +14,9 @@ async function openBuilder() {
   renderWithProviders(<AppRouter />, "/planejar?secao=montar-carteira");
   await user.click(await screen.findByRole("tab", { name: "Montar carteira" }, { timeout: 10_000 }));
   await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" });
+  const wealth = screen.getByLabelText("Patrimônio que deseja alcançar");
+  await user.clear(wealth);
+  await user.type(wealth, "100000000");
   return user;
 }
 
@@ -49,12 +52,13 @@ function responseWithAssets() {
 describe("simplificação da Carteira Inteligente", () => {
   it("mostra somente o essencial e mantém as configurações avançadas fechadas", async () => {
     await openBuilder();
-    expect(screen.getByLabelText("Valor disponível para investir")).toBeVisible();
-    expect(screen.getByLabelText("Aporte mensal")).toBeVisible();
+    expect(screen.getByLabelText("Patrimônio que deseja alcançar")).toBeVisible();
+    expect(screen.getByLabelText("Valor que pretende investir neste mês")).toBeVisible();
+    expect(screen.queryByLabelText("Valor disponível para investir")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Objetivo")).toBeVisible();
     expect(screen.getByLabelText("Horizonte")).toBeVisible();
     expect(screen.getByLabelText("Perfil de risco")).toBeVisible();
-    expect(screen.getByLabelText("Quantidade máxima de ativos")).toBeVisible();
+    expect(screen.queryByLabelText("Quantidade máxima de ativos")).not.toBeInTheDocument();
     expect(screen.getByText("Configurações avançadas").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByLabelText("Limite por ativo (%)")).not.toBeVisible();
     expect(screen.getByRole("button", { name: "Montar minha carteira" })).toBeEnabled();
@@ -78,7 +82,10 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(screen.getByRole("button", { name: /Analisando dados e montando sua carteira/ })).toBeDisabled();
     expect(calls).toBe(1);
     await waitFor(() => expect(payload.max_percentage_per_asset).toBe("15"));
-    expect(payload.available_amount).toBe("10000");
+    expect(payload.available_amount).toBeUndefined();
+    expect(payload.desired_wealth).toBe("1000000");
+    expect(payload.monthly_contribution).toBe("900");
+    expect(payload.max_assets).toBeUndefined();
     expect(payload.max_percentage_per_class).toBe("40");
     expect(payload.projection_years).toBe(20);
     expect(payload.reinvest_income).toBe(true);
@@ -200,11 +207,12 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(await screen.findByText(/Ainda não há dados suficientes para recomendar ativos/)).toBeVisible();
     expect(screen.getByText("Insuficiente")).toBeVisible();
     server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json({ detail: "internal" }, { status: 500 })));
-    const amount = screen.getByLabelText("Valor disponível para investir");
+    const amount = screen.getByLabelText("Valor que pretende investir neste mês");
     await user.clear(amount); await user.type(amount, "12345");
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/Seus dados foram preservados/);
     expect(amount).toHaveValue("123,45");
+    expect(screen.getByLabelText("Patrimônio que deseja alcançar")).toBeVisible();
     expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeVisible();
   });
 });
