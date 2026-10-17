@@ -125,7 +125,9 @@ class BuildPortfolioRequest(BaseModel):
     max_percentage_per_sector: Decimal = Decimal("30")
     allowed_classes: list[str] = Field(default_factory=list)
     prohibited_classes: list[str] = Field(default_factory=list)
-    max_assets: int = Field(default=10, ge=1, le=50)
+    # None: determina a quantidade elegível pelo orçamento e preço real.
+    # Números explícitos mantêm compatibilidade com clientes antigos.
+    max_assets: int | None = Field(default=10, ge=1)
     net_monthly_income: Decimal | None = Field(default=None, ge=0)
     income_type: str | None = None
     essential_monthly_expenses: Decimal | None = Field(default=None, ge=0)
