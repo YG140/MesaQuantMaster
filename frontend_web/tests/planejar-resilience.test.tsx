@@ -41,7 +41,11 @@ describe("resiliência de /planejar", () => {
 
     await user.click(await screen.findByRole("tab", { name: "Montar carteira" }));
     expect(await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Montar minha carteira" })).toBeEnabled();
+    const wealthInput = screen.getByLabelText("Patrimônio que deseja alcançar");
+    expect(await screen.findByRole("button", { name: "Montar minha carteira" })).toBeDisabled();
+    await user.clear(wealthInput);
+    await user.type(wealthInput, "100000000");
+    expect(screen.getByRole("button", { name: "Montar minha carteira" })).toBeEnabled();
   });
 
   it("Futuro financeiro (Estratégia) continua utilizável quando /intelligence/portfolio falha", async () => {
