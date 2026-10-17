@@ -99,7 +99,7 @@ export const endpoints = {
       body: payload,
     }),
   portfolioIntelligence: (token: string) =>
-    apiRequest<PortfolioIntelligence>("/intelligence/portfolio", { token }),
+    apiRequest<PortfolioIntelligence>("/intelligence/portfolio", { token, timeoutMs: 35_000 }),
   portfolioPolicy: (token: string) =>
     apiRequest<PortfolioPolicy | null>("/intelligence/policy", { token }),
   financialGoal: (token: string) =>
@@ -109,7 +109,7 @@ export const endpoints = {
       method: "PUT", token, body: { wealth_goal_amount: amount },
     }),
   financialFuture: (token: string) =>
-    apiRequest<FinancialFutureResponse | null>("/intelligence/financial-future", { token }),
+    apiRequest<FinancialFutureResponse | null>("/intelligence/financial-future", { token, timeoutMs: 35_000 }),
   savePortfolioPolicy: (token: string, payload: PortfolioPolicyPayload) =>
     apiRequest<PortfolioPolicy>("/intelligence/policy", {
       method: "PUT",
