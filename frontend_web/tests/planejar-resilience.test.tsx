@@ -21,6 +21,29 @@ function failIntelligence(status: number, detail: string) {
 }
 
 describe("resiliência de /planejar", () => {
+  it("não consulta diagnóstico pesado em outras abas", async () => {
+    let calls = 0;
+    server.use(http.get(`${api}/intelligence/portfolio`, () => {
+      calls += 1;
+      return HttpResponse.json({ detail: "Falha simulada" }, { status: 500 });
+    }));
+    const user = await openAuthenticated("/planejar?secao=montar-carteira");
+    expect(await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" })).toBeInTheDocument();
+    expect(calls).toBe(0);
+    await user.click(screen.getByRole("tab", { name: "Futuro financeiro" }));
+    expect(calls).toBe(0);
+    await user.click(screen.getByRole("tab", { name: "Diagnóstico" }));
+    await waitFor(() => expect(calls).toBe(1));
+  });
+
+  it("exibe falha de servidor do perfil separadamente do diagnóstico", async () => {
+    server.use(http.get(`${api}/investor-profile`, () =>
+      HttpResponse.json({ detail: "erro simulado" }, { status: 503 }),
+    ));
+    await openAuthenticated("/planejar?secao=montar-carteira");
+    expect(await screen.findByText(/O servidor não conseguiu carregar o perfil/)).toBeInTheDocument();
+  });
+
   it("shell, abas e Perfil do Investidor continuam quando /intelligence/portfolio falha (500)", async () => {
     failIntelligence(500, "erro interno simulado");
     await openAuthenticated("/planejar");
