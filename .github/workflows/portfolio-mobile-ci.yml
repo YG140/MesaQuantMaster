@@ -86,6 +86,8 @@ jobs:
           assert any(fk["referred_table"] == "assets" for fk in foreign_keys)
           print("All declared ORM tables and core constraints present without create_all")
           PY
+      - name: Test recovery from old SQLite to disposable Postgres
+        run: python -m pytest -q tests/unit/test_local_neon_recovery.py
 
   frontend:
     name: React - qualidade e interface
