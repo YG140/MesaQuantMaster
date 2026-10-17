@@ -136,6 +136,7 @@ class BuildPortfolioRequest(BaseModel):
     current_financial_assets: Decimal | None = Field(default=None, ge=0)
     annual_contribution_growth: Decimal | None = None
     desired_monthly_income: Decimal | None = Field(default=None, ge=0)
+    wealth_goal_amount: Decimal | None = Field(default=None, gt=0)
     preserve_principal: bool = True
     projection_years: int = Field(default=20, ge=1, le=60)
     inflation_rate: Decimal | None = Field(default=None, ge=-20, le=100)
@@ -328,6 +329,7 @@ class FinancialFreedomGoal(BaseModel):
     gap: Decimal | None = None
     achieved_percentage: Decimal | None = None
     estimated_years: int | None = None
+    estimated_months: int | None = None
     withdrawal_rate: Decimal
     safety_margin: Decimal
     risks: list[str] = Field(default_factory=list)
