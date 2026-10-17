@@ -27,7 +27,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.engine import Engine
-from sqlalchemy.sql.sqltypes import NullType
 
 IGNORED_TABLES = {"alembic_version", "sqlite_sequence"}
 BATCH_SIZE = 250
@@ -41,11 +40,10 @@ def source_connection(source: Path) -> sqlite3.Connection:
     if not source.is_file():
         raise MigrationSafetyError(f"Arquivo SQLite não encontrado: {source}")
     with source.open("rb") as f:
-        if f.read(16) != b"SQLite format 3\\x00":
+        if f.read(16) != b"SQLite format 3\x00":
             raise MigrationSafetyError("Arquivo informado não é um banco SQLite válido.")
     # Immutable backup is not assumed: mode=ro supports a live local database.
-    from urllib.parse import quote
-    db = sqlite3.connect(f"file:{quote(str(source.resolve()))}?mode=ro", uri=True)
+    db = sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     status = db.execute("PRAGMA quick_check").fetchone()[0]
     if status != "ok":
@@ -178,7 +176,11 @@ def sqlite_backup(db: sqlite3.Connection, source: Path) -> tuple[Path, str]:
         raise
     finally:
         dest.close()
-    sha = hashlib.sha256(backup.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with backup.open("rb") as saved:
+        for chunk in iter(lambda: saved.read(1024 * 1024), b""):
+            digest.update(chunk)
+    sha = digest.hexdigest()
     return backup, sha
 
 
@@ -221,11 +223,20 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path, help="Caminho do banco SQLite local antigo")
     parser.add_argument("--apply", action="store_true", help="Aplicar somente após backup e confirmação local")
+    parser.add_argument("--inspect", action="store_true", help="Identificar o SQLite local sem conectar à Neon")
     args = parser.parse_args(argv)
     db = None
     engine = None
     try:
         db = source_connection(args.source)
+        if args.inspect:
+            relevant = source_tables(db)
+            print("Diagnóstico somente leitura, sem nomes, senhas ou dados pessoais:")
+            for name in sorted(relevant):
+                print(f"  {name}: {source_count(db, name)} registros")
+            if "users" not in relevant or source_count(db, "users") == 0:
+                print("Atenção: este banco não contém contas antigas; procure outro arquivo .db.")
+            return 0
         url = os.environ.get("MESA_NEON_DATABASE_URL", "").strip()
         if not url:
             raise MigrationSafetyError(
