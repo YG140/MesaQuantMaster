@@ -1623,3 +1623,85 @@ def test_builder_uses_next_eligible_stock_when_best_ranked_is_overweight():
     assert [asset.symbol for asset in result.assets] == ["BBBB3"]
     assert "AAAA3" in {asset.symbol for asset in result.exclusions}
     assert result.assets[0].score == Decimal("70.00")
+
+
+# Seleção automática: sem teto fixo e com orçamento exclusivamente mensal.
+def test_monthly_builder_uses_contribution_as_budget_when_available_not_sent():
+    data = request(
+        available_amount=None,
+        monthly_contribution=Decimal("300"),
+        desired_wealth=Decimal("1000000"),
+        max_assets=None,
+    )
+    assert data.available_amount == Decimal("300")
+    assert data.desired_wealth == Decimal("1000000")
+    assert data.max_assets is None
+
+
+def test_monthly_builder_requires_positive_contribution_without_legacy_budget():
+    with pytest.raises(ValueError, match="aporte mensal positivo"):
+        request(available_amount=None, monthly_contribution=Decimal("0"), max_assets=None)
+
+
+def test_monthly_builder_determines_count_by_executable_prices():
+    params = dict(
+        available_amount=None,
+        max_assets=None,
+        max_percentage_per_asset=Decimal("50"),
+        max_percentage_per_class=Decimal("100"),
+        max_percentage_per_sector=Decimal("100"),
+    )
+    choices = [
+        candidate("AAAA3", score="90", current_price=Decimal("10"), sector="A"),
+        candidate("BBBB3", score="85", current_price=Decimal("10"), sector="B"),
+        candidate("CCCC3", score="80", current_price=Decimal("200"), sector="C"),
+    ]
+    small = SmartPortfolioEngine.build(
+        request(monthly_contribution=Decimal("100"), **params), choices
+    )
+    large = SmartPortfolioEngine.build(
+        request(monthly_contribution=Decimal("10000"), **params), choices
+    )
+    assert {item.symbol for item in small.assets} == {"AAAA3", "BBBB3"}
+    assert {item.symbol for item in large.assets} == {"AAAA3", "BBBB3", "CCCC3"}
+    assert sum(item.executable_amount for item in small.assets) <= Decimal("100")
+    assert sum(item.executable_amount for item in large.assets) <= Decimal("10000")
+    assert all(item.executable_quantity is not None for item in small.assets)
+    assert sum(item.suggested_amount for item in small.contribution_plan) <= Decimal("100")
+
+
+def test_monthly_builder_has_no_arbitrary_fifty_asset_output_limit():
+    choices = [
+        candidate(f"T{i:03d}3", score="85", current_price=Decimal("1"), sector=f"S{i}")
+        for i in range(60)
+    ]
+    result = SmartPortfolioEngine.build(
+        request(
+            available_amount=None, monthly_contribution=Decimal("10000"),
+            max_assets=None, max_percentage_per_asset=Decimal("100"),
+            max_percentage_per_class=Decimal("100"),
+            max_percentage_per_sector=Decimal("100"),
+        ),
+        choices,
+    )
+    assert len(result.assets) == 60
+    assert all(item.executable_quantity is not None for item in result.assets)
+
+
+def test_goal_prioritizes_real_growth_score_without_ignoring_profile():
+    req = request(
+        desired_wealth=Decimal("500000"),
+        current_financial_assets=Decimal("10000"),
+        objective="crescimento patrimonial",
+        max_assets=1,
+    )
+    result = SmartPortfolioEngine.build(
+        req,
+        [
+            candidate("AAAA3", score="80", growth_score=Decimal("10")),
+            candidate("BBBB3", score="80", growth_score=Decimal("95")),
+        ],
+    )
+    assert [item.symbol for item in result.assets] == ["BBBB3"]
+    assert result.freedom_goal.required_wealth == Decimal("500000.00")
+    assert result.freedom_goal.gap == Decimal("490000.00")
