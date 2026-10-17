@@ -2,7 +2,7 @@ name: Carteira inteligente e celular
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/validacao-recomendacoes-acoes-20261017]
   workflow_dispatch:
 
 permissions:
