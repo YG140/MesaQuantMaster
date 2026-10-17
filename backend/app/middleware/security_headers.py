@@ -20,7 +20,11 @@ class SecurityHeadersMiddleware:
                         (b"content-security-policy", b"frame-ancestors 'none'"),
                     ]
                 )
-                if self.hsts_enabled and scope.get("scheme") == "https":
+                # HSTS is enforced by browsers only on HTTPS responses. Sending
+                # it whenever enabled also covers TLS-terminating proxies whose
+                # upstream ASGI scope still reports HTTP, without trusting
+                # potentially spoofed X-Forwarded-* headers.
+                if self.hsts_enabled:
                     headers.append(
                         (
                             b"strict-transport-security",
