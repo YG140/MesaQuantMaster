@@ -22,6 +22,8 @@ from app.repositories.cvm_fii_repository import CvmFiiRepository
 from app.schemas.intelligence import (
     BuildPortfolioRequest,
     BuildPortfolioResponse,
+    WealthGoalSetting,
+    FinancialFutureResponse,
     PortfolioDiagnosis,
     PortfolioIntelligenceResponse,
     PortfolioPolicyRead,
@@ -180,6 +182,37 @@ def update_policy(
 ):
     service = get_service(db)
     return service.save_policy(current_user.id, data)
+
+
+@router.get("/financial-goal", response_model=WealthGoalSetting | None)
+def get_financial_goal(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    return get_service(db).get_wealth_goal(current_user.id)
+
+
+@router.put("/financial-goal", response_model=WealthGoalSetting)
+def save_financial_goal(
+    goal: WealthGoalSetting,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        return get_service(db).save_wealth_goal(current_user.id, goal)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/financial-future", response_model=FinancialFutureResponse | None)
+def get_financial_future(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        return get_service(db).get_financial_future(current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/build-portfolio", response_model=BuildPortfolioResponse)
