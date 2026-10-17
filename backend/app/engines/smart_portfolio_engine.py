@@ -22,6 +22,7 @@ from app.engines.financial_planning_engine import (
     FinancialDiagnosisEngine,
     FinancialProjectionEngine,
     FinancialProfileContext,
+    apply_policy_to_planning_request,
 )
 from app.schemas.market_intelligence import (
     AssetIntelligenceSnapshot,
@@ -255,26 +256,7 @@ class SmartPortfolioEngine:
             if policy is not None
             else PortfolioStrategy.from_request(request)
         )
-        if policy is not None:
-            # O perfil/política é a fonte única também para o diagnóstico
-            # e projeção, não somente para o ranking/alocação dos ativos.
-            horizon_years = {
-                "menos_1_ano": 1, "1_a_3_anos": 3, "3_a_5_anos": 5,
-                "5_a_10_anos": 10, "mais_10_anos": 20,
-                "curto prazo": 2, "médio prazo": 5, "longo prazo": 20,
-            }
-            request = request.model_copy(update={
-                "objective": strategy.objective,
-                "horizon": strategy.horizon,
-                "risk_profile": strategy.risk_profile,
-                "monthly_contribution": strategy.monthly_contribution,
-                "needs_income": strategy.needs_income,
-                "needs_liquidity": strategy.needs_liquidity,
-                "max_percentage_per_asset": strategy.max_percentage_per_asset,
-                "max_percentage_per_sector": strategy.max_percentage_per_sector,
-                "emergency_months": policy.emergency_reserve_months,
-                "projection_years": horizon_years.get(strategy.horizon, request.projection_years),
-            })
+        request = apply_policy_to_planning_request(request, policy)
         diagnosis = FinancialDiagnosisEngine.diagnose(request, financial_profile)
         projections = FinancialProjectionEngine.project(request)
         eligible, exclusions = cls.eligibility(strategy, candidates)
