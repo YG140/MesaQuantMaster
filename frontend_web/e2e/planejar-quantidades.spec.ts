@@ -125,6 +125,7 @@ for (const viewport of [
 test(`detalhes e procedência permanecem dentro da viewport ${viewport.name}`, async ({ page }) => {
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   await page.goto("/planejar?secao=montar-carteira", { waitUntil: "domcontentloaded", timeout: 120_000 });
+  await page.getByLabel("Aporte deste mês").fill("1000000");
   await page.getByRole("button", { name: "Montar minha carteira" }).click();
 
   const asset = page.locator(".recommended-asset").first();
