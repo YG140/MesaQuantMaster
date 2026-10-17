@@ -31,6 +31,7 @@ TABLES = (
     "investor_profiles",
     "manual_indicators",
     "portfolio_action_audits",
+    "portfolio_recommendation_runs",
 )
 USER_TABLES = (
     "brokerages",
@@ -41,6 +42,7 @@ USER_TABLES = (
     "investor_profiles",
     "manual_indicators",
     "portfolio_action_audits",
+    "portfolio_recommendation_runs",
 )
 NON_ACCOUNT_TABLES = {"auth_tokens"}
 USER_DEFAULTS = {"is_email_verified": True, "auth_version": 0}
