@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from app.engines.financial_planning_engine import (
     FinancialDiagnosisEngine,
+    FinancialProfileContext,
     FinancialProjectionEngine,
 )
 from app.schemas.intelligence import BuildPortfolioRequest
@@ -61,3 +62,35 @@ def test_financial_freedom_target_applies_withdrawal_rate_and_safety_margin():
 
     assert goal.required_wealth == Decimal("1800000.00")
     assert goal.gap == Decimal("1780000.00")
+
+
+def test_profile_protects_when_debt_or_reserve_inadequate_without_inventing_amounts():
+    context = FinancialProfileContext(emergency_reserve_months=2, has_relevant_debt=True)
+    data = request(
+        net_monthly_income=None,
+        essential_monthly_expenses=None,
+        total_monthly_expenses=None,
+        emergency_reserve=None,
+        high_cost_debt=None,
+    )
+    diagnosis = FinancialDiagnosisEngine.diagnose(data, context)
+    assert diagnosis.phase == "protection"
+    assert diagnosis.reserve_months_covered == Decimal("2")
+    assert diagnosis.reserve_target is None  # sem despesas exatas, não inventar R$
+    assert diagnosis.estimated_monthly_capacity is None
+    assert diagnosis.debt_alerts
+    assert any("Completar a reserva" in action for action in diagnosis.priority_actions)
+
+
+def test_profile_with_sufficient_reserve_and_no_debt_permits_accumulation():
+    context = FinancialProfileContext(emergency_reserve_months=8, has_relevant_debt=False)
+    data = request(
+        essential_monthly_expenses=None,
+        total_monthly_expenses=None,
+        emergency_reserve=None,
+        high_cost_debt=None,
+    )
+    diagnosis = FinancialDiagnosisEngine.diagnose(data, context)
+    assert diagnosis.phase == "accumulation"
+    assert diagnosis.reserve_months_covered == Decimal("8")
+    assert not diagnosis.debt_alerts
