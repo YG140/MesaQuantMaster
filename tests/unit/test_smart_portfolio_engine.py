@@ -830,8 +830,10 @@ def test_preflight_counts_reflect_candidates_and_exclusions():
     assert preflight.confidence_medium_count == 1
     assert preflight.confidence_low_count == 1
     assert preflight.confidence_insufficient_count == 1
-    assert preflight.eligible_count == 3
-    assert preflight.excluded_count == 1
+    # Confiança LOW continua sendo contada no diagnóstico, mas deixa
+    # de autorizar nova compra de ações sem evidência suficientemente forte.
+    assert preflight.eligible_count == 2
+    assert preflight.excluded_count == 2
     assert preflight.universe_total == 4
     assert preflight.universe_considered == 4
     assert "DDDD3" in {item.symbol for item in result.exclusions}
