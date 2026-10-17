@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # APIs externas opcionais, apenas no backend. Nunca expor ao frontend.
     COINGECKO_DEMO_API_KEY: str = ""
     TWELVEDATA_API_KEY: str = ""
+    # SEC EDGAR requer identificação real do solicitante; sem ela a checagem fica indisponível.
+    # Exemplo: "MesaQuantMaster contato@seudominio.com". Nunca usar contato fictício.
+    SEC_USER_AGENT: str = ""
     # Recurso oficial "Taxas dos Títulos Ofertados pelo Tesouro Direto"
     # (Tesouro Nacional / Tesouro Transparente, CKAN público, sem
     # autenticação) -- confirmado vigente por auditoria direta (HTTP HEAD +
