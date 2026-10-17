@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from app.schemas.intelligence import (
     BuildPortfolioRequest,
+    PortfolioPolicyRead,
     FinancialDiagnosis,
     FinancialFreedomGoal,
     ProjectionScenario,
@@ -20,6 +21,36 @@ class FinancialProfileContext:
     """Fatos declarados e confirmados no perfil, sem criar valores monetários."""
     emergency_reserve_months: int | None = None
     has_relevant_debt: bool | None = None
+
+
+def apply_policy_to_planning_request(
+    data: BuildPortfolioRequest,
+    policy: PortfolioPolicyRead | None,
+) -> BuildPortfolioRequest:
+    """Política confirmada governa diagnóstico e projeção, inclusive sem ativos."""
+    if policy is None:
+        return data
+    years = {
+        "menos_1_ano": 1, "1_a_3_anos": 3, "3_a_5_anos": 5,
+        "5_a_10_anos": 10, "mais_10_anos": 20,
+        "curto prazo": 2, "médio prazo": 5, "longo prazo": 20,
+    }
+    return data.model_copy(update={
+        "objective": policy.objective,
+        "horizon": policy.investment_horizon,
+        "risk_profile": policy.risk_profile,
+        "monthly_contribution": policy.monthly_contribution,
+        "needs_income": policy.income_need,
+        "needs_liquidity": policy.liquidity_need in {"moderada", "média", "alta"},
+        "max_percentage_per_asset": min(
+            data.max_percentage_per_asset, policy.maximum_weight_per_asset
+        ),
+        "max_percentage_per_sector": min(
+            data.max_percentage_per_sector, policy.maximum_weight_per_sector
+        ),
+        "emergency_months": policy.emergency_reserve_months,
+        "projection_years": years.get(policy.investment_horizon, data.projection_years),
+    })
 
 
 class FinancialDiagnosisEngine:
