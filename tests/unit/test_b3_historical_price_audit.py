@@ -10,6 +10,7 @@ from zipfile import ZipFile
 import pytest
 
 from app.engines.b3_historical_price_audit import B3HistoricalPriceAudit
+from app.providers.b3.exceptions import B3ProviderError
 from app.schemas.intelligence import BuildPortfolioRequest
 from app.schemas.market_intelligence import (
     AssetIntelligenceSnapshot, ConfidenceLevel, InvestmentClass,
@@ -154,7 +155,7 @@ def test_truncated_trailer_is_rejected_even_if_matching_record_was_found(tmp_pat
     archive = tmp_path / "COTAHIST_A2026.ZIP"
     with ZipFile(archive, "w") as z:
         z.writestr("COTAHIST_A2026.TXT", "00" + " " * 243 + "\n" + record() + "\n")
-    with pytest.raises(ValueError, match="trailer"):
+    with pytest.raises(B3ProviderError, match="trailer"):
         B3HistoricalPriceAudit.verify(request(), [archive])
 
 
@@ -163,7 +164,7 @@ def test_wrong_internal_member_name_and_wrong_year_are_rejected(tmp_path):
     with pytest.raises(ValueError, match="Data incompatível"):
         B3HistoricalPriceAudit.verify(request(), [archive])
     archive = cotahist_file(tmp_path, member_name="OTHER.TXT")
-    with pytest.raises(ValueError):
+    with pytest.raises(B3ProviderError):
         B3HistoricalPriceAudit.verify(request(), [archive])
 
 
