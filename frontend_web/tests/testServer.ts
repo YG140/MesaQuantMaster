@@ -366,6 +366,35 @@ export const handlers = [
       generated_at: "2026-07-16T18:30:00Z",
     }),
   ),
+  http.get(`${api}/intelligence/financial-goal`, () =>
+    HttpResponse.json({ wealth_goal_amount: "1000000" }),
+  ),
+  http.put(`${api}/intelligence/financial-goal`, async ({ request }) =>
+    HttpResponse.json(await request.json()),
+  ),
+  http.get(`${api}/intelligence/financial-future`, () =>
+    HttpResponse.json({
+      goal: {
+        desired_monthly_income: null, required_wealth: "1000000",
+        current_wealth: "20000", gap: "980000", achieved_percentage: "2",
+        estimated_years: null, estimated_months: null,
+        withdrawal_rate: "4", safety_margin: "20", risks: [],
+        improvement_actions: ["Manter os aportes."], confidence: "medium",
+      },
+      diagnosis: {
+        phase: "accumulation", estimated_monthly_capacity: null,
+        reserve_months_covered: "6", reserve_target: null, debt_alerts: [],
+        liquidity_assessment: "alta", missing_data: [], priority_actions: ["Manter aportes."], confidence: "medium",
+      },
+      projections: [{ name: "central", annual_appreciation_rate: "5", annual_income_rate: "3",
+        total_contributed: "100000", projected_wealth: "200000",
+        estimated_appreciation: "80000", estimated_income: "20000",
+        estimated_periodic_income: "500", real_projected_wealth: null,
+        projected_without_reinvestment: "160000" }],
+      valuation_note: null,
+      disclaimer: "Simulação educacional, sem garantia de retorno.",
+    }),
+  ),
   http.get(`${api}/intelligence/policy`, () =>
     HttpResponse.json({
       id: "policy-1",
