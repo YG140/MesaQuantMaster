@@ -1652,3 +1652,21 @@ def test_confirmed_policy_drives_projection_and_risk_even_if_request_disagrees()
     # Três anos, R$300/mês, nunca os R$99999 fornecidos pela tela.
     assert result.projections[0].total_contributed == Decimal("20800.00")
     assert all(asset.recommended_percentage <= Decimal("10") for asset in result.assets)
+
+
+def test_automatic_asset_count_follows_affordability_not_a_user_maximum():
+    candidates = [
+        candidate("AUTOA3", current_price=Decimal("60")),
+        candidate("AUTOB3", current_price=Decimal("60")),
+        candidate("AUTOC3", current_price=Decimal("60")),
+    ]
+    smaller = SmartPortfolioEngine.build(
+        request(available_amount=Decimal("100"), max_assets=None), candidates
+    )
+    larger = SmartPortfolioEngine.build(
+        request(available_amount=Decimal("200"), max_assets=None), candidates
+    )
+    assert len(smaller.assets) == 1
+    assert len(larger.assets) == 3
+    assert smaller.total_allocated_amount <= Decimal("100")
+    assert larger.total_allocated_amount <= Decimal("200")
