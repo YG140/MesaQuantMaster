@@ -28,7 +28,7 @@ jobs:
       - name: Verify syntax
         run: python -m compileall -q backend/app
       - name: Run portfolio and indicator regression tests
-        run: python -m pytest -q tests/unit/test_smart_portfolio_engine.py tests/unit/test_market_intelligence.py tests/unit/test_sector_relative_valuation.py tests/unit/test_multimarket_scoring.py tests/unit/test_external_market_data_service.py tests/unit/test_bcb_ptax_fx.py
+        run: python -m pytest -q tests/unit/test_smart_portfolio_engine.py tests/unit/test_market_intelligence.py tests/unit/test_sector_relative_valuation.py tests/unit/test_multimarket_scoring.py tests/unit/test_external_market_data_service.py tests/unit/test_bcb_ptax_fx.py tests/unit/test_free_render_neon_deployment.py
 
   frontend:
     name: React - qualidade e interface
