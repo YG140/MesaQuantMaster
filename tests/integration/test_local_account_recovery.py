@@ -107,10 +107,10 @@ def test_full_user_and_portfolio_recovery_without_other_users():
                  operation_type="buy",operation_date=date.today(),quantity=Decimal("4"),
                  unit_price=Decimal("24.30"),fees=Decimal("0.25"),taxes=Decimal("0"),
                  notes="compras anteriores",source="manual",created_at=now,updated_at=now),
-            dict(id=uuid4(),user_id=another,asset_id=other_asset,
+            dict(id=uuid4(),user_id=another,asset_id=other_asset,brokerage_id=None,
                  operation_type="buy",operation_date=date.today(),quantity=Decimal("2"),
                  unit_price=Decimal("17.00"),fees=Decimal("0"),taxes=Decimal("0"),
-                 created_at=now,updated_at=now),
+                 notes=None,source=None,created_at=now,updated_at=now),
         ])
         conn.execute(table(conn, "watchlists").insert(), [
             dict(id=uuid4(),user_id=one,asset_id=asset,created_at=now)
