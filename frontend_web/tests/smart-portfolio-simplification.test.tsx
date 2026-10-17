@@ -47,12 +47,33 @@ function responseWithAssets() {
 }
 
 describe("simplificação da Carteira Inteligente", () => {
+  it("não usa objetivo ou horizonte genéricos quando não existe política do perfil", async () => {
+    let calls = 0;
+    server.use(
+      http.get(`${api}/intelligence/policy`, () => HttpResponse.json(null)),
+      http.post(`${api}/intelligence/build-portfolio`, () => {
+        calls += 1;
+        return HttpResponse.json(responseWithAssets());
+      }),
+    );
+    sessionStorage.setItem("mesa_quant_session", "test-token");
+    renderWithProviders(<AppRouter />, "/planejar?secao=montar-carteira");
+    expect(await screen.findByText("Conclua seu Perfil do Investidor")).toBeVisible();
+    expect(screen.getByText(/objetivo e o horizonte de investimento devem ser definidos pelo seu perfil/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Ver Perfil do Investidor" })).toHaveAttribute("href", "/configuracoes");
+    expect(screen.queryByRole("button", { name: "Montar minha carteira" })).not.toBeInTheDocument();
+    expect(calls).toBe(0);
+  });
+
   it("mostra somente o essencial e mantém as configurações avançadas fechadas", async () => {
     await openBuilder();
     expect(screen.getByLabelText("Valor disponível para investir")).toBeVisible();
     expect(screen.getByLabelText("Aporte mensal")).toBeVisible();
-    expect(screen.getByLabelText("Objetivo")).toBeVisible();
-    expect(screen.getByLabelText("Horizonte")).toBeVisible();
+    expect(screen.getByText("Objetivo definido pelo perfil")).toBeVisible();
+    expect(screen.getByText("Horizonte definido pelo perfil")).toBeVisible();
+    expect(screen.getByText("longo prazo")).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Objetivo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Horizonte" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Perfil de risco")).toBeVisible();
     expect(screen.getByLabelText("Quantidade máxima de ativos")).toBeVisible();
     expect(screen.getByText("Configurações avançadas").closest("details")).not.toHaveAttribute("open");
@@ -79,6 +100,8 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(calls).toBe(1);
     await waitFor(() => expect(payload.max_percentage_per_asset).toBe("15"));
     expect(payload.available_amount).toBe("10000");
+    expect(payload.objective).toBe("crescimento patrimonial");
+    expect(payload.horizon).toBe("longo prazo");
     expect(payload.max_percentage_per_class).toBe("40");
     expect(payload.projection_years).toBe(20);
     expect(payload.reinvest_income).toBe(true);
