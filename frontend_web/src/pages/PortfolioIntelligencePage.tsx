@@ -100,6 +100,7 @@ export function PortfolioIntelligencePage() {
 }
 
 function IntelligenceDependentSections({ intelligence }: { intelligence: UseQueryResult<PortfolioIntelligence, unknown> }) {
+  const [opportunitiesOpen, setOpportunitiesOpen] = useState(false);
   return (
     <div className="intelligence-sections">
       {intelligence.isLoading ? <LoadingState label="Carregando inteligência da carteira..." /> : null}
@@ -124,7 +125,10 @@ function IntelligenceDependentSections({ intelligence }: { intelligence: UseQuer
       {/* Oportunidades gerencia seu próprio estado (query independente, ver
           MarketOpportunities) -- nunca escondida só porque o restante do
           diagnóstico falhou. */}
-      <details><summary>Oportunidades relacionadas à carteira</summary><MarketOpportunities /></details>
+      <details onToggle={(event) => setOpportunitiesOpen(event.currentTarget.open)}>
+        <summary>Oportunidades relacionadas à carteira</summary>
+        {opportunitiesOpen ? <MarketOpportunities /> : null}
+      </details>
     </div>
   );
 }
@@ -752,6 +756,8 @@ export function MarketOpportunities() {
     queryKey: ["portfolio-intelligence", token],
     queryFn: () => endpoints.portfolioIntelligence(token!),
     enabled: Boolean(token),
+    retry: false,
+    staleTime: 30_000,
   });
   const macro = useQuery({
     queryKey: ["macro-context", token],
