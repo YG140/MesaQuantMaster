@@ -145,16 +145,27 @@ class PortfolioIntelligenceService:
             if profile is not None and profile.status == OnboardingStatus.COMPLETE.value
             else None
         )
-        if self.asset_repository is None or self.market_intelligence_service is None:
-            return SmartPortfolioEngine.build(data, [], policy=policy, financial_profile=financial_profile)
-
-        # Apenas posições persistidas pelo usuário autenticado. O frontend não
-        # pode forjar holdings para alterar limites e pareceres.
+        # O patrimônio de referência é obtido da carteira autenticada.
+        # Na ausência de cotação, o custo da posição é apenas uma aproximação.
         portfolio = (
             self.portfolio_service.calculate(user_id)
             if self.portfolio_service is not None else None
         )
         persisted_positions = portfolio.positions if portfolio is not None else []
+        if persisted_positions:
+            current_wealth = sum(
+                (
+                    position.market_value
+                    if position.market_value is not None and position.market_value > 0
+                    else position.invested_amount
+                )
+                for position in persisted_positions
+            )
+            # Impede que um número enviado pelo cliente sobreponha o patrimônio
+            # efetivamente registrado, incluindo no aplicativo Android.
+            data = data.model_copy(update={"current_financial_assets": current_wealth})
+        if self.asset_repository is None or self.market_intelligence_service is None:
+            return SmartPortfolioEngine.build(data, [], policy=policy, financial_profile=financial_profile)
         held_symbols = {position.ticker.upper() for position in persisted_positions}
 
         # Ordenamos explicitamente por ticker (chave estável) em vez de
