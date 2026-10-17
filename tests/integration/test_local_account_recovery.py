@@ -52,7 +52,7 @@ def test_endpoint_safety_rules():
 
 
 def test_full_user_and_portfolio_recovery_without_other_users():
-    src_url = os.environ["DATABASE_URL"]
+    src_url = os.environ["ACCOUNT_RECOVERY_SOURCE_URL"]
     parsed = make_url(src_url)
     # Never allow this integration fixture against a real local or hosted DB.
     assert (parsed.host or "") in ("127.0.0.1", "localhost")
