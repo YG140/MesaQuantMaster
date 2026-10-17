@@ -545,9 +545,9 @@ function BuildPortfolio() {
   // que Strategy usa: portfolio-policy -> GET /intelligence/policy) em vez
   // de receber via prop de intelligence.data.policy -- desacopla esta
   // área de uma eventual falha de /intelligence/portfolio (Correção
-  // interface, resiliência). Ausência/erro de política nunca bloqueia o
-  // formulário: os campos simplesmente seguem com os defaults abaixo até
-  // (se) a política real chegar.
+  // interface, resiliência). Objetivo e horizonte são EXCLUSIVOS da
+  // política confirmada pelo Perfil do Investidor: sem política válida,
+  // a montagem não aceita valores estratégicos genéricos.
   const policyQuery = useQuery({
     queryKey: ["portfolio-policy", token],
     queryFn: () => endpoints.portfolioPolicy(token!),
@@ -557,8 +557,6 @@ function BuildPortfolio() {
   const appliedPolicyDefaults = useRef(false);
   const [availableAmount, setAvailableAmount] = useState("10000");
   const [monthlyContribution, setMonthlyContribution] = useState("0");
-  const [objective, setObjective] = useState("crescimento patrimonial");
-  const [horizon, setHorizon] = useState("médio prazo");
   const [riskProfile, setRiskProfile] = useState("moderado");
   const [liquidity, setLiquidity] = useState("média");
   const [maxAssets, setMaxAssets] = useState("10");
@@ -579,8 +577,6 @@ function BuildPortfolio() {
     if (appliedPolicyDefaults.current || policyQuery.isLoading || !policy) return;
     appliedPolicyDefaults.current = true;
     setMonthlyContribution(String(policy.monthly_contribution ?? "0"));
-    setObjective(policy.objective ?? "crescimento patrimonial");
-    setHorizon(policy.investment_horizon ?? "médio prazo");
     setRiskProfile(policy.risk_profile ?? "moderado");
     setLiquidity(policy.liquidity_need ?? "média");
     setMaxAsset(String(policy.maximum_weight_per_asset ?? "20"));
@@ -593,10 +589,14 @@ function BuildPortfolio() {
     otherSetter((current) => current.filter((item) => item !== assetClass));
   };
   const mutation = useMutation({
-    mutationFn: () => endpoints.buildPortfolio(token!, {
+    mutationFn: () => {
+      if (!policy?.objective || !policy.investment_horizon) {
+        throw new Error("Conclua o Perfil do Investidor antes de montar a carteira.");
+      }
+      return endpoints.buildPortfolio(token!, {
       available_amount: normalizeDecimalForApi(availableAmount),
-      objective,
-      horizon,
+      objective: policy.objective,
+      horizon: policy.investment_horizon,
       risk_profile: riskProfile,
       needs_emergency_reserve: true,
       emergency_months: policy?.emergency_reserve_months ?? 6,
@@ -619,27 +619,38 @@ function BuildPortfolio() {
       ...(desiredIncome ? { desired_monthly_income: normalizeDecimalForApi(desiredIncome) } : {}),
       projection_years: Number.parseInt(projectionYears, 10) || 20,
       reinvest_income: true,
-    }),
+      });
+    },
     onSuccess: (data) => queryClient.setQueryData(["portfolio-projection", token], data),
   });
 
-  // Mesmo padrão de Strategy: aguarda a própria política resolver antes de
-  // expor o formulário, garantindo que os defaults (allowed/objective/
-  // etc., aplicados pelo useEffect acima) já estejam corretos quando o
-  // formulário aparece -- nunca depende de /intelligence/portfolio, só da
-  // própria política (portfolio-policy), independente e rápida.
+  // Aguarda a política do usuário; jamais monta com objetivo ou horizonte
+  // arbitrários quando a política está ausente ou indisponível.
   if (policyQuery.isLoading) return <LoadingState label="Carregando dados para montar a carteira..." />;
+  if (policyQuery.error) {
+    return <ErrorState message="Não foi possível consultar os parâmetros do seu Perfil do Investidor.">
+      <Button type="button" variant="secondary" onClick={() => policyQuery.refetch()} disabled={policyQuery.isFetching}>Tentar novamente</Button>
+    </ErrorState>;
+  }
+  if (!policy?.objective || !policy.investment_horizon) {
+    return <Card title="Conclua seu Perfil do Investidor">
+      <p className="helper">O objetivo e o horizonte de investimento devem ser definidos pelo seu perfil antes de montar a carteira.</p>
+      <Link className="button button-secondary" to="/configuracoes">Ver Perfil do Investidor</Link>
+    </Card>;
+  }
 
   return (
     <div className="page-stack smart-portfolio-flow">
       <Card title="Monte uma carteira para o seu momento">
-        <p className="helper">Informe o essencial. Os demais parâmetros continuam disponíveis nas configurações avançadas.</p>
+        <p className="helper">Informe o essencial. Seu objetivo e horizonte são aplicados automaticamente a partir do Perfil do Investidor.</p>
         <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
           <CurrencyInput label="Valor disponível para investir" value={availableAmount} onChange={(event) => setAvailableAmount(event.target.value)} />
           <CurrencyInput label="Aporte mensal" value={monthlyContribution} onChange={(event) => setMonthlyContribution(event.target.value)} />
-          <Select label="Objetivo" value={objective} onChange={(event) => setObjective(event.target.value)}><option value="reserva">Reserva</option><option value="renda">Renda</option><option value="crescimento patrimonial">Crescimento patrimonial</option><option value="preservação de capital">Preservação de capital</option></Select>
-          <Select label="Horizonte" value={horizon} onChange={(event) => setHorizon(event.target.value)}><option value="curto prazo">Curto prazo</option><option value="médio prazo">Médio prazo</option><option value="longo prazo">Longo prazo</option></Select>
+          <dl className="settings-facts span-2" aria-label="Parâmetros automáticos do Perfil do Investidor">
+            <div><dt>Objetivo definido pelo perfil</dt><dd>{investorProfileObjectiveLabel(policy.objective)}</dd></div>
+            <div><dt>Horizonte definido pelo perfil</dt><dd>{policy.investment_horizon.replace(/_/g, " ")}</dd></div>
+          </dl>
           <Select label="Perfil de risco" value={riskProfile} onChange={(event) => setRiskProfile(event.target.value)}><option value="conservador">Conservador</option><option value="moderado">Moderado</option><option value="arrojado">Arrojado</option></Select>
           <Input label="Quantidade máxima de ativos" inputMode="numeric" value={maxAssets} onChange={(event) => setMaxAssets(event.target.value.replace(/\D/g, ""))} />
           <details className="span-2 details-panel smart-advanced-settings">
