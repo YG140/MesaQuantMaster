@@ -128,11 +128,17 @@ def candidate(
         valid_until=NOW,
         confidence=ConfidenceLevel.HIGH,
     )
+    # Evidência sintética coerente apenas para os testes de alocação.
+    reference_low = (
+        current_price * Decimal("1.30")
+        if current_price is not None and current_price > 0 else Decimal("15")
+    )
     snapshot = AssetIntelligenceSnapshot(
         symbol=symbol,
         name=symbol,
         asset_class=asset_class,
         current_price=current_price,
+        market_updated_at=NOW,
         indicators=[indicator],
         overall_score=Decimal(score) if score is not None else None,
         quality_score=quality_score,
@@ -144,10 +150,14 @@ def candidate(
         liquidity_score=liquidity_score,
         strategy_fit_score=strategy_fit_score,
         recommendation=RecommendationAction.ANALYZE_TO_BUY,
-        valuation_status=ValuationStatus.NEAR_ESTIMATED_VALUE,
+        valuation_status=ValuationStatus.ATTRACTIVE,
         valuation=ValuationAssessment(
-            status=ValuationStatus.NEAR_ESTIMATED_VALUE,
+            status=ValuationStatus.ATTRACTIVE,
             confidence=ConfidenceLevel.MEDIUM,
+            methods=["Faixa relativa setorial: LPA e VPA de pares"],
+            estimated_range_low=reference_low,
+            estimated_range_high=reference_low * Decimal("1.10"),
+            data_date=NOW,
         ),
         confidence=confidence,
         coverage_percentage=Decimal(coverage),
@@ -205,18 +215,27 @@ def _stub_snapshot(
         valid_until=NOW,
         confidence=ConfidenceLevel.HIGH,
     )
+    reference_low = (
+        current_price * Decimal("1.30")
+        if current_price is not None and current_price > 0 else Decimal("15")
+    )
     return AssetIntelligenceSnapshot(
         symbol=symbol,
         name=symbol,
         asset_class=InvestmentClass.STOCK,
         current_price=current_price,
+        market_updated_at=NOW,
         indicators=[indicator],
         overall_score=overall_score,
         recommendation=RecommendationAction.ANALYZE_TO_BUY,
-        valuation_status=ValuationStatus.NEAR_ESTIMATED_VALUE,
+        valuation_status=ValuationStatus.ATTRACTIVE,
         valuation=ValuationAssessment(
-            status=ValuationStatus.NEAR_ESTIMATED_VALUE,
+            status=ValuationStatus.ATTRACTIVE,
             confidence=ConfidenceLevel.MEDIUM,
+            methods=["Faixa relativa setorial: LPA e VPA de pares"],
+            estimated_range_low=reference_low,
+            estimated_range_high=reference_low * Decimal("1.10"),
+            data_date=NOW,
         ),
         confidence=confidence,
         coverage_percentage=Decimal("30"),
@@ -336,11 +355,12 @@ def test_legacy_low_coverage_alone_does_not_exclude_when_confidence_sufficient()
 
 
 # Cenário 2: confidence LOW -> elegível se demais requisitos críticos presentes.
-def test_confidence_low_is_eligible_when_critical_requirements_present():
+def test_confidence_low_is_not_enough_for_new_stock_purchase():
     result = SmartPortfolioEngine.build(
         request(), [candidate("LOWC3", confidence=ConfidenceLevel.LOW)]
     )
-    assert [item.symbol for item in result.assets] == ["LOWC3"]
+    assert result.assets == []
+    assert "confiança de dados média ou alta" in result.exclusions[0].reasons[0]
 
 
 # Cenário 3: confidence MEDIUM -> elegível.
@@ -480,7 +500,7 @@ def test_insufficient_scoring_categories_excludes_with_generic_reason():
 
 
 # Cenário 18: recommendation_blocked legado não-crítico sozinho não exclui.
-def test_legacy_recommendation_blocked_alone_does_not_exclude():
+def test_explicit_quality_block_prevents_stock_purchase_even_if_coverage_is_medium():
     blocked = DataQualityReport(
         data_completeness=Decimal("30"),
         data_freshness=Decimal("30"),
@@ -491,7 +511,8 @@ def test_legacy_recommendation_blocked_alone_does_not_exclude():
         request(),
         [candidate("BLOCKED3", confidence=ConfidenceLevel.MEDIUM, data_quality=blocked)],
     )
-    assert [item.symbol for item in result.assets] == ["BLOCKED3"]
+    assert not result.assets
+    assert any("bloqueio explícito de qualidade" in reason for reason in result.exclusions[0].reasons)
 
 
 # Cenário 19 + TESTE DO BUG PRINCIPAL (seção 37 do prompt): required
@@ -506,7 +527,7 @@ def test_p2_bug_scenario_asset_not_excluded_by_legacy_gate_alone():
         [
             candidate(
                 "BUG3",
-                confidence=ConfidenceLevel.LOW,
+                confidence=ConfidenceLevel.MEDIUM,
                 coverage="35",
                 score=None,
                 quality_score=Decimal("60"),
