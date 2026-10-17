@@ -166,6 +166,11 @@ class BuildPortfolioRequest(BaseModel):
             )
         if self.monthly_contribution < 0:
             raise ValueError("Aporte mensal não pode ser negativo.")
+        # Chamadas antigas que enviavam available_amount sem declarar o
+        # teto continuam com o default histórico de 10 ativos.
+        # O novo formulário omite available_amount e escolhe automaticamente.
+        if "available_amount" in self.model_fields_set and "max_assets" not in self.model_fields_set:
+            self.max_assets = 10
         if self.available_amount is None:
             if self.monthly_contribution <= 0:
                 raise ValueError("Informe um aporte mensal positivo para montar a carteira.")
