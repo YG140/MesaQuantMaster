@@ -25,7 +25,7 @@ services:
       - key: SECURITY_HSTS_ENABLED
         value: "true"
       - key: FRONTEND_ORIGINS
-        value: https://localhost
+        value: '["https://localhost","https://mesa-quant-master-web.onrender.com"]'
       - key: DATABASE_URL
         sync: false  # Colar no Render o URL TLS da Neon, nunca no GitHub
       - key: SECRET_KEY
