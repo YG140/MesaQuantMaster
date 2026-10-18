@@ -147,6 +147,11 @@ class PrePurchaseAuditService:
                 )
                 continue
 
+            # Comparar balanços de escopos distintos (individual x
+            # consolidado) geraria falsos alarmes. CVM de referência é
+            # consolidada; a outra fonte precisa DECLARAR mesmo escopo.
+            if provenance.get("scope") != "consolidated":
+                continue
             same_period = official_by_key.get((ind.key, ind.reference_date.date()), [])
             # Várias observações da própria fonte para a mesma data não
             # permitem presumir qual delas seria comparável. Não misturar.
