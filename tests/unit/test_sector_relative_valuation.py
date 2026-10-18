@@ -294,11 +294,11 @@ def test_separate_pe_and_pb_cohorts_do_not_create_a_false_sector_discount():
     group = [universe(price="45")[0]]
     for idx in range(3):
         group.append(_alter_indicators(
-            stock(f"PEER{idx}3", price="60"), drop={"price_book"},
+            stock(f"PEER{idx}3", price="60", issuer=f"issuer-pe-{idx}"), drop={"price_book"},
         ))
     for idx in range(3):
         group.append(_alter_indicators(
-            stock(f"BOOK{idx}3", price="60"), drop={"price_earnings"},
+            stock(f"BOOK{idx}3", price="60", issuer=f"issuer-book-{idx}"), drop={"price_earnings"},
         ))
     result = enrich_sector_valuations(group)["ALVO3"]
     assert result.valuation.status == ValuationStatus.INSUFFICIENT_DATA
@@ -423,12 +423,12 @@ def test_unpaired_ratios_never_raise_valuation_score_when_price_range_is_invalid
     group = [universe(price="45")[0]]
     for idx in range(3):
         group.append(_alter_indicators(
-            stock(f"ELEC{idx}3", price="60", pe="3", pb="1"),
+            stock(f"ELEC{idx}3", price="60", pe="3", pb="1", issuer=f"issuer-elec-{idx}"),
             drop={"price_book"},
         ))
     for idx in range(3):
         group.append(_alter_indicators(
-            stock(f"BOOK{idx}3", price="60", pe="12", pb="1"),
+            stock(f"BOOK{idx}3", price="60", pe="12", pb="1", issuer=f"issuer-other-{idx}"),
             drop={"price_earnings"},
         ))
     result = enrich_sector_valuations(group)["ALVO3"]
