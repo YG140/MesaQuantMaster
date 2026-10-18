@@ -45,6 +45,9 @@ COMPARABLE_KEYS = {
     "net_debt_equity": ("debt_score", False),
     "revenue_cagr_3y": ("growth_score", True),
 }
+# Preserve the fundamental baseline when sector comparisons are recomputed.
+SCORE_FIELDS = ("quality_score", "valuation_score", "income_score", "growth_score",
+                "debt_score", "risk_score", "liquidity_score")
 
 
 @dataclass(frozen=True)
@@ -301,7 +304,13 @@ def _valuation(snapshot: AssetIntelligenceSnapshot, peers: list[PeerAsset], at: 
 def _comparisons(snapshot: AssetIntelligenceSnapshot, peers: list[PeerAsset], at: datetime):
     annotated = []
     deltas = {}
-    for item in snapshot.indicators:
+    for previous in snapshot.indicators:
+        # A execução anterior pode ter usado outro conjunto de pares.
+        # Apagar essa etiqueta antes de tentar gerar outra.
+        item = (
+            previous.model_copy(update={"sector_comparison": None})
+            if previous.sector_comparison is not None else previous
+        )
         key = item.key
         own = _numeric(snapshot, key, at) if key in COMPARABLE_KEYS else None
         med = _metric_median(peers, key, at) if own is not None else None
@@ -341,10 +350,26 @@ def enrich_sector_valuations(assets: list[PeerAsset]) -> dict[str, AssetIntellig
         at = _aware(snap.calculated_at)
         valuation = _valuation(snap, peers, at)
         if len(peers) < MIN_PEERS:
+            # Reexecuções com universo menor não podem conservar bônus
+            # setorial nem rótulos de comparação de uma execução anterior.
+            baseline = snap.sector_baseline_scores
+            restored = {key: baseline[key] for key in SCORE_FIELDS if key in baseline}
+            if restored:
+                available = [value for value in restored.values() if value is not None]
+                if len(available) >= 2:
+                    restored["overall_score"] = (
+                        sum(available, Decimal("0")) / len(available)
+                    ).quantize(CENT)
             result[snap.symbol] = snap.model_copy(update={
+                **restored,
                 "valuation": valuation,
                 "valuation_status": valuation.status,
                 "recommendation": RecommendationAction.REVIEW_DATA,
+                "indicators": [
+                    item.model_copy(update={"sector_comparison": None})
+                    if item.sector_comparison is not None else item
+                    for item in snap.indicators
+                ],
                 "warning_reasons": [
                     *snap.warning_reasons,
                     valuation.peer_comparison or "Sem pares setoriais confiáveis.",
@@ -352,11 +377,15 @@ def enrich_sector_valuations(assets: list[PeerAsset]) -> dict[str, AssetIntellig
             })
             continue
         indicators, deltas = _comparisons(snap, peers, at)
+        # Um score de valor relativo não pode receber prêmio baseado em
+        # mediana incompleta se a própria faixa de avaliação foi recusada.
+        if valuation.status == ValuationStatus.INSUFFICIENT_DATA:
+            deltas.pop("valuation_score", None)
         updates = {"indicators": indicators, "valuation": valuation, "valuation_status": valuation.status}
         # analyze_assets() pode ser chamado por lotes antes da montagem
         # final. Guarde a nota fundamentada original e reaplique sempre a
         # partir dela; nunca duplique o bônus relativo em uma segunda passagem.
-        score_fields = ("quality_score", "valuation_score", "income_score", "growth_score", "debt_score", "risk_score", "liquidity_score")
+        score_fields = SCORE_FIELDS
         baseline = snap.sector_baseline_scores or {
             field: getattr(snap, field) for field in score_fields
         }
