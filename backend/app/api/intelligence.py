@@ -21,6 +21,8 @@ from app.repositories.portfolio_recommendation_history_repository import Portfol
 from app.schemas.portfolio_recommendation_history import RecommendationHistorySummary, RecommendationHistoryDetail, RecommendationPerformanceResponse
 from app.repositories.cvm_financial_repository import CvmFinancialRepository
 from app.repositories.cvm_fii_repository import CvmFiiRepository
+from app.schemas.emergency_reserve import EmergencyReservePlanRequest, EmergencyReservePlanResponse
+from app.engines.emergency_reserve_engine import EmergencyReserveEngine
 from app.schemas.intelligence import (
     BuildPortfolioRequest,
     BuildPortfolioResponse,
@@ -210,6 +212,25 @@ def save_financial_goal(
         return get_service(db).save_wealth_goal(current_user.id, goal)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/emergency-reserve/plan", response_model=EmergencyReservePlanResponse)
+def plan_emergency_reserve(
+    data: EmergencyReservePlanRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Previsualiza reserva por perfil; sem persistir saldo ou fazer operações."""
+    profile = InvestorProfileRepository(db).get_by_user(current_user.id)
+    confirmed = profile is not None and profile.status == "complete"
+    policy = PortfolioPolicyRepository(db).get_by_user(current_user.id) if confirmed else None
+    return EmergencyReserveEngine.build(
+        data, base_months=policy.emergency_reserve_months if policy else 6,
+        unstable_income=data.income_unstable,
+        dependents=(profile.dependents or 0) if confirmed else 0,
+        has_relevant_debt=bool(profile.has_relevant_debt) if confirmed else False,
+        policy_confirmed=policy is not None,
+    )
 
 
 @router.get("/financial-future", response_model=FinancialFutureResponse | None)
