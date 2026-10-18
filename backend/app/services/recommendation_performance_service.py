@@ -111,9 +111,10 @@ def _percent(numerator: Decimal, denominator: Decimal) -> Decimal:
 
 def _return(run_id: UUID, date_of_run: datetime, horizon_months: int, status: str,
             *, reasons: list[str] | None = None, **kwargs) -> RecommendationPerformanceResponse:
+    warnings = [*(reasons or []), *kwargs.pop("warnings", [])]
     return RecommendationPerformanceResponse(
         run_id=run_id, generated_at=date_of_run, horizon_months=horizon_months,
-        status=status, warnings=reasons or [], **kwargs,
+        status=status, warnings=warnings, **kwargs,
     )
 
 
