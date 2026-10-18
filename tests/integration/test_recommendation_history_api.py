@@ -149,3 +149,50 @@ def test_pagination_is_bounded_and_invalid_uuid_or_private_id_is_not_exposed(cli
     assert client.get("/intelligence/recommendation-history?offset=-1").status_code == 422
     assert client.get("/intelligence/recommendation-history/invalid").status_code == 422
     assert client.get(f"/intelligence/recommendation-history/{uuid4()}").status_code == 404
+
+
+def test_performance_endpoint_is_private_readonly_and_never_claims_real_profit(
+    client, db_session, active_user
+):
+    response = client.post("/intelligence/build-portfolio", json=request_payload())
+    assert response.status_code == 200
+    entry = response.json()["history_id"]
+    # Sem seleção, não é necessário consultar a B3 nem inventar um benchmark.
+    result = client.get(f"/intelligence/recommendation-history/{entry}/performance")
+    assert result.status_code == 200, result.text
+    payload = result.json()
+    assert payload["status"] == "unavailable"
+    assert payload["portfolio_price_change_percent"] is None
+    assert payload["realized_profit_status"] == "not_calculated"
+    assert payload["total_return_status"] == "not_calculated"
+    assert payload["dividends_status"] == "not_verified"
+    assert payload["costs_and_taxes_status"] == "not_verified"
+    assert client.get(
+        f"/intelligence/recommendation-history/{entry}/performance?horizon_months=2"
+    ).status_code == 422
+
+    stranger = User(
+        name="Outra pessoa", email="performance-stranger@example.com",
+        hashed_password="synthetic", is_active=True,
+    )
+    db_session.add(stranger)
+    db_session.commit()
+    app.dependency_overrides[get_current_active_user] = lambda: stranger
+    assert client.get(
+        f"/intelligence/recommendation-history/{entry}/performance"
+    ).status_code == 404
+    assert client.get(
+        f"/intelligence/recommendation-history/{uuid4()}/performance"
+    ).status_code == 404
+
+
+def test_performance_rejects_modified_immutable_history(
+    client, db_session
+):
+    result = client.post("/intelligence/build-portfolio", json=request_payload())
+    uid = UUID(result.json()["history_id"])
+    item = db_session.query(PortfolioRecommendationRun).filter_by(id=uid).one()
+    item.record_json += " "
+    db_session.commit()
+    attempt = client.get(f"/intelligence/recommendation-history/{uid}/performance")
+    assert attempt.status_code == 409
