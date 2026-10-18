@@ -24,6 +24,10 @@ services:
         value: "false"
       - key: SECURITY_HSTS_ENABLED
         value: "true"
+      - key: AUTH_PUBLIC_REGISTRATION_ENABLED
+        value: "false"
+      - key: SMTP_USE_TLS
+        value: "true"
       - key: FRONTEND_ORIGINS
         value: '["https://localhost","https://mesa-quant-master-web.onrender.com"]'
       - key: DATABASE_URL
