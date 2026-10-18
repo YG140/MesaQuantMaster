@@ -28,7 +28,7 @@ jobs:
       - name: Verify syntax
         run: python -m compileall -q backend/app
       - name: Run portfolio and indicator regression tests
-        run: python -m pytest -q tests/unit/test_smart_portfolio_engine.py tests/integration/test_official_source_verification.py tests/unit/test_pre_purchase_audit_service.py tests/unit/test_financial_planning_engine.py tests/unit/test_market_intelligence.py tests/unit/test_sector_relative_valuation.py tests/unit/test_stock_purchase_eligibility.py tests/unit/test_multimarket_scoring.py tests/unit/test_external_market_data_service.py tests/unit/test_bcb_ptax_fx.py tests/unit/test_free_render_neon_deployment.py
+        run: python -m pytest -q tests/unit/test_smart_portfolio_engine.py tests/integration/test_recommendation_history_api.py tests/integration/test_official_source_verification.py tests/unit/test_pre_purchase_audit_service.py tests/unit/test_financial_planning_engine.py tests/unit/test_market_intelligence.py tests/unit/test_sector_relative_valuation.py tests/unit/test_stock_purchase_eligibility.py tests/unit/test_multimarket_scoring.py tests/unit/test_external_market_data_service.py tests/unit/test_bcb_ptax_fx.py tests/unit/test_free_render_neon_deployment.py
 
   postgres_migrations:
     name: PostgreSQL - migracoes de banco vazio

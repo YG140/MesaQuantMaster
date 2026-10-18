@@ -4,6 +4,7 @@ from app.models.asset import Asset
 from app.models.brokerage import Brokerage
 from app.models.operation import Operation
 from app.models.portfolio_action_audit import PortfolioActionAudit
+from app.models.portfolio_recommendation_run import PortfolioRecommendationRun
 from app.models.portfolio_policy import PortfolioPolicy, PortfolioPolicyAllocation
 from app.models.investor_profile import InvestorProfile
 from app.models.watchlist import Watchlist
@@ -31,6 +32,7 @@ __all__ = [
     "Brokerage",
     "Operation",
     "PortfolioActionAudit",
+    "PortfolioRecommendationRun",
     "PortfolioPolicy",
     "PortfolioPolicyAllocation",
     "InvestorProfile",

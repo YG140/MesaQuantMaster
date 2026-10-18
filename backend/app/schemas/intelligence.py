@@ -196,6 +196,7 @@ class BuildPortfolioIndicator(BaseModel):
     source: str
     source_type: str
     reference_date: datetime | None = None
+    collected_at: datetime | None = None
     valid_until: datetime | None = None
     freshness_status: str
     unit: str | None = None
@@ -219,6 +220,7 @@ class BuildPortfolioAsset(BaseModel):
     missing_data: list[str] = Field(default_factory=list)
     confidence: str
     reference_price: Decimal | None = None
+    quote_observed_at: datetime | None = None
     executable_quantity: Decimal | None = None
     executable_amount: Decimal = Decimal("0")
     effective_percentage: Decimal = Decimal("0")
@@ -375,6 +377,7 @@ class BuildPortfolioResponse(BaseModel):
         "Simulação educacional, não constitui ordem de compra e não garante retorno."
     )
     generated_at: datetime
+    history_id: UUID | None = None
 
 
 class FinancialFutureResponse(BaseModel):

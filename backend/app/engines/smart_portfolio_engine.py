@@ -805,6 +805,7 @@ class SmartPortfolioEngine:
                 source=item.source,
                 source_type=item.source_type,
                 reference_date=item.reference_date,
+                collected_at=item.collected_at,
                 valid_until=item.valid_until,
                 freshness_status=item.freshness_status,
                 unit=item.unit,
@@ -924,6 +925,7 @@ class SmartPortfolioEngine:
             peer_comparison=snapshot.valuation.peer_comparison,
             valuation_methods=snapshot.valuation.methods,
             reference_price=price,
+            quote_observed_at=snapshot.market_updated_at,
             executable_quantity=quantity,
             executable_amount=executable_amount,
             effective_percentage=(
