@@ -30,7 +30,7 @@ def stock_snapshot(*, metric="assets", value=Decimal("1000"),
         source="BRAPI" if source_type == "provider" else "CVM Dados Abertos",
         source_type=source_type, status=IndicatorStatus.AVAILABLE,
         reference_date=reference_date, collected_at=NOW,
-        confidence=ConfidenceLevel.MEDIUM, provenance=provenance or {},
+        confidence=ConfidenceLevel.MEDIUM, provenance=provenance if provenance is not None else {"scope": "consolidated"},
     )
     return AssetIntelligenceSnapshot(
         symbol="CVMX3", name="Exemplo", asset_class=InvestmentClass.STOCK,
@@ -168,3 +168,13 @@ def test_unverified_source_does_not_block_and_never_claims_comparison():
     result = audit.check(stock_snapshot(), stock_asset(), now=NOW)
     assert result.blocking_reasons == ()
     assert result.official_comparisons == 0
+
+
+def test_unverified_statement_scope_never_blocks_based_on_incompatible_financial_statements():
+    official = LocalOfficial(filing(Decimal("300")))
+    for scope in ({}, {"scope": "individual"}, {"scope": "unknown"}):
+        result = PrePurchaseAuditService(official).check(
+            stock_snapshot(provenance=scope), stock_asset(), now=NOW
+        )
+        assert not result.blocking_reasons
+        assert result.official_comparisons == 0
