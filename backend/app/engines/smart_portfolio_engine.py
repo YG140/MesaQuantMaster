@@ -90,6 +90,8 @@ class PortfolioCandidate:
     sector: str | None = None
     issuer: str | None = None
     market_context: str | None = None
+    # Somente impede nova seleção; não modifica posições já registradas.
+    audit_blocking_reasons: tuple[str, ...] = ()
 
 
 # Classe do envelope da PortfolioPolicy que não corresponde a nenhum ativo
@@ -558,7 +560,7 @@ class SmartPortfolioEngine:
         for candidate in sorted(candidates, key=lambda item: item.snapshot.symbol):
             snapshot = candidate.snapshot
             asset_class = cls.class_label(snapshot.asset_class)
-            reasons = []
+            reasons = list(candidate.audit_blocking_reasons)
             if policy_mode:
                 if asset_class not in allowed:
                     reasons.append(

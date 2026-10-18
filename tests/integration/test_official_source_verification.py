@@ -180,6 +180,10 @@ def test_cvm_stock_checks_link_and_reported_fixed_accounts_only(asset_factory, d
     assert len(result.facts) == 1 and result.facts[0].value == Decimal("50000")
     assert result.facts[0].filed_at is None
     assert result.facts[0].unit == "BRL"
+    # Nunca chamar um valor de balanço estrangeiro de BRL por inferência.
+    doc.currency = "USD"
+    db_session.commit()
+    assert service.verify_brazil(asset).status == "no_data"
 
 
 def test_cvm_fii_returns_only_documented_vacancy_ratio(asset_factory, db_session):
