@@ -1669,3 +1669,44 @@ def test_automatic_asset_count_follows_affordability_not_a_user_maximum():
     assert len(larger.assets) == 6
     assert smaller.total_allocated_amount <= Decimal("100")
     assert larger.total_allocated_amount <= Decimal("200")
+
+
+def test_pre_purchase_audit_blocks_new_buy_but_keeps_existing_position_readable():
+    from dataclasses import replace
+    from app.engines.smart_portfolio_engine import PortfolioHolding
+    audited = replace(
+        candidate("BLOCK3", score="95", sector="Energia"),
+        audit_blocking_reasons=(
+            "Indicador assets diverge da CVM no mesmo período; novo aporte suspenso.",
+        ),
+    )
+    existing = PortfolioHolding(
+        symbol="BLOCK3", quantity=Decimal("3"), value=Decimal("30"),
+        valuation_basis="market", asset_class="Ações", sector="Energia", issuer="BLOCK3",
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_assets=1),
+        [audited, candidate("SAFE3", score="70", sector="Tecnologia")],
+        holdings=[existing],
+    )
+    assert [asset.symbol for asset in result.assets] == ["SAFE3"]
+    assert result.existing_positions_count == 1
+    assert result.existing_portfolio_value == Decimal("30")
+    assert any(item.symbol == "BLOCK3" for item in result.existing_holdings_assessments)
+    assert any(
+        item.symbol == "BLOCK3" and "diverge da CVM" in " ".join(item.reasons)
+        for item in result.exclusions
+    )
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("10000.00")
+
+
+def test_pre_purchase_audit_does_not_create_new_UI_fields_or_change_legacy_builder():
+    from dataclasses import replace
+    original = candidate("LEGACY3", sector="Energia")
+    untouched = replace(original, audit_blocking_reasons=())
+    baseline = SmartPortfolioEngine.build(request(), [original])
+    checked = SmartPortfolioEngine.build(request(), [untouched])
+    assert [item.symbol for item in baseline.assets] == [item.symbol for item in checked.assets]
+    assert baseline.model_dump(exclude={"generated_at", "diagnosis", "projections", "freedom_goal"}) == checked.model_dump(
+        exclude={"generated_at", "diagnosis", "projections", "freedom_goal"}
+    )
