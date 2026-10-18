@@ -218,3 +218,58 @@ def test_low_confidence_ratio_cannot_justify_reference_range():
     )
     result = enrich_sector_valuations(group)["ALVO3"]
     assert result.valuation.estimated_range_low is None
+
+
+def test_only_attractively_valued_stock_enters_new_contributions():
+    """Integra a comparação setorial real com o filtro da montagem."""
+    from app.engines.smart_portfolio_engine import PortfolioCandidate, SmartPortfolioEngine
+    from app.schemas.intelligence import BuildPortfolioRequest
+
+    peers = universe(price="45")
+    enriched = enrich_sector_valuations(peers)
+    candidates = [
+        PortfolioCandidate(
+            snapshot=enriched[item.snapshot.symbol],
+            sector=item.sector,
+            issuer=item.issuer,
+            market_context="B3",
+        )
+        for item in peers
+    ]
+    req = BuildPortfolioRequest(
+        available_amount=Decimal("10000"),
+        objective="crescimento",
+        horizon="longo prazo",
+        risk_profile="moderado",
+    )
+    result = SmartPortfolioEngine.build(req, candidates)
+    assert [asset.symbol for asset in result.assets] == ["ALVO3"]
+    assert {item.symbol for item in result.exclusions} == {"PARA3", "PARB3", "PARC3"}
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("10000.00")
+
+
+def test_no_peer_reference_never_causes_a_stock_purchase_suggestion():
+    """Sem comparação verificável, a nota alta não justifica compra."""
+    from app.engines.smart_portfolio_engine import PortfolioCandidate, SmartPortfolioEngine
+    from app.schemas.intelligence import BuildPortfolioRequest
+
+    peers = universe(price="45")[:3]
+    enriched = enrich_sector_valuations(peers)
+    result = SmartPortfolioEngine.build(
+        BuildPortfolioRequest(
+            available_amount=Decimal("10000"),
+            objective="crescimento",
+            horizon="longo prazo",
+            risk_profile="moderado",
+        ),
+        [
+            PortfolioCandidate(
+                snapshot=enriched["ALVO3"],
+                sector=peers[0].sector,
+                issuer=peers[0].issuer,
+                market_context="B3",
+            )
+        ],
+    )
+    assert result.assets == []
+    assert result.unallocated_amount == Decimal("10000.00")
