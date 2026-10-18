@@ -401,3 +401,37 @@ def test_inconsistent_input_with_existing_manual_attractive_flag_is_not_trusted(
     assert insufficient.valuation.status == ValuationStatus.INSUFFICIENT_DATA
     assert insufficient.valuation.estimated_range_low is None
     assert insufficient.recommendation != RecommendationAction.ANALYZE_TO_BUY
+
+
+def test_peer_loss_restores_fundamental_scores_and_clears_outdated_comparisons():
+    group = universe(price="45")
+    enriched = enrich_sector_valuations(group)["ALVO3"]
+    expected_base = group[0].snapshot
+    assert enriched.sector_baseline_scores
+    assert any(item.sector_comparison for item in enriched.indicators)
+    last = enrich_sector_valuations([
+        PeerAsset(enriched, group[0].sector, group[0].issuer),
+        group[1],
+        group[2],
+    ])["ALVO3"]
+    for category in ("quality_score", "valuation_score", "growth_score"):
+        assert getattr(last, category) == getattr(expected_base, category)
+    assert all(not item.sector_comparison for item in last.indicators)
+
+
+def test_unpaired_ratios_never_raise_valuation_score_when_price_range_is_invalid():
+    group = [universe(price="45")[0]]
+    for idx in range(3):
+        group.append(_alter_indicators(
+            stock(f"ELEC{idx}3", price="60", pe="3", pb="1"),
+            drop={"price_book"},
+        ))
+    for idx in range(3):
+        group.append(_alter_indicators(
+            stock(f"BOOK{idx}3", price="60", pe="12", pb="1"),
+            drop={"price_earnings"},
+        ))
+    result = enrich_sector_valuations(group)["ALVO3"]
+    assert result.valuation.status == ValuationStatus.INSUFFICIENT_DATA
+    assert result.valuation_score == group[0].snapshot.valuation_score
+    assert result.recommendation != RecommendationAction.ANALYZE_TO_BUY
