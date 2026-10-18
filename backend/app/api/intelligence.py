@@ -18,7 +18,7 @@ from app.repositories.manual_indicator_repository import ManualIndicatorReposito
 from app.repositories.indicator_snapshot_repository import IndicatorSnapshotRepository
 from app.repositories.portfolio_policy_repository import PortfolioPolicyRepository
 from app.repositories.portfolio_recommendation_history_repository import PortfolioRecommendationHistoryRepository
-from app.schemas.portfolio_recommendation_history import RecommendationHistorySummary, RecommendationHistoryDetail
+from app.schemas.portfolio_recommendation_history import RecommendationHistorySummary, RecommendationHistoryDetail, RecommendationPerformanceResponse
 from app.repositories.cvm_financial_repository import CvmFinancialRepository
 from app.repositories.cvm_fii_repository import CvmFiiRepository
 from app.schemas.intelligence import (
@@ -51,6 +51,7 @@ from app.schemas.manual_indicator import (
 )
 from app.services.market_service import MarketService
 from app.services.portfolio_service import PortfolioService
+from app.services.recommendation_performance_service import RecommendationPerformanceService
 
 router = APIRouter(prefix="/intelligence", tags=["Inteligência"])
 
@@ -297,6 +298,41 @@ def get_recommendation_history(
         content_sha256=item.content_sha256,
         record=evidence,
     )
+
+
+@router.get(
+    "/recommendation-history/{run_id}/performance",
+    response_model=RecommendationPerformanceResponse,
+)
+def get_recommendation_performance(
+    run_id: UUID,
+    horizon_months: int = 0,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Read-only follow-up of recorded hypothetical recommendation decisions.
+
+    Never joins or edits real operations. No post-hoc assets or benchmark
+    invented when official price history is unavailable.
+    """
+    if horizon_months not in {0, 3, 6, 12}:
+        raise HTTPException(status_code=422, detail="Use 0, 3, 6 ou 12 meses.")
+    repo = PortfolioRecommendationHistoryRepository(db)
+    item = repo.get_for_user(current_user.id, run_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Registro não encontrado.")
+    try:
+        record = repo.verify(item)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=409, detail="Registro histórico com integridade comprometida."
+        )
+    try:
+        return RecommendationPerformanceService().calculate(
+            item.id, record, horizon_months=horizon_months
+        )
+    except ValueError:
+        raise HTTPException(status_code=409, detail="Dados históricos inválidos.")
 
 
 @router.post("/assets/analyze", response_model=BatchAssetAnalysisResponse)
