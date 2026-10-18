@@ -27,6 +27,10 @@ CENT = Decimal("0.01")
 MIN_PEERS = 3
 MAX_RATIO_AGE = timedelta(days=450)
 MAX_PRICE_AGE = timedelta(days=7)
+# P/L e P/VP precisam ser observações do mesmo ciclo informacional
+# da MESMA empresa; não combinamos medições sem coerência temporal.
+MAX_PAIRED_RATIO_GAP = timedelta(days=90)
+MAX_TARGET_FUNDAMENTAL_GAP = timedelta(days=120)
 # Bancos, holdings e seguradoras precisam de pares e modelos financeiros
 # específicos. "Financeiro" como setor agregado não distingue tais emissoras.
 INCOMPATIBLE_SECTORS = (
@@ -152,6 +156,53 @@ def _metric_median(peers: list[PeerAsset], key: str, at: datetime) -> Decimal | 
     return median(amounts)
 
 
+def _reference_date(snapshot: AssetIntelligenceSnapshot, key: str, at: datetime) -> datetime | None:
+    # A própria validação numérica checa status, prazo e fonte independente.
+    if _numeric(snapshot, key, at) is None:
+        return None
+    item = next((value for value in snapshot.indicators if value.key == key), None)
+    return _aware(item.reference_date) if item is not None and item.reference_date else None
+
+
+def _paired_multiple_medians(peers: list[PeerAsset], at: datetime) -> tuple[Decimal, Decimal, int] | None:
+    """Mesmos emissores, com AMBOS os múltiplos atuais e coerentes.
+
+    Sem o pareamento, 3 empresas com só P/L e OUTRAS 3 com só P/VP
+    produzem uma faixa ficticiamente consensual. Exclui também pares
+    sem cotação recente ou com múltiplos de períodos muito distantes.
+    """
+    samples: list[tuple[Decimal, Decimal]] = []
+    for peer in peers:
+        snap = peer.snapshot
+        if _price(snap, at) is None:
+            continue
+        pe, pb = (_numeric(snap, "price_earnings", at), _numeric(snap, "price_book", at))
+        if pe is None or pb is None or not (Decimal("1") <= pe <= Decimal("60")) or not (Decimal("1") <= pb <= Decimal("60")):
+            continue
+        pe_date = _reference_date(snap, "price_earnings", at)
+        pb_date = _reference_date(snap, "price_book", at)
+        if pe_date is None or pb_date is None or abs(pe_date - pb_date) > MAX_PAIRED_RATIO_GAP:
+            continue
+        samples.append((pe, pb))
+    if len(samples) < MIN_PEERS:
+        return None
+    return median(pair[0] for pair in samples), median(pair[1] for pair in samples), len(samples)
+
+
+def _abstain(previous: ValuationAssessment, reason: str, at: datetime) -> ValuationAssessment:
+    """Nunca reciclar uma faixa atrativa de lote anterior sem pares válidos."""
+    return previous.model_copy(update={
+        "status": ValuationStatus.INSUFFICIENT_DATA,
+        "confidence": ConfidenceLevel.INSUFFICIENT,
+        "methods": [],
+        "used_indicators": [],
+        "estimated_range_low": None,
+        "estimated_range_high": None,
+        "peer_comparison": reason,
+        "data_date": at,
+    })
+
+
 def _peer_reference(target: PeerAsset, universe: list[PeerAsset]) -> list[PeerAsset]:
     key = _valid_sector(target.sector)
     if not key or target.snapshot.asset_class not in {
@@ -190,32 +241,42 @@ def _peer_reference(target: PeerAsset, universe: list[PeerAsset]) -> list[PeerAs
 def _valuation(snapshot: AssetIntelligenceSnapshot, peers: list[PeerAsset], at: datetime) -> ValuationAssessment:
     previous = snapshot.valuation
     if len(peers) < MIN_PEERS:
-        return previous.model_copy(update={
-            "peer_comparison": (
-                "Comparação setorial indisponível: mínimo de 3 emissores "
-                "independentes, no mesmo setor, com dados válidos."
-            ),
-        })
+        return _abstain(
+            previous,
+            "Comparação setorial indisponível: mínimo de 3 emissores independentes, "
+            "no mesmo setor, com dados válidos.",
+            at,
+        )
     price = _price(snapshot, at)
     eps = _numeric(snapshot, "earnings_per_share", at)
     bvps = _numeric(snapshot, "book_value_per_share", at)
-    pe = _metric_median(peers, "price_earnings", at)
-    pb = _metric_median(peers, "price_book", at)
-    if price is None or eps is None or bvps is None or eps <= 0 or bvps <= 0 or pe is None or pb is None:
-        return previous.model_copy(update={
-            "peer_comparison": (
-                "Múltiplos setoriais insuficientes, preço desatualizado "
-                "ou LPA/VPA positivos não disponíveis para estimar faixa."
-            ),
-        })
+    references = _paired_multiple_medians(peers, at)
+    eps_date = _reference_date(snapshot, "earnings_per_share", at)
+    bvps_date = _reference_date(snapshot, "book_value_per_share", at)
+    if (
+        price is None or eps is None or bvps is None or eps <= 0 or bvps <= 0
+        or references is None or eps_date is None or bvps_date is None
+        or abs(eps_date - bvps_date) > MAX_TARGET_FUNDAMENTAL_GAP
+    ):
+        return _abstain(
+            previous,
+            "Sem 3 emissores com P/L e P/VP conjuntamente comparáveis, "
+            "preço recente e LPA/VPA positivos do mesmo ciclo contábil.",
+            at,
+        )
+    pe, pb, peer_count = references
     by_earnings, by_book = eps * pe, bvps * pb
     low, high = min(by_earnings, by_book), max(by_earnings, by_book)
     # Métodos incompatíveis = incerteza estrutural, não promediar.
     if low <= 0 or high / low > Decimal("1.5"):
-        return previous.model_copy(update={
-            "peer_comparison": "LPA×P/L setorial e VPA×P/VP setorial discordam acima do limite de 50%.",
-        })
+        return _abstain(
+            previous,
+            "LPA×P/L setorial e VPA×P/VP setorial discordam acima do limite de 50%.",
+            at,
+        )
     low, high = low.quantize(CENT), high.quantize(CENT)
+    if low <= 0:
+        return _abstain(previous, "Faixa relativa inferior a um centavo; sem base para novo aporte.", at)
     if price <= low * Decimal("0.80"):
         status = ValuationStatus.ATTRACTIVE
     elif price >= high * Decimal("1.20"):
@@ -230,13 +291,12 @@ def _valuation(snapshot: AssetIntelligenceSnapshot, peers: list[PeerAsset], at: 
         estimated_range_low=low,
         estimated_range_high=high,
         peer_comparison=(
-            f"Referência relativa ao setor ({len(peers)} emissores distintos): "
-            f"P/L mediano {pe:.2f}; P/VP mediano {pb:.2f}. "
+            f"Referência relativa ao setor ({peer_count} emissores distintos com "
+            f"ambos os múltiplos): P/L mediano {pe:.2f}; P/VP mediano {pb:.2f}. "
             "Não é preço justo intrínseco nem garantia de valorização."
         ),
         data_date=at,
     )
-
 
 def _comparisons(snapshot: AssetIntelligenceSnapshot, peers: list[PeerAsset], at: datetime):
     annotated = []
@@ -284,6 +344,7 @@ def enrich_sector_valuations(assets: list[PeerAsset]) -> dict[str, AssetIntellig
             result[snap.symbol] = snap.model_copy(update={
                 "valuation": valuation,
                 "valuation_status": valuation.status,
+                "recommendation": RecommendationAction.REVIEW_DATA,
                 "warning_reasons": [
                     *snap.warning_reasons,
                     valuation.peer_comparison or "Sem pares setoriais confiáveis.",
