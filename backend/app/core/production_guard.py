@@ -23,6 +23,10 @@ def assert_production_ready(settings) -> None:
         errors.append("DEBUG e API_DOCS_ENABLED devem estar desativados")
     if not settings.SECURITY_HSTS_ENABLED:
         errors.append("SECURITY_HSTS_ENABLED deve estar ativado")
+    if settings.SMTP_HOST and not settings.SMTP_USE_TLS:
+        errors.append("SMTP_USE_TLS deve estar ativado em produção")
+    if settings.AUTH_PUBLIC_REGISTRATION_ENABLED:
+        errors.append("Cadastro público deve estar desabilitado em produção privada")
     if not settings.FRONTEND_ORIGINS or any(
         not origin.startswith("https://") or origin.endswith("/")
         for origin in settings.FRONTEND_ORIGINS
