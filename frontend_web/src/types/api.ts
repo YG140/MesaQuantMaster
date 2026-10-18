@@ -487,6 +487,37 @@ export type PortfolioPolicy = {
 
 export type PortfolioPolicyPayload = Omit<PortfolioPolicy, "id" | "user_id" | "created_at" | "updated_at">;
 
+export type EmergencyReservePlanRequest = {
+  essential_monthly_expenses: string;
+  current_reserve: string;
+  monthly_available: string;
+  income_unstable: boolean;
+};
+
+export type EmergencyReservePlan = {
+  status: "complete" | "planned" | "awaiting_contribution";
+  basis: "confirmed_profile_policy" | "initial_reference";
+  essential_monthly_expenses: string | number;
+  target_months: number;
+  target_amount: string | number;
+  current_reserve: string | number;
+  months_covered: string | number;
+  progress_percentage: string | number;
+  shortfall: string | number;
+  monthly_available: string | number;
+  suggested_next_reserve_contribution: string | number;
+  remaining_next_contribution: string | number;
+  estimated_months_to_goal: number | null;
+  allocation_targets: Array<{
+    label: string;
+    target_amount: string | number;
+    suggested_months: number;
+    description: string;
+  }>;
+  has_relevant_debt: boolean;
+  warnings: string[];
+};
+
 export type BuildPortfolioRequest = {
   available_amount: string;
   objective: string;
