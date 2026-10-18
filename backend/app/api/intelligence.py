@@ -38,6 +38,8 @@ from app.schemas.market_intelligence import (
     NormalizedIndicator,
 )
 from app.services.intelligence_service import PortfolioIntelligenceService
+from app.services.official_source_verification_service import OfficialSourceVerificationService
+from app.services.pre_purchase_audit_service import PrePurchaseAuditService
 from app.services.market_intelligence_service import MarketIntelligenceService
 from app.services.manual_indicator_service import ManualIndicatorService
 from app.schemas.manual_indicator import (
@@ -77,6 +79,9 @@ def get_service(db: Session) -> PortfolioIntelligenceService:
         asset_repository=asset_repository,
         market_intelligence_service=market_intelligence,
         investor_profile_repository=InvestorProfileRepository(db),
+        pre_purchase_audit_service=PrePurchaseAuditService(
+            OfficialSourceVerificationService(CvmFinancialRepository(db))
+        ),
     )
 
 
