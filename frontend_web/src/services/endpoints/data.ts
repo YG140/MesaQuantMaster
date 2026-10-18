@@ -8,6 +8,8 @@ import type {
   Brokerage,
   BuildPortfolioRequest,
   BuildPortfolioResponse,
+  EmergencyReservePlanRequest,
+  EmergencyReservePlan,
   WealthGoalSetting,
   FinancialFutureResponse,
   DashboardSummary,
@@ -115,6 +117,10 @@ export const endpoints = {
       method: "PUT",
       token,
       body: payload,
+    }),
+  emergencyReservePlan: (token: string, payload: EmergencyReservePlanRequest) =>
+    apiRequest<EmergencyReservePlan>("/intelligence/emergency-reserve/plan", {
+      method: "POST", token, body: payload,
     }),
   buildPortfolio: (token: string, payload: BuildPortfolioRequest) =>
     apiRequest<BuildPortfolioResponse>("/intelligence/build-portfolio", {
