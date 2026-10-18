@@ -186,6 +186,10 @@ class OfficialSourceVerificationService:
                 continue
             if account.acquisition_method != "reported":
                 continue
+            # O campo moeda da CVM é textual (normalmente REAL). Não
+            # carimbar valores USD ou moeda desconhecida como BRL.
+            if str(document.currency).strip().upper() not in {"REAL", "REAIS", "BRL", "R$"}:
+                continue
             value = _finite(account.normalized_value)
             if value is None:
                 continue
