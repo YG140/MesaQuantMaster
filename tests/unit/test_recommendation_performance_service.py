@@ -94,7 +94,6 @@ def test_price_only_is_not_realized_profit_or_total_return():
     assert result.dividends_status == "not_verified"
     assert result.total_return_status == "not_calculated"
     assert result.realized_profit_status == "not_calculated"
-    assert all(x["PETR4F"] if False else True for x in [{}])
     assert source.calls[0][1] < START.date()
     assert source.calls[1][1] < NOW.date()
 
@@ -121,9 +120,6 @@ def test_horizon_fixed_date_never_uses_quotes_after_target():
 
 
 def test_partial_or_missing_quote_never_invents_portfolio_result():
-    evaluator, source = service()
-    source.final = None
-    assert evaluator.calculate(uuid4(), record(), now=NOW).status == "price_only"
     # A reader must refuse missing official files. No fallback to live quote.
     src = StaticEvidence(initial=evidence(BASE_DAY, {"PETR4F": 20, "HGLG11": 100, "BOVA11": 100}))
     result = RecommendationPerformanceService(src).calculate(uuid4(), record(), now=NOW)
