@@ -49,7 +49,7 @@ describe("resiliência de /planejar", () => {
     await openAuthenticated("/planejar");
 
     expect(await screen.findByRole("heading", { name: "Inteligência de Carteira" })).toBeInTheDocument();
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getAllByRole("tab")).toHaveLength(4);
     // Perfil do Investidor tem query própria (investor-profile), independente.
     expect(await screen.findByText("Concluído")).toBeInTheDocument();
 

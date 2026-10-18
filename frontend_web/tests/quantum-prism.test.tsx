@@ -111,11 +111,12 @@ describe("Quantum Prism", () => {
     expect(await screen.findAllByRole("button", { name: "Montar minha carteira" })).toHaveLength(1);
   });
 
-  it("limita a inteligência a três áreas principais", async () => {
+  it("mantém as áreas principais e adiciona reserva de emergência", async () => {
     await openAuthenticated("/planejar");
-    expect(await screen.findAllByRole("tab")).toHaveLength(3);
+    expect(await screen.findAllByRole("tab")).toHaveLength(4);
     expect(screen.getByRole("tab", { name: "Diagnóstico" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Montar carteira" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Reserva" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Futuro financeiro" })).toBeInTheDocument();
   });
 

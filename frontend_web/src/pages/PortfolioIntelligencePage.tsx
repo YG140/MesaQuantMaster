@@ -1,4 +1,5 @@
 import { ResponsiveTable } from "../components/ui/ResponsiveTable";
+import { EmergencyReserveBuilder } from "./EmergencyReserveBuilder";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -49,7 +50,7 @@ function formatPriceWithCurrency(value: string | number | null, currency: string
   }
 }
 
-const areas = ["Diagnóstico", "Montar carteira", "Futuro financeiro"] as const;
+const areas = ["Diagnóstico", "Montar carteira", "Reserva", "Futuro financeiro"] as const;
 type IntelligenceArea = (typeof areas)[number];
 export function PortfolioIntelligencePage() {
   const { token } = useAuth();
@@ -57,9 +58,11 @@ export function PortfolioIntelligencePage() {
   const requestedSection = searchParams.get("secao");
   const area: IntelligenceArea = requestedSection === "montar-carteira"
     ? "Montar carteira"
-    : requestedSection === "futuro-financeiro"
-      ? "Futuro financeiro"
-      : "Diagnóstico";
+    : requestedSection === "reserva"
+      ? "Reserva"
+      : requestedSection === "futuro-financeiro"
+        ? "Futuro financeiro"
+        : "Diagnóstico";
   const intelligence = useQuery({
     queryKey: ["portfolio-intelligence", token],
     queryFn: () => endpoints.portfolioIntelligence(token!),
@@ -80,17 +83,18 @@ export function PortfolioIntelligencePage() {
   // IntelligenceDependentSections).
   return (
     <div className={`page-stack planning-prism-page planning-${requestedSection ?? "diagnostico"}`}>
-      <SectionHeader eyebrow="Planejar" title="Inteligência de Carteira" description="Diagnóstico, construção de carteira e futuro financeiro em uma única experiência." />
+      <SectionHeader eyebrow="Planejar" title="Inteligência de Carteira" description="Diagnóstico, carteira, reserva de emergência e futuro financeiro no mesmo lugar." />
       <InvestorProfileSummary />
       <div className="tabs intelligence-areas" role="tablist" aria-label="Áreas de inteligência">
         {areas.map((item) => (
-          <button key={item} type="button" role="tab" aria-selected={item === area} className={item === area ? "active" : ""} onClick={() => setSearchParams(item === "Montar carteira" ? { secao: "montar-carteira" } : item === "Futuro financeiro" ? { secao: "futuro-financeiro" } : { secao: "diagnostico" })}>
+          <button key={item} type="button" role="tab" aria-selected={item === area} className={item === area ? "active" : ""} onClick={() => setSearchParams(item === "Montar carteira" ? { secao: "montar-carteira" } : item === "Reserva" ? { secao: "reserva" } : item === "Futuro financeiro" ? { secao: "futuro-financeiro" } : { secao: "diagnostico" })}>
             {item}
           </button>
         ))}
       </div>
       {area === "Diagnóstico" ? <IntelligenceDependentSections intelligence={intelligence} /> : null}
       {area === "Montar carteira" ? <BuildPortfolio /> : null}
+      {area === "Reserva" ? <EmergencyReserveBuilder /> : null}
       {area === "Futuro financeiro" ? <div className="intelligence-sections">
         <details open><summary>Minha meta e projeções</summary><FutureFinancial /></details>
         <details><summary>Estratégia do Perfil do Investidor</summary><Strategy /></details>

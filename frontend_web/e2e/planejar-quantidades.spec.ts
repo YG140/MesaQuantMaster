@@ -158,3 +158,43 @@ test(`detalhes e procedência permanecem dentro da viewport ${viewport.name}`, a
   console.log(JSON.stringify({ viewport: viewport.name, ...rootGeometry, cells: cellBounds.length, outsideViewport }));
 });
 }
+
+
+for (const viewport of [
+  { name: "desktop", width: 1440, height: 900 },
+  { name: "mobile", width: 390, height: 844 },
+]) {
+  test(`reserva de emergência preserva navegação e orçamento ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.route("**/intelligence/emergency-reserve/plan", async route => {
+      const body = route.request().postDataJSON();
+      expect(Number(body.essential_monthly_expenses)).toBe(3500);
+      expect(Number(body.current_reserve)).toBe(4000);
+      expect(Number(body.monthly_available)).toBe(1000);
+      await route.fulfill({ json: {
+        status: "planned", basis: "confirmed_profile_policy",
+        essential_monthly_expenses: "3500", target_months: 6,
+        target_amount: "21000.00", current_reserve: "4000.00",
+        months_covered: "1.14", progress_percentage: "19.05",
+        shortfall: "17000.00", monthly_available: "1000.00",
+        suggested_next_reserve_contribution: "1000.00",
+        remaining_next_contribution: "0.00", estimated_months_to_goal: 17,
+        allocation_targets: [
+          { label: "Acesso imediato", target_amount: "3500.00", suggested_months: 1, description: "Liquidez imediata." },
+          { label: "Reserva complementar", target_amount: "17500.00", suggested_months: 5, description: "Liquidez diária." },
+        ],
+        has_relevant_debt: false, warnings: ["Nenhuma movimentação automática."],
+      } });
+    });
+    await page.goto("/planejar?secao=reserva", { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Monte sua reserva de emergência" })).toBeVisible();
+    await page.getByLabel("Despesas essenciais por mês").fill("350000");
+    await page.getByLabel("Quanto já tenho na reserva").fill("400000");
+    await page.getByLabel("Quanto posso guardar por mês").fill("100000");
+    await page.getByRole("button", { name: "Montar minha reserva" }).click();
+    await expect(page.getByRole("heading", { name: "Seu plano de proteção" })).toBeVisible();
+    await expect(page.getByText("R$ 21.000,00")).toBeVisible();
+    await expect(page.getByText("R$ 17.000,00")).toBeVisible();
+    expect(await page.locator("html").evaluate(root => root.scrollWidth <= root.clientWidth)).toBe(true);
+  });
+}
