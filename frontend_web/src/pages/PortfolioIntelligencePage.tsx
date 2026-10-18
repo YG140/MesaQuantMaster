@@ -149,6 +149,7 @@ function describeInvestorProfileError(error: unknown): string {
   if (error.code === "TIMEOUT") return "A consulta do perfil demorou demais. Confira a conexão com o servidor e tente novamente.";
   if (error.code === "NETWORK") return "Não foi possível conectar ao servidor para consultar o perfil.";
   if (error.code === "UNAUTHORIZED") return "Sua sessão expirou. Entre novamente para consultar seu perfil.";
+  if (error.status !== null && error.status >= 500) return "O servidor não conseguiu carregar o perfil. Verifique o backend e o banco de dados.";
   if (error.code === "SERVER" || error.code === "BAD_GATEWAY") return "O servidor não conseguiu carregar o perfil. Verifique o backend e o banco de dados.";
   return "Não foi possível consultar seu perfil agora. Tente novamente.";
 }
