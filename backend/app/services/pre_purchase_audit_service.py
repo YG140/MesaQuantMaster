@@ -109,6 +109,9 @@ class PrePurchaseAuditService:
             and ind.source_type in {"official", "provider"}
             and ind.unit == "currency"
             and ind.reference_date is not None
+            and isinstance(ind.provenance, dict)
+            and (ind.provenance.get("scope") == "consolidated"
+                 or (ind.source_type == "official" and ind.provenance.get("provider") == "cvm"))
             and isinstance(ind.value, Decimal) and ind.value.is_finite()
         ]
         if not usable:
