@@ -211,3 +211,27 @@ def test_portfolio_builder_uses_policy_percentages_not_equal_split():
     assert by_class["Ações"].amount == Decimal("6000.00")
     assert by_class["Tesouro Direto"].amount == Decimal("4000.00")
     assert result.selections[0].data_status == "indisponível"
+
+
+def test_diagnosis_does_not_invent_global_score_without_policy_or_market_coverage():
+    no_policy = PortfolioIntelligenceEngine.build(
+        make_portfolio([make_position()]), policy=None
+    ).diagnosis
+    no_quotes = PortfolioIntelligenceEngine.build(
+        make_portfolio([make_position()], market_data_status="unavailable"),
+        policy=make_policy(),
+    ).diagnosis
+    assert no_policy.portfolio_score is None
+    assert no_quotes.portfolio_score is None
+    assert no_quotes.liquidity_score is None
+    assert no_quotes.income_score is None
+
+
+def test_diagnosis_flags_concentration_and_profile_mismatch():
+    diagnosis = PortfolioIntelligenceEngine.build(
+        make_portfolio([make_position(allocation=Decimal("100"))]),
+        policy=make_policy(),
+    ).diagnosis
+    assert diagnosis.portfolio_score is not None
+    assert any("limite por ativo" in alert for alert in diagnosis.warnings)
+    assert any("concentração" in alert.lower() for alert in diagnosis.warnings)

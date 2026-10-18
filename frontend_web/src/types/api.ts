@@ -497,13 +497,13 @@ export type BuildPortfolioRequest = {
   monthly_contribution: string;
   needs_income: boolean;
   needs_liquidity: boolean;
-  volatility_tolerance: string;
+  volatility_tolerance?: string;
   max_percentage_per_asset: string;
-  max_percentage_per_class: string;
+  max_percentage_per_class?: string;
   max_percentage_per_sector: string;
   allowed_classes: string[];
   prohibited_classes: string[];
-  max_assets: number;
+  max_assets: number | null;
   net_monthly_income?: string;
   income_type?: string;
   essential_monthly_expenses?: string;
@@ -514,6 +514,7 @@ export type BuildPortfolioRequest = {
   current_financial_assets?: string;
   annual_contribution_growth?: string;
   desired_monthly_income?: string;
+  wealth_goal_amount?: string;
   projection_years?: number;
   inflation_rate?: string;
   annual_cost_rate?: string;
@@ -583,9 +584,18 @@ export type BuildPortfolioResponse = {
   diagnosis: { phase: string; estimated_monthly_capacity: string | number | null; reserve_months_covered: string | number | null; reserve_target: string | number | null; debt_alerts: string[]; liquidity_assessment: string; missing_data: string[]; priority_actions: string[]; confidence: string };
   contribution_plan: Array<{ priority: number; symbol: string; asset_class: string; suggested_amount: string | number; reason: string; uses_income: boolean }>;
   projections: Array<{ name: string; annual_appreciation_rate: string | number; annual_income_rate: string | number; total_contributed: string | number; projected_wealth: string | number; estimated_appreciation: string | number; estimated_income: string | number; estimated_periodic_income: string | number; real_projected_wealth: string | number | null; projected_without_reinvestment: string | number }>;
-  freedom_goal: { desired_monthly_income: string | number | null; required_wealth: string | number | null; current_wealth: string | number | null; gap: string | number | null; achieved_percentage: string | number | null; estimated_years: number | null; withdrawal_rate: string | number; safety_margin: string | number; risks: string[]; improvement_actions: string[]; confidence: string };
+  freedom_goal: { desired_monthly_income: string | number | null; required_wealth: string | number | null; current_wealth: string | number | null; gap: string | number | null; achieved_percentage: string | number | null; estimated_years: number | null; estimated_months?: number | null; withdrawal_rate: string | number; safety_margin: string | number; risks: string[]; improvement_actions: string[]; confidence: string };
   disclaimer: string;
   generated_at: string;
+};
+
+export type WealthGoalSetting = { wealth_goal_amount: string | number };
+export type FinancialFutureResponse = {
+  goal: BuildPortfolioResponse["freedom_goal"];
+  diagnosis: BuildPortfolioResponse["diagnosis"];
+  projections: BuildPortfolioResponse["projections"];
+  valuation_note: string | null;
+  disclaimer: string;
 };
 
 export type NormalizedIndicator = {

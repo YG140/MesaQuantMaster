@@ -213,46 +213,81 @@ class PortfolioIntelligenceEngine:
             for position in positions
         )
         concentration_score = max(Decimal("0"), Decimal("100") - largest_weight)
+        # Diversificação estrutural: considera classes E quantidade de ativos.
+        # Não equivale à qualidade fundamentalista ou risco de mercado.
+        active_classes = {
+            item.asset_class
+            for item in class_allocations
+            if item.current_value and item.current_value > 0
+        }
         diversification_score = min(
             Decimal("100"),
-            Decimal(
-                len(
-                    {
-                        item.asset_class
-                        for item in class_allocations
-                        if item.current_value and item.current_value > 0
-                    }
-                )
-                * 20
-            ),
+            (
+                min(Decimal(len(active_classes)), Decimal("4")) / Decimal("4")
+                + min(Decimal(len(positions)), Decimal("8")) / Decimal("8")
+            ) * Decimal("50"),
         )
-        data_quality_score = (
-            Decimal("100")
-            if not warnings and portfolio.market_data_status == "live"
-            else (
-                Decimal("60")
-                if portfolio.market_data_status in {"live", "partial"}
-                else Decimal("35")
+        # Só há pontuação consolidada quando existe uma estratégia com metas
+        # e pelo menos cobertura parcial de preços. Dados ausentes não valem zero.
+        priced = portfolio.market_data_status in {"live", "partial"}
+        quality_score = (
+            Decimal("100") if portfolio.market_data_status == "live"
+            else Decimal("60") if priced else None
+        )
+        enabled_targets = {
+            item.asset_class: item.target_percentage
+            for item in (policy.allocations if policy else [])
+            if item.enabled
+        }
+        allocation_fit = None
+        if enabled_targets:
+            actual = {
+                item.asset_class: item.current_percentage or Decimal("0")
+                for item in class_allocations
+            }
+            classes = set(actual) | set(enabled_targets)
+            deviation = sum(
+                (abs(actual.get(name, Decimal("0")) -
+                     enabled_targets.get(name, Decimal("0"))) for name in classes),
+                Decimal("0"),
             )
-        )
-        portfolio_score = (
-            concentration_score + diversification_score + data_quality_score
-        ) / Decimal("3")
+            allocation_fit = max(Decimal("0"), Decimal("100") - deviation / 2)
+        portfolio_score = None
+        if quality_score is not None and allocation_fit is not None:
+            portfolio_score = (
+                concentration_score * Decimal("0.35")
+                + diversification_score * Decimal("0.25")
+                + allocation_fit * Decimal("0.25")
+                + quality_score * Decimal("0.15")
+            ).quantize(Decimal("0.01"))
 
         if largest_weight >= Decimal("50"):
-            warnings.append("Há concentração relevante em uma única posição.")
+            warnings.append("Concentração elevada em uma única posição; avalie o próximo aporte.")
+        if policy is not None and largest_weight > policy.maximum_weight_per_asset:
+            warnings.append("Uma posição supera o limite por ativo definido pelo seu perfil.")
+        if portfolio.market_data_status != "live":
+            warnings.append("A avaliação é parcial: nem todas as cotações estão atualizadas.")
+        if allocation_fit is not None and allocation_fit < Decimal("70"):
+            warnings.append("A distribuição atual está distante das metas do seu perfil.")
+        strengths = ["Posições cadastradas e consolidadas."]
+        if len(active_classes) >= 3:
+            strengths.append("Investimentos distribuídos por três ou mais classes.")
+        if allocation_fit is not None and allocation_fit >= Decimal("90"):
+            strengths.append("Distribuição próxima às metas do seu perfil.")
 
         return PortfolioDiagnosis(
-            portfolio_score=portfolio_score.quantize(Decimal("0.01")),
+            portfolio_score=portfolio_score,
             risk_level=PortfolioIntelligenceEngine._risk_level(positions),
             diversification_score=diversification_score.quantize(Decimal("0.01")),
             concentration_score=concentration_score.quantize(Decimal("0.01")),
+            # Posição consolidada não contém proventos, profundidade de mercado
+            # nem prazo de resgate: não produzir scores artificiais.
             liquidity_score=None,
             income_score=None,
             data_quality=PortfolioIntelligenceEngine._data_quality(portfolio, policy),
             warnings=warnings,
-            strengths=["Carteira possui posições consolidadas."] if positions else [],
-            weaknesses=warnings or ["Dados de renda e risco ainda incompletos."],
+            strengths=strengths,
+            weaknesses=warnings or ["Sem alertas estruturais com os dados disponíveis."],
             class_allocations=class_allocations,
             unclassified_assets=unclassified,
             calculated_at=now,
@@ -632,14 +667,17 @@ class PortfolioBuilderEngine:
     def build(
         request: BuildPortfolioRequest,
         policy: PortfolioPolicyRead | None = None,
+        financial_profile=None,
     ) -> BuildPortfolioResponse:
         now = datetime.now(timezone.utc)
         from app.engines.financial_planning_engine import (
             FinancialDiagnosisEngine,
             FinancialProjectionEngine,
+            apply_policy_to_planning_request,
         )
 
-        diagnosis = FinancialDiagnosisEngine.diagnose(request)
+        request = apply_policy_to_planning_request(request, policy)
+        diagnosis = FinancialDiagnosisEngine.diagnose(request, financial_profile)
         projections = FinancialProjectionEngine.project(request)
         planning = {
             "diagnosis": diagnosis,

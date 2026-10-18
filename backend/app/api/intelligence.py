@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.engines.indicator_catalog import MACRO_INDICATOR_REGISTRY
 from app.models.user import User
 from app.repositories.asset_repository import AssetRepository
+from app.repositories.investor_profile_repository import InvestorProfileRepository
 from app.repositories.brokerage_repository import BrokerageRepository
 from app.repositories.operation_repository import OperationRepository
 from app.repositories.manual_indicator_repository import ManualIndicatorRepository
@@ -21,6 +22,8 @@ from app.repositories.cvm_fii_repository import CvmFiiRepository
 from app.schemas.intelligence import (
     BuildPortfolioRequest,
     BuildPortfolioResponse,
+    WealthGoalSetting,
+    FinancialFutureResponse,
     PortfolioDiagnosis,
     PortfolioIntelligenceResponse,
     PortfolioPolicyRead,
@@ -35,6 +38,8 @@ from app.schemas.market_intelligence import (
     NormalizedIndicator,
 )
 from app.services.intelligence_service import PortfolioIntelligenceService
+from app.services.official_source_verification_service import OfficialSourceVerificationService
+from app.services.pre_purchase_audit_service import PrePurchaseAuditService
 from app.services.market_intelligence_service import MarketIntelligenceService
 from app.services.manual_indicator_service import ManualIndicatorService
 from app.schemas.manual_indicator import (
@@ -73,6 +78,10 @@ def get_service(db: Session) -> PortfolioIntelligenceService:
         policy_repository=policy_repository,
         asset_repository=asset_repository,
         market_intelligence_service=market_intelligence,
+        investor_profile_repository=InvestorProfileRepository(db),
+        pre_purchase_audit_service=PrePurchaseAuditService(
+            OfficialSourceVerificationService(CvmFinancialRepository(db))
+        ),
     )
 
 
@@ -178,6 +187,37 @@ def update_policy(
 ):
     service = get_service(db)
     return service.save_policy(current_user.id, data)
+
+
+@router.get("/financial-goal", response_model=WealthGoalSetting | None)
+def get_financial_goal(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    return get_service(db).get_wealth_goal(current_user.id)
+
+
+@router.put("/financial-goal", response_model=WealthGoalSetting)
+def save_financial_goal(
+    goal: WealthGoalSetting,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        return get_service(db).save_wealth_goal(current_user.id, goal)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/financial-future", response_model=FinancialFutureResponse | None)
+def get_financial_future(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        return get_service(db).get_financial_future(current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/build-portfolio", response_model=BuildPortfolioResponse)

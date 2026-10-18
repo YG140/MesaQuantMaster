@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.engines.financial_planning_engine import FinancialProfileContext
 from app.engines.smart_portfolio_engine import (
     LEGACY_SOURCE,
     POLICY_SOURCE,
@@ -1646,3 +1647,89 @@ def test_builder_uses_next_eligible_stock_when_best_ranked_is_overweight():
     assert [asset.symbol for asset in result.assets] == ["BBBB3"]
     assert "AAAA3" in {asset.symbol for asset in result.exclusions}
     assert result.assets[0].score == Decimal("70.00")
+
+
+def test_confirmed_policy_drives_projection_and_risk_even_if_request_disagrees():
+    actual_policy = policy(
+        [policy_allocation("Ações", 50), policy_allocation("Tesouro Direto", 50)],
+        monthly_contribution=Decimal("300"),
+        investment_horizon="1_a_3_anos",
+        maximum_weight_per_asset=Decimal("10"),
+        emergency_reserve_months=6,
+    )
+    result = SmartPortfolioEngine.build(
+        request(
+            monthly_contribution=Decimal("99999"),
+            horizon="longo prazo",
+            max_percentage_per_asset=Decimal("90"),
+            needs_liquidity=False,
+        ),
+        [candidate("POL3")],
+        policy=actual_policy,
+        financial_profile=FinancialProfileContext(
+            emergency_reserve_months=2,
+            has_relevant_debt=True,
+        ),
+    )
+    assert result.diagnosis.phase == "protection"
+    # Três anos, R$300/mês, nunca os R$99999 fornecidos pela tela.
+    assert result.projections[0].total_contributed == Decimal("20800.00")
+    assert all(asset.recommended_percentage <= Decimal("10") for asset in result.assets)
+
+
+def test_automatic_asset_count_follows_affordability_not_a_user_maximum():
+    candidates = [
+        candidate(f"AUTO{i}3", current_price=Decimal("10"), sector=f"Setor{i}")
+        for i in range(6)
+    ]
+    smaller = SmartPortfolioEngine.build(
+        request(available_amount=Decimal("100"), max_assets=None), candidates
+    )
+    larger = SmartPortfolioEngine.build(
+        request(available_amount=Decimal("200"), max_assets=None), candidates
+    )
+    assert len(smaller.assets) == 4
+    assert len(larger.assets) == 6
+    assert smaller.total_allocated_amount <= Decimal("100")
+    assert larger.total_allocated_amount <= Decimal("200")
+
+
+def test_pre_purchase_audit_blocks_new_buy_but_keeps_existing_position_readable():
+    from dataclasses import replace
+    from app.engines.smart_portfolio_engine import PortfolioHolding
+    audited = replace(
+        candidate("BLOCK3", score="95", sector="Energia"),
+        audit_blocking_reasons=(
+            "Indicador assets diverge da CVM no mesmo período; novo aporte suspenso.",
+        ),
+    )
+    existing = PortfolioHolding(
+        symbol="BLOCK3", quantity=Decimal("3"), value=Decimal("30"),
+        valuation_basis="market", asset_class="Ações", sector="Energia", issuer="BLOCK3",
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_assets=1),
+        [audited, candidate("SAFE3", score="70", sector="Tecnologia")],
+        holdings=[existing],
+    )
+    assert [asset.symbol for asset in result.assets] == ["SAFE3"]
+    assert result.existing_positions_count == 1
+    assert result.existing_portfolio_value == Decimal("30")
+    assert any(item.symbol == "BLOCK3" for item in result.existing_holdings_assessments)
+    assert any(
+        item.symbol == "BLOCK3" and "diverge da CVM" in " ".join(item.reasons)
+        for item in result.exclusions
+    )
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("10000.00")
+
+
+def test_pre_purchase_audit_does_not_create_new_UI_fields_or_change_legacy_builder():
+    from dataclasses import replace
+    original = candidate("LEGACY3", sector="Energia")
+    untouched = replace(original, audit_blocking_reasons=())
+    baseline = SmartPortfolioEngine.build(request(), [original])
+    checked = SmartPortfolioEngine.build(request(), [untouched])
+    assert [item.symbol for item in baseline.assets] == [item.symbol for item in checked.assets]
+    assert baseline.model_dump(exclude={"generated_at", "diagnosis", "projections", "freedom_goal"}) == checked.model_dump(
+        exclude={"generated_at", "diagnosis", "projections", "freedom_goal"}
+    )

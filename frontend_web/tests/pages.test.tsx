@@ -464,14 +464,13 @@ describe("paginas autenticadas", () => {
     expect(screen.getAllByText("Minha estratégia").length).toBeGreaterThan(0);
     expect(await screen.findByText("Total da alocação: 100,00%")).toBeInTheDocument();
     expect(screen.getAllByText("Minha estratégia").length).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Salvar estratégia" }));
-    expect(await screen.findByText("Estratégia salva com sucesso.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Salvar estratégia" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Configuração gerada pelo Perfil do Investidor/)).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Diagnóstico" }));
     expect(screen.getByText("Patrimônio atual")).toBeInTheDocument();
     expect(screen.getByText("Carteira em formação")).toBeInTheDocument();
 
-    await user.click(screen.getAllByText("Diagnóstico")[0]);
-    expect(screen.getByText("Pontuação da carteira")).toBeInTheDocument();
+    expect(screen.getByText("Pontuação estrutural")).toBeInTheDocument();
     expect(screen.getAllByText("Há concentração relevante em uma única posição.").length).toBeGreaterThan(0);
 
     await user.click(screen.getAllByText("Recomendações")[0]);

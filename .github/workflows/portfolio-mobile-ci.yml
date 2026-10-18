@@ -28,7 +28,7 @@ jobs:
       - name: Verify syntax
         run: python -m compileall -q backend/app
       - name: Run portfolio and indicator regression tests
-        run: python -m pytest -q tests/unit/test_smart_portfolio_engine.py tests/unit/test_stock_purchase_eligibility.py tests/unit/test_market_intelligence.py tests/unit/test_sector_relative_valuation.py tests/unit/test_multimarket_scoring.py tests/unit/test_external_market_data_service.py tests/unit/test_bcb_ptax_fx.py tests/unit/test_free_render_neon_deployment.py
+        run: python -m pytest -q tests/unit/test_smart_portfolio_engine.py tests/integration/test_official_source_verification.py tests/unit/test_pre_purchase_audit_service.py tests/unit/test_financial_planning_engine.py tests/unit/test_market_intelligence.py tests/unit/test_sector_relative_valuation.py tests/unit/test_stock_purchase_eligibility.py tests/unit/test_multimarket_scoring.py tests/unit/test_external_market_data_service.py tests/unit/test_bcb_ptax_fx.py tests/unit/test_free_render_neon_deployment.py
 
   postgres_migrations:
     name: PostgreSQL - migracoes de banco vazio
@@ -66,6 +66,12 @@ jobs:
           cd backend
           python -m alembic upgrade head
           python -m alembic upgrade head
+      - name: Test one-account recovery from local Postgres to isolated Neon-like Postgres
+        env:
+          ACCOUNT_RECOVERY_CI: "1"
+          ACCOUNT_RECOVERY_SOURCE_URL: postgresql://mesa_ci:temporary-ci-only@localhost:5432/mesa_quant_ci
+        run: python -m pytest -q tests/integration/test_local_account_recovery.py
+
       - name: Check migration schema agrees with application models
         run: |
           cd backend
@@ -86,6 +92,8 @@ jobs:
           assert any(fk["referred_table"] == "assets" for fk in foreign_keys)
           print("All declared ORM tables and core constraints present without create_all")
           PY
+      - name: Test recovery from old SQLite to disposable Postgres
+        run: python -m pytest -q tests/unit/test_local_neon_recovery.py
 
   frontend:
     name: React - qualidade e interface

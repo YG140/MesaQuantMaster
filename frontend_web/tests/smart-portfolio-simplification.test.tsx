@@ -14,6 +14,7 @@ async function openBuilder() {
   renderWithProviders(<AppRouter />, "/planejar?secao=montar-carteira");
   await user.click(await screen.findByRole("tab", { name: "Montar carteira" }, { timeout: 10_000 }));
   await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" });
+  await waitFor(() => expect(screen.getByLabelText("Patrimônio que quero alcançar")).toHaveValue("1.000.000,00"));
   return user;
 }
 
@@ -47,20 +48,19 @@ function responseWithAssets() {
 }
 
 describe("simplificação da Carteira Inteligente", () => {
-  it("mostra somente o essencial e mantém as configurações avançadas fechadas", async () => {
+  it("mostra meta, aporte do mês e a estratégia automática do perfil", async () => {
     await openBuilder();
-    expect(screen.getByLabelText("Valor disponível para investir")).toBeVisible();
-    expect(screen.getByLabelText("Aporte mensal")).toBeVisible();
-    expect(screen.getByLabelText("Objetivo")).toBeVisible();
-    expect(screen.getByLabelText("Horizonte")).toBeVisible();
-    expect(screen.getByLabelText("Perfil de risco")).toBeVisible();
-    expect(screen.getByLabelText("Quantidade máxima de ativos")).toBeVisible();
-    expect(screen.getByText("Configurações avançadas").closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByLabelText("Limite por ativo (%)")).not.toBeVisible();
+    expect(screen.getByLabelText("Patrimônio que quero alcançar")).toBeVisible();
+    expect(screen.getByLabelText("Aporte deste mês")).toBeVisible();
+    expect(screen.getByText(/Perfil aplicado:/)).toHaveTextContent("aporte mensal de R$ 900,00");
+    expect(screen.queryByText("Configurações avançadas")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Limite por ativo (%)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Perfil de risco")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Valor disponível para investir")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Montar minha carteira" })).toBeEnabled();
   });
 
-  it("preserva parâmetros avançados no payload e bloqueia envio duplicado", async () => {
+  it("usa a política persistida, sem overrides avançados, e bloqueia envio duplicado", async () => {
     let calls = 0;
     let payload: Record<string, unknown> = {};
     server.use(http.post(`${api}/intelligence/build-portfolio`, async ({ request }) => {
@@ -70,18 +70,35 @@ describe("simplificação da Carteira Inteligente", () => {
       return HttpResponse.json(responseWithAssets());
     }));
     const user = await openBuilder();
-    await user.click(screen.getByText("Configurações avançadas"));
-    const limit = screen.getByLabelText("Limite por ativo (%)");
-    await user.clear(limit); await user.type(limit, "15");
     const button = screen.getByRole("button", { name: "Montar minha carteira" });
     await user.click(button);
     expect(screen.getByRole("button", { name: /Analisando dados e montando sua carteira/ })).toBeDisabled();
     expect(calls).toBe(1);
-    await waitFor(() => expect(payload.max_percentage_per_asset).toBe("15"));
-    expect(payload.available_amount).toBe("10000");
-    expect(payload.max_percentage_per_class).toBe("40");
-    expect(payload.projection_years).toBe(20);
+    await waitFor(() => expect(payload.max_percentage_per_asset).toBe("20"));
+    expect(payload.available_amount).toBe("900");
+    expect(payload.wealth_goal_amount).toBe("1000000");
+    expect(payload.max_assets).toBeNull();
+    expect(payload.monthly_contribution).toBe("900");
+    expect(payload.risk_profile).toBe("moderado");
+    expect(payload.horizon).toBe("longo prazo");
+    expect(payload.allowed_classes).toEqual(["Ações", "Tesouro Direto"]);
+    expect(payload.max_percentage_per_class).toBeUndefined();
+    expect(payload.net_monthly_income).toBeUndefined();
+    expect(payload.high_cost_debt).toBeUndefined();
+    expect(payload.projection_years).toBeUndefined();
     expect(payload.reinvest_income).toBe(true);
+  });
+
+  it("bloqueia montagem sem perfil confirmado, sem aplicar defaults de risco", async () => {
+    server.use(http.get(`${api}/investor-profile`, () => HttpResponse.json({
+      status: "in_progress",
+      primary_objective: null,
+      dimensions: null,
+    })));
+    sessionStorage.setItem("mesa_quant_session", "test-token");
+    renderWithProviders(<AppRouter />, "/planejar?secao=montar-carteira");
+    expect(await screen.findByRole("heading", { name: "Finalize o Perfil do Investidor" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Montar minha carteira" })).not.toBeInTheDocument();
   });
 
   it("destaca e ordena ativos, preservando valores e detalhes", async () => {
@@ -200,7 +217,7 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(await screen.findByText(/Ainda não há dados suficientes para recomendar ativos/)).toBeVisible();
     expect(screen.getByText("Insuficiente")).toBeVisible();
     server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json({ detail: "internal" }, { status: 500 })));
-    const amount = screen.getByLabelText("Valor disponível para investir");
+    const amount = screen.getByLabelText("Aporte deste mês");
     await user.clear(amount); await user.type(amount, "12345");
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/Seus dados foram preservados/);
