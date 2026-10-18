@@ -32,6 +32,7 @@ from app.schemas.intelligence import (
     PortfolioPolicyUpsert,
 )
 from app.services.portfolio_service import PortfolioService
+from app.services.pre_purchase_audit_service import PrePurchaseAuditService
 from app.services.market_intelligence_service import MarketIntelligenceService
 from app.services.symbol_identity import (
     B3_MARKET,
@@ -56,12 +57,14 @@ class PortfolioIntelligenceService:
         asset_repository: AssetRepository | None = None,
         market_intelligence_service: MarketIntelligenceService | None = None,
         investor_profile_repository: InvestorProfileRepository | None = None,
+        pre_purchase_audit_service: PrePurchaseAuditService | None = None,
     ):
         self.portfolio_service = portfolio_service
         self.policy_repository = policy_repository
         self.asset_repository = asset_repository
         self.market_intelligence_service = market_intelligence_service
         self.investor_profile_repository = investor_profile_repository
+        self.pre_purchase_audit_service = pre_purchase_audit_service
 
     def get_policy(self, user_id) -> PortfolioPolicyRead | None:
         policy = self.policy_repository.get_by_user(user_id)
@@ -359,11 +362,21 @@ class PortfolioIntelligenceService:
             PeerAsset(snapshot=candidate.snapshot, sector=candidate.sector, issuer=candidate.issuer)
             for candidate in candidates
         ])
+        # Confere SOMENTE dados críticos de NOVAS compras. Não realiza rede
+        # SEC/B3 em massa; CVM compara fatos já sincronizados no banco.
+        # Injeção opcional mantém o modo legado e testes independentes intactos.
         candidates = [
             PortfolioCandidate(
                 snapshot=enriched.get(candidate.snapshot.symbol, candidate.snapshot),
                 sector=candidate.sector, issuer=candidate.issuer,
                 market_context=candidate.market_context,
+                audit_blocking_reasons=(
+                    self.pre_purchase_audit_service.check(
+                        enriched.get(candidate.snapshot.symbol, candidate.snapshot),
+                        assets_by_symbol.get(candidate.snapshot.symbol.upper()),
+                    ).blocking_reasons
+                    if self.pre_purchase_audit_service is not None else ()
+                ),
             )
             for candidate in candidates
         ]
