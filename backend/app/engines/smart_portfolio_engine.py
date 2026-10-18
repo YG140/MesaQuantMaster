@@ -33,6 +33,7 @@ from app.schemas.market_intelligence import (
     ValuationStatus,
 )
 from app.engines.portfolio_holdings_context import limit_new_contributions, assess_holdings
+from app.engines.stock_purchase_eligibility import stock_purchase_exclusion_reason
 from app.services.symbol_identity import B3_MARKET, resolve_symbol_identity
 
 
@@ -90,6 +91,8 @@ class PortfolioCandidate:
     sector: str | None = None
     issuer: str | None = None
     market_context: str | None = None
+    # Somente impede nova seleção; não modifica posições já registradas.
+    audit_blocking_reasons: tuple[str, ...] = ()
 
 
 # Classe do envelope da PortfolioPolicy que não corresponde a nenhum ativo
@@ -558,7 +561,7 @@ class SmartPortfolioEngine:
         for candidate in sorted(candidates, key=lambda item: item.snapshot.symbol):
             snapshot = candidate.snapshot
             asset_class = cls.class_label(snapshot.asset_class)
-            reasons = []
+            reasons = list(candidate.audit_blocking_reasons)
             if policy_mode:
                 if asset_class not in allowed:
                     reasons.append(
@@ -615,6 +618,19 @@ class SmartPortfolioEngine:
                 reasons.append("Cotação atual indispensável não disponível.")
             elif snapshot.current_price <= 0:
                 reasons.append("Cotação atual inválida (menor ou igual a zero).")
+            # Não confundir cobertura de indicadores e pontuação com uma
+            # oportunidade de compra. Para novos aportes em ações, exigir
+            # margem de segurança relativa, sinal coerente e dados atuais.
+            # Preço ausente/inválido e INSUFFICIENT já têm causa explícita.
+            if (
+                snapshot.asset_class == InvestmentClass.STOCK
+                and snapshot.current_price is not None
+                and snapshot.current_price > 0
+                and snapshot.confidence != ConfidenceLevel.INSUFFICIENT
+            ):
+                stock_reason = stock_purchase_exclusion_reason(snapshot)
+                if stock_reason is not None:
+                    reasons.append(stock_reason)
             if snapshot.confidence == ConfidenceLevel.INSUFFICIENT:
                 reasons.append(cls._insufficiency_reason(snapshot))
             if reasons:
@@ -809,6 +825,15 @@ class SmartPortfolioEngine:
             "Selecionado por pontuação determinística entre os ativos elegíveis."
         )
         risks = list(snapshot.warning_reasons)
+        if snapshot.asset_class == InvestmentClass.STOCK:
+            reasons.append(
+                "Novo aporte condicionado a sinal de análise para compra e "
+                "desconto relativo mínimo de 20% frente a pares comparáveis."
+            )
+            risks.append(
+                "Faixa relativa setorial não é valor justo intrínseco nem "
+                "garantia de retorno. A decisão final exige avaliação de risco."
+            )
         if candidate.sector is None:
             risks.append(
                 "Setor não informado; controle setorial aplicado de forma conservadora por ativo."

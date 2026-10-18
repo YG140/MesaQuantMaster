@@ -129,11 +129,17 @@ def candidate(
         valid_until=NOW,
         confidence=ConfidenceLevel.HIGH,
     )
+    # Evidência sintética coerente apenas para os testes de alocação.
+    reference_low = (
+        current_price * Decimal("1.30")
+        if current_price is not None and current_price > 0 else Decimal("15")
+    )
     snapshot = AssetIntelligenceSnapshot(
         symbol=symbol,
         name=symbol,
         asset_class=asset_class,
         current_price=current_price,
+        market_updated_at=NOW,
         indicators=[indicator],
         overall_score=Decimal(score) if score is not None else None,
         quality_score=quality_score,
@@ -145,10 +151,14 @@ def candidate(
         liquidity_score=liquidity_score,
         strategy_fit_score=strategy_fit_score,
         recommendation=RecommendationAction.ANALYZE_TO_BUY,
-        valuation_status=ValuationStatus.NEAR_ESTIMATED_VALUE,
+        valuation_status=ValuationStatus.ATTRACTIVE,
         valuation=ValuationAssessment(
-            status=ValuationStatus.NEAR_ESTIMATED_VALUE,
+            status=ValuationStatus.ATTRACTIVE,
             confidence=ConfidenceLevel.MEDIUM,
+            methods=["Faixa relativa setorial: LPA e VPA de pares"],
+            estimated_range_low=reference_low,
+            estimated_range_high=reference_low * Decimal("1.10"),
+            data_date=NOW,
         ),
         confidence=confidence,
         coverage_percentage=Decimal(coverage),
@@ -206,18 +216,27 @@ def _stub_snapshot(
         valid_until=NOW,
         confidence=ConfidenceLevel.HIGH,
     )
+    reference_low = (
+        current_price * Decimal("1.30")
+        if current_price is not None and current_price > 0 else Decimal("15")
+    )
     return AssetIntelligenceSnapshot(
         symbol=symbol,
         name=symbol,
         asset_class=InvestmentClass.STOCK,
         current_price=current_price,
+        market_updated_at=NOW,
         indicators=[indicator],
         overall_score=overall_score,
         recommendation=RecommendationAction.ANALYZE_TO_BUY,
-        valuation_status=ValuationStatus.NEAR_ESTIMATED_VALUE,
+        valuation_status=ValuationStatus.ATTRACTIVE,
         valuation=ValuationAssessment(
-            status=ValuationStatus.NEAR_ESTIMATED_VALUE,
+            status=ValuationStatus.ATTRACTIVE,
             confidence=ConfidenceLevel.MEDIUM,
+            methods=["Faixa relativa setorial: LPA e VPA de pares"],
+            estimated_range_low=reference_low,
+            estimated_range_high=reference_low * Decimal("1.10"),
+            data_date=NOW,
         ),
         confidence=confidence,
         coverage_percentage=Decimal("30"),
@@ -337,11 +356,12 @@ def test_legacy_low_coverage_alone_does_not_exclude_when_confidence_sufficient()
 
 
 # Cenário 2: confidence LOW -> elegível se demais requisitos críticos presentes.
-def test_confidence_low_is_eligible_when_critical_requirements_present():
+def test_confidence_low_is_not_enough_for_new_stock_purchase():
     result = SmartPortfolioEngine.build(
         request(), [candidate("LOWC3", confidence=ConfidenceLevel.LOW)]
     )
-    assert [item.symbol for item in result.assets] == ["LOWC3"]
+    assert result.assets == []
+    assert "confiança de dados média ou alta" in result.exclusions[0].reasons[0]
 
 
 # Cenário 3: confidence MEDIUM -> elegível.
@@ -481,7 +501,7 @@ def test_insufficient_scoring_categories_excludes_with_generic_reason():
 
 
 # Cenário 18: recommendation_blocked legado não-crítico sozinho não exclui.
-def test_legacy_recommendation_blocked_alone_does_not_exclude():
+def test_explicit_quality_block_prevents_stock_purchase_even_if_coverage_is_medium():
     blocked = DataQualityReport(
         data_completeness=Decimal("30"),
         data_freshness=Decimal("30"),
@@ -492,7 +512,8 @@ def test_legacy_recommendation_blocked_alone_does_not_exclude():
         request(),
         [candidate("BLOCKED3", confidence=ConfidenceLevel.MEDIUM, data_quality=blocked)],
     )
-    assert [item.symbol for item in result.assets] == ["BLOCKED3"]
+    assert not result.assets
+    assert any("bloqueio explícito de qualidade" in reason for reason in result.exclusions[0].reasons)
 
 
 # Cenário 19 + TESTE DO BUG PRINCIPAL (seção 37 do prompt): required
@@ -507,7 +528,7 @@ def test_p2_bug_scenario_asset_not_excluded_by_legacy_gate_alone():
         [
             candidate(
                 "BUG3",
-                confidence=ConfidenceLevel.LOW,
+                confidence=ConfidenceLevel.MEDIUM,
                 coverage="35",
                 score=None,
                 quality_score=Decimal("60"),
@@ -810,8 +831,10 @@ def test_preflight_counts_reflect_candidates_and_exclusions():
     assert preflight.confidence_medium_count == 1
     assert preflight.confidence_low_count == 1
     assert preflight.confidence_insufficient_count == 1
-    assert preflight.eligible_count == 3
-    assert preflight.excluded_count == 1
+    # Confiança LOW continua sendo contada no diagnóstico, mas deixa
+    # de autorizar nova compra de ações sem evidência suficientemente forte.
+    assert preflight.eligible_count == 2
+    assert preflight.excluded_count == 2
     assert preflight.universe_total == 4
     assert preflight.universe_considered == 4
     assert "DDDD3" in {item.symbol for item in result.exclusions}
@@ -1669,3 +1692,44 @@ def test_automatic_asset_count_follows_affordability_not_a_user_maximum():
     assert len(larger.assets) == 6
     assert smaller.total_allocated_amount <= Decimal("100")
     assert larger.total_allocated_amount <= Decimal("200")
+
+
+def test_pre_purchase_audit_blocks_new_buy_but_keeps_existing_position_readable():
+    from dataclasses import replace
+    from app.engines.smart_portfolio_engine import PortfolioHolding
+    audited = replace(
+        candidate("BLOCK3", score="95", sector="Energia"),
+        audit_blocking_reasons=(
+            "Indicador assets diverge da CVM no mesmo período; novo aporte suspenso.",
+        ),
+    )
+    existing = PortfolioHolding(
+        symbol="BLOCK3", quantity=Decimal("3"), value=Decimal("30"),
+        valuation_basis="market", asset_class="Ações", sector="Energia", issuer="BLOCK3",
+    )
+    result = SmartPortfolioEngine.build(
+        request(max_assets=1),
+        [audited, candidate("SAFE3", score="70", sector="Tecnologia")],
+        holdings=[existing],
+    )
+    assert [asset.symbol for asset in result.assets] == ["SAFE3"]
+    assert result.existing_positions_count == 1
+    assert result.existing_portfolio_value == Decimal("30")
+    assert any(item.symbol == "BLOCK3" for item in result.existing_holdings_assessments)
+    assert any(
+        item.symbol == "BLOCK3" and "diverge da CVM" in " ".join(item.reasons)
+        for item in result.exclusions
+    )
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("10000.00")
+
+
+def test_pre_purchase_audit_does_not_create_new_UI_fields_or_change_legacy_builder():
+    from dataclasses import replace
+    original = candidate("LEGACY3", sector="Energia")
+    untouched = replace(original, audit_blocking_reasons=())
+    baseline = SmartPortfolioEngine.build(request(), [original])
+    checked = SmartPortfolioEngine.build(request(), [untouched])
+    assert [item.symbol for item in baseline.assets] == [item.symbol for item in checked.assets]
+    assert baseline.model_dump(exclude={"generated_at", "diagnosis", "projections", "freedom_goal"}) == checked.model_dump(
+        exclude={"generated_at", "diagnosis", "projections", "freedom_goal"}
+    )
