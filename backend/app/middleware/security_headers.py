@@ -20,7 +20,7 @@ class SecurityHeadersMiddleware:
                         (b"content-security-policy", b"frame-ancestors 'none'"),
                     ]
                 )
-                if self.hsts_enabled and scope.get("scheme") == "https":
+                if self.hsts_enabled:
                     headers.append(
                         (
                             b"strict-transport-security",
