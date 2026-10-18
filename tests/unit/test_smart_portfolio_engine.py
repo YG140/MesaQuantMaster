@@ -856,7 +856,12 @@ def test_partial_batch_failure_preserves_valid_snapshots_and_counts_errors():
     assert result.preflight.batch_count == 2
     assert result.preflight.snapshots_received == 50
     assert result.preflight.provider_error_count == 20
-    assert len(result.assets) > 0
+    # Esses snapshots artificiais chegam com status "barato", mas NÃO há
+    # sequer três pares independentes para sustentar a faixa. A queda de
+    # um lote não deve provocar nova compra de preço não verificado.
+    assert result.assets == []
+    assert result.unallocated_amount == Decimal("10000.00")
+    assert result.preflight.excluded_count == 50
     assert any("não respondeu" in item for item in result.missing_data)
 
 
