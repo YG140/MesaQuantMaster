@@ -1,4 +1,5 @@
 import smtplib
+import ssl
 from email.message import EmailMessage
 from typing import Protocol
 
@@ -18,6 +19,10 @@ class SMTPEmailProvider:
     def send(self, recipient: str, subject: str, text: str) -> None:
         if not self.is_configured():
             raise RuntimeError("Serviço de e-mail não configurado.")
+        if settings.APP_ENV.strip().lower() == "production" and not settings.SMTP_USE_TLS:
+            raise RuntimeError("SMTP exige TLS em produção.")
+        if settings.SMTP_USERNAME and not settings.SMTP_USE_TLS:
+            raise RuntimeError("Autenticação SMTP exige TLS.")
         message = EmailMessage()
         message["Subject"] = subject
         message["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
@@ -29,7 +34,7 @@ class SMTPEmailProvider:
             timeout=settings.SMTP_TIMEOUT_SECONDS,
         ) as smtp:
             if settings.SMTP_USE_TLS:
-                smtp.starttls()
+                smtp.starttls(context=ssl.create_default_context())
             if settings.SMTP_USERNAME:
                 smtp.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
             smtp.send_message(message)
