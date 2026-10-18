@@ -10,6 +10,7 @@ class EmergencyReservePlanRequest(BaseModel):
     essential_monthly_expenses: Decimal = Field(gt=0, le=Decimal("1000000000"))
     current_reserve: Decimal = Field(ge=0, le=Decimal("100000000000"))
     monthly_available: Decimal = Field(ge=0, le=Decimal("1000000000"))
+    income_unstable: bool = False
 
 
 class ReserveBucket(BaseModel):
