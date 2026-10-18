@@ -10,7 +10,7 @@ export const investorProfileEndpoints = {
   status: (token: string) =>
     apiRequest<InvestorProfileStatusResponse>("/investor-profile/status", { token }),
   get: (token: string) =>
-    apiRequest<InvestorProfile>("/investor-profile", { token }),
+    apiRequest<InvestorProfile>("/investor-profile", { token, timeoutMs: 20_000 }),
   saveAnswers: (token: string, payload: InvestorProfileAnswers) =>
     apiRequest<InvestorProfile>("/investor-profile/answers", {
       method: "PUT",

@@ -63,7 +63,10 @@ export function PortfolioIntelligencePage() {
   const intelligence = useQuery({
     queryKey: ["portfolio-intelligence", token],
     queryFn: () => endpoints.portfolioIntelligence(token!),
-    enabled: Boolean(token),
+    // Consulta pesada só quando a aba Diagnóstico está ativa.
+    enabled: Boolean(token) && area === "Diagnóstico",
+    retry: false,
+    staleTime: 30_000,
   });
 
   // Resiliência (Correção interface): o shell da página, as abas, o Perfil
@@ -97,6 +100,7 @@ export function PortfolioIntelligencePage() {
 }
 
 function IntelligenceDependentSections({ intelligence }: { intelligence: UseQueryResult<PortfolioIntelligence, unknown> }) {
+  const [opportunitiesOpen, setOpportunitiesOpen] = useState(false);
   return (
     <div className="intelligence-sections">
       {intelligence.isLoading ? <LoadingState label="Carregando inteligência da carteira..." /> : null}
@@ -121,7 +125,10 @@ function IntelligenceDependentSections({ intelligence }: { intelligence: UseQuer
       {/* Oportunidades gerencia seu próprio estado (query independente, ver
           MarketOpportunities) -- nunca escondida só porque o restante do
           diagnóstico falhou. */}
-      <details><summary>Oportunidades relacionadas à carteira</summary><MarketOpportunities /></details>
+      <details onToggle={(event) => setOpportunitiesOpen(event.currentTarget.open)}>
+        <summary>Oportunidades relacionadas à carteira</summary>
+        {opportunitiesOpen ? <MarketOpportunities /> : null}
+      </details>
     </div>
   );
 }
@@ -137,6 +144,16 @@ function describeIntelligenceError(error: unknown): string {
   return "Não foi possível carregar a inteligência da carteira agora.";
 }
 
+function describeInvestorProfileError(error: unknown): string {
+  if (!(error instanceof ApiError)) return "Não foi possível consultar seu perfil agora. Verifique a conexão com o servidor.";
+  if (error.code === "TIMEOUT") return "A consulta do perfil demorou demais. Confira a conexão com o servidor e tente novamente.";
+  if (error.code === "NETWORK") return "Não foi possível conectar ao servidor para consultar o perfil.";
+  if (error.code === "UNAUTHORIZED") return "Sua sessão expirou. Entre novamente para consultar seu perfil.";
+  if (error.status !== null && error.status >= 500) return "O servidor não conseguiu carregar o perfil. Verifique o backend e o banco de dados.";
+  if (error.code === "SERVER" || error.code === "BAD_GATEWAY") return "O servidor não conseguiu carregar o perfil. Verifique o backend e o banco de dados.";
+  return "Não foi possível consultar seu perfil agora. Tente novamente.";
+}
+
 function InvestorProfileSummary() {
   const { token } = useAuth();
   const navigate = useNavigate();
@@ -144,6 +161,7 @@ function InvestorProfileSummary() {
     queryKey: ["investor-profile", token],
     queryFn: () => investorProfileEndpoints.get(token!),
     enabled: Boolean(token),
+    retry: false,
   });
 
   async function continueOrReview() {
@@ -155,7 +173,7 @@ function InvestorProfileSummary() {
     <Card title="Perfil do Investidor" className="investor-profile-summary">
       {investorProfile.isLoading ? <LoadingState label="Consultando seu perfil..." /> : null}
       {investorProfile.error ? (
-        <ErrorState message="Não foi possível consultar seu perfil agora.">
+        <ErrorState message={describeInvestorProfileError(investorProfile.error)}>
           <Button type="button" variant="secondary" onClick={() => investorProfile.refetch()} disabled={investorProfile.isFetching}>
             {investorProfile.isFetching ? "Tentando novamente..." : "Tentar novamente"}
           </Button>
@@ -739,6 +757,8 @@ export function MarketOpportunities() {
     queryKey: ["portfolio-intelligence", token],
     queryFn: () => endpoints.portfolioIntelligence(token!),
     enabled: Boolean(token),
+    retry: false,
+    staleTime: 30_000,
   });
   const macro = useQuery({
     queryKey: ["macro-context", token],
