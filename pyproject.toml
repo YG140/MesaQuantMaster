@@ -7,13 +7,14 @@ requires-python = ">=3.13"
 
 dependencies = [
     # API
-    "fastapi==0.141.1",
+    "fastapi==0.143.3",
     "starlette==1.6.0",
     "uvicorn[standard]==0.52.4",
     "httpx==0.28.1",
+    "certifi>=2026.10.19",
     "streamlit==1.66.0",
-    "pillow==12.3.0",
-    "gitpython==3.1.58",
+    "pillow==13.0.0",
+    "gitpython==3.2.1",
 
     # Banco de Dados
     "sqlalchemy==2.0.43",
@@ -23,7 +24,7 @@ dependencies = [
     # Configurações
     "pydantic==2.11.7",
     "pydantic-settings==2.15.0",
-    "python-dotenv==1.2.2",
+    "python-dotenv==1.2.4",
 
     # Autenticação
 "python-jose[cryptography]==3.5.0",
