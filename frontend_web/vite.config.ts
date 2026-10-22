@@ -11,6 +11,10 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+    // Em Windows/Node 24, preferir um unico worker em thread evita
+    // inicializacoes repetidas por fork e filas sem progresso visivel.
+    pool: "threads",
+    maxWorkers: 1,
     fileParallelism: false,
     testTimeout: 30_000,
     css: true,
