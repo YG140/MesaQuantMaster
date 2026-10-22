@@ -33,7 +33,15 @@ jobs:
         run: python -m pip_audit
       - name: Testes criticos da carteira e autenticacao
         run: |
-          python -m pytest -q             tests/unit/test_smart_portfolio_engine.py             tests/unit/test_financial_planning_engine.py             tests/unit/test_emergency_reserve_engine.py             tests/integration/test_recommendation_history_api.py             tests/integration/test_emergency_reserve_api.py
+          python -m pytest -q \
+            tests/unit/test_jwt_migration_compatibility.py \
+            tests/unit/test_email_auth.py \
+            tests/integration/test_global_resource_authorization.py \
+            tests/unit/test_smart_portfolio_engine.py \
+            tests/unit/test_financial_planning_engine.py \
+            tests/unit/test_emergency_reserve_engine.py \
+            tests/integration/test_recommendation_history_api.py \
+            tests/integration/test_emergency_reserve_api.py
 
   backend-requirements-python313:
     name: Dependencias backend em Python 3.13
