@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError
+from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -29,7 +29,7 @@ def get_current_user(
         if email is None:
             raise credentials_exception
 
-    except JWTError:
+    except InvalidTokenError:
         raise credentials_exception
 
     repository = UserRepository(db)
