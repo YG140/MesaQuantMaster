@@ -2,7 +2,7 @@
 name = "mesa-quant-master"
 version = "1.0.0"
 description = "Sistema profissional para gestão quantitativa de investimentos."
-readme = "README.md"
+readme = "README.MD"
 requires-python = ">=3.13"
 
 dependencies = [
@@ -12,7 +12,6 @@ dependencies = [
     "uvicorn[standard]==0.52.4",
     "httpx==0.28.1",
     "certifi>=2026.10.19",
-    "streamlit==1.66.0",
     "pillow==13.0.0",
     "gitpython==3.2.1",
 
@@ -27,14 +26,14 @@ dependencies = [
     "python-dotenv==1.2.4",
 
     # Autenticação
-"python-jose[cryptography]==3.5.0",
+"PyJWT==2.15.1",
 "cryptography==50.0.0",
 "pwdlib[argon2]>=0.3.0",
 "python-multipart>=0.0.32",
 
     # Utilitários
     "email-validator>=2.2.0",
-    "openai>=2.0.0,<3.0.0",
+    "openai==3.1.0",
 ]
 
 [project.optional-dependencies]
