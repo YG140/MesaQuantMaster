@@ -23,7 +23,7 @@ dependencies = [
     # Configurações
     "pydantic==2.11.7",
     "pydantic-settings==2.15.0",
-    "python-dotenv==1.2.2",
+    "python-dotenv==1.2.4",
 
     # Autenticação
 "python-jose[cryptography]==3.5.0",
