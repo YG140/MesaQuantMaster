@@ -1,0 +1,52 @@
+name: Preparar lockfile release combinado
+on:
+  push:
+    branches:
+      - release/integracao-validada-20261022
+    paths:
+      - ".github/workflows/release-lock-regenerate.yml"
+permissions:
+  contents: write
+jobs:
+  synchronize-package-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Regenerar a arvore de dependencias com npm
+        working-directory: frontend_web
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Validar npm ci
+        working-directory: frontend_web
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validar Vite, Vitest e Undici
+        working-directory: frontend_web
+        run: |
+          node - <<'JS'
+          const pkg=require('./package.json')
+          const lock=require('./package-lock.json')
+          const expected={undici:'8.12.2',vite:'7.3.7',vitest:'4.1.12'}
+          const got=Object.fromEntries(Object.keys(expected).map(k=>[k,lock.packages['node_modules/'+k]?.version]))
+          for (const [name,version] of Object.entries(expected)) {
+            if (got[name] !== version) throw Error(name+' nao corresponde: '+got[name])
+          }
+          if (pkg.overrides?.undici !== '8.12.2') throw Error('override undici nao registrado')
+          console.log('Lockfile consistente',got)
+          JS
+      - name: Salvar somente package-lock atualizado
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- frontend_web/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Lockfile ja sincronizado"
+          else
+            git commit -m "chore(release): fixar undici + vite + vitest no lockfile"
+            git push origin HEAD:refs/heads/release/integracao-validada-20261022
+          fi
