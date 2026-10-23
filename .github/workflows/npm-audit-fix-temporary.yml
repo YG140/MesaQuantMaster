@@ -1,0 +1,65 @@
+name: Temporario - corrigir dependencias npm audit
+on:
+  push:
+    branches:
+      - fix/auditoria-npm-outubro-20261023
+    paths:
+      - ".github/workflows/npm-audit-fix-temporary.yml"
+permissions:
+  contents: write
+jobs:
+  npm-audit-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Atualizar lockfile com registro npm real
+        working-directory: frontend_web
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm audit fix --package-lock-only --ignore-scripts --no-fund
+      - name: Instalar lockfile exato
+        working-directory: frontend_web
+        run: npm ci --no-audit --no-fund
+      - name: Bloquear vulnerabilidades high em producao e dev
+        working-directory: frontend_web
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
+      - name: Conferir versao de zod
+        working-directory: frontend_web
+        run: |
+          node - <<'NODE'
+          const lock = require('./package-lock.json')
+          const version = lock.packages['node_modules/zod']?.version
+          const parts = version?.split('.').map(Number)
+          if (!parts || parts[0] !== 4 || parts[1] < 6 || (parts[1] === 6 && parts[2] < 6)) {
+            throw Error('Versao do Zod nao verificada: ' + version)
+          }
+          console.log('Zod atualizado:', version)
+          NODE
+      - name: Testar qualidade e compilacao
+        working-directory: frontend_web
+        run: |
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+      - name: Publicar somente o lockfile na branch de correcao
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- frontend_web/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Lockfile ja sincronizado"
+          else
+            git diff --cached --stat
+            git commit -m "fix(security): resolver npm audit com dependencias conferidas"
+            git push origin HEAD:refs/heads/fix/auditoria-npm-outubro-20261023
+          fi
