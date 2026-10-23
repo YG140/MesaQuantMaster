@@ -1,0 +1,41 @@
+name: Validacao isolada dos PRs 80 e 83
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/app/engines/portfolio_walk_forward_engine.py"
+      - "backend/app/engines/b3_historical_price_audit.py"
+      - "backend/app/schemas/portfolio_validation.py"
+      - "backend/app/api/backtesting.py"
+      - "backend/scripts/audit_b3_historical_prices.py"
+      - "tests/unit/test_portfolio_walk_forward_engine.py"
+      - "tests/unit/test_b3_historical_price_audit.py"
+      - "tests/integration/test_portfolio_walk_forward_api.py"
+      - "tests/unit/test_backtest_historical_boundaries.py"
+      - ".github/workflows/validation-pr80-pr83.yml"
+permissions:
+  contents: read
+jobs:
+  backtesting-python313:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: sqlite:///./ci_backtest_isolado.sqlite3
+      SECRET_KEY: ci-only-backtest-disposable-secret-do-not-use-production
+      PYTHONPATH: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Instalar dependencias do backend
+        run: python -m pip install -r backend/requirements.txt
+      - name: Confirmar pacotes e sintaxe
+        run: |
+          python -m pip check
+          python -m compileall -q backend/app
+      - name: Exercitar backtest, auditoria offline B3 e autenticacao
+        run: |
+          python -m pytest -q             tests/unit/test_portfolio_walk_forward_engine.py             tests/unit/test_b3_historical_price_audit.py             tests/integration/test_portfolio_walk_forward_api.py             tests/unit/test_backtest_historical_boundaries.py             tests/unit/test_smart_portfolio_engine.py             tests/unit/test_stock_purchase_eligibility.py
