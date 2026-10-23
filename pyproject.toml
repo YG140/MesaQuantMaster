@@ -2,18 +2,18 @@
 name = "mesa-quant-master"
 version = "1.0.0"
 description = "Sistema profissional para gestão quantitativa de investimentos."
-readme = "README.md"
+readme = "README.MD"
 requires-python = ">=3.13"
 
 dependencies = [
     # API
-    "fastapi==0.141.1",
+    "fastapi==0.149.0",
     "starlette==1.6.0",
     "uvicorn[standard]==0.52.4",
     "httpx==0.28.1",
-    "streamlit==1.66.0",
-    "pillow==12.3.0",
-    "gitpython==3.1.58",
+    "certifi>=2026.10.19",
+    "pillow==13.0.0",
+    "gitpython==3.2.1",
 
     # Banco de Dados
     "sqlalchemy==2.0.43",
@@ -23,17 +23,17 @@ dependencies = [
     # Configurações
     "pydantic==2.11.7",
     "pydantic-settings==2.15.0",
-    "python-dotenv==1.2.2",
+    "python-dotenv==1.2.4",
 
     # Autenticação
-"python-jose[cryptography]==3.5.0",
+"PyJWT==2.15.1",
 "cryptography==50.0.0",
 "pwdlib[argon2]>=0.3.0",
 "python-multipart>=0.0.32",
 
     # Utilitários
     "email-validator>=2.2.0",
-    "openai>=2.0.0,<3.0.0",
+    "openai==3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -42,7 +42,7 @@ dev = [
     "pytest-cov==7.1.0",
     "pytest-asyncio==1.4.0",
     "ruff==0.12.4",
-    "black==26.5.1",
+    "black==26.10.1",
     "mypy==2.3.1",
 ]
 

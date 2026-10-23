@@ -1,4 +1,4 @@
-fastapi==0.143.3
+fastapi==0.149.0
 starlette==1.6.0
 uvicorn[standard]==0.52.4
 sqlalchemy==2.0.43
@@ -11,8 +11,9 @@ pytest-cov==7.1.0
 ruff==0.12.4
 openai==3.1.0
 httpx==0.28.1
+certifi>=2026.10.19
 pydantic-settings==2.15.0
-python-jose[cryptography]==3.5.0
+PyJWT==2.15.1
 pwdlib[argon2]>=0.3.0
 python-multipart>=0.0.32
 email-validator>=2.2.0
