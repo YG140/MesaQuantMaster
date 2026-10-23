@@ -91,21 +91,31 @@ def _validate_period(period: WalkForwardPeriod, prev: WalkForwardPeriod | None) 
         returns[symbol] = observed
         if not observed.start_index.is_finite() or not observed.end_index.is_finite():
             raise ValueError(f"{symbol}: índices de retorno devem ser finitos.")
-        if _utc(observed.start_observed_at, "return.start_observed_at") > decision:
+        start_observed = _utc(observed.start_observed_at, "return.start_observed_at")
+        end_observed = _utc(observed.end_observed_at, "return.end_observed_at")
+        if start_observed > decision:
             raise ValueError(f"{symbol}: índice inicial ainda não era conhecido na decisão.")
-        if _utc(observed.end_observed_at, "return.end_observed_at") < ending:
-            raise ValueError(f"{symbol}: índice final não representa a data de avaliação.")
-        if _utc(observed.end_observed_at, "return.end_observed_at") > datetime.now(timezone.utc):
+        if decision - start_observed > MAX_SIGNAL_AGE:
+            raise ValueError(f"{symbol}: índice inicial fora da janela de decisão (mais de 7 dias).")
+        # O valor final precisa corresponder ao fim DESTA janela;
+        # um indice posterior usaria valorizacao futura e viciaria o retorno.
+        if end_observed != ending:
+            raise ValueError(f"{symbol}: índice final não corresponde à data da avaliação.")
+        if end_observed > datetime.now(timezone.utc):
             raise ValueError(f"{symbol}: não aceitar divulgação futura de resultado.")
 
     benchmark = period.benchmark
     if not benchmark.start_index.is_finite() or not benchmark.end_index.is_finite():
         raise ValueError("Benchmark possui índice não finito.")
-    if _utc(benchmark.start_observed_at, "benchmark.start_observed_at") > decision:
+    benchmark_start = _utc(benchmark.start_observed_at, "benchmark.start_observed_at")
+    benchmark_end = _utc(benchmark.end_observed_at, "benchmark.end_observed_at")
+    if benchmark_start > decision:
         raise ValueError("Índice inicial do benchmark ainda não conhecido na decisão.")
-    if _utc(benchmark.end_observed_at, "benchmark.end_observed_at") < ending:
-        raise ValueError("Índice final do benchmark anterior ao fim da janela.")
-    if _utc(benchmark.end_observed_at, "benchmark.end_observed_at") > datetime.now(timezone.utc):
+    if decision - benchmark_start > MAX_SIGNAL_AGE:
+        raise ValueError("Índice inicial do benchmark fora da janela de decisão (mais de 7 dias).")
+    if benchmark_end != ending:
+        raise ValueError("Índice final do benchmark não corresponde à data da avaliação.")
+    if benchmark_end > datetime.now(timezone.utc):
         raise ValueError("Índice final do benchmark declarado no futuro.")
     if prev is not None and (
         benchmark.name != prev.benchmark.name
