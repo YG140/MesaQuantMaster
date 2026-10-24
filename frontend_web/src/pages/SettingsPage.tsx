@@ -8,6 +8,7 @@ import {
   continueOrReviewInvestorProfile,
   investorProfileActionLabel,
   investorProfileObjectiveLabel,
+  investorProfileRiskLabel,
   investorProfileStatusLabel,
 } from "../features/investorProfile/presentation";
 import { defaultVisualPreferences, readVisualPreferences, saveVisualPreferences, type VisualPreferences } from "../features/preferences/visualPreferences";
@@ -69,7 +70,7 @@ export function SettingsPage() {
         {investorProfile.isLoading ? <p>Consultando seu perfil…</p> : investorProfile.error ? <p className="error-text">Não foi possível consultar seu perfil.</p> : <>
           <dl className="settings-facts">
             <div><dt>Status</dt><dd>{investorProfileStatusLabel(investorProfile.data?.status)}</dd></div>
-            <div><dt>Classificação</dt><dd>{investorProfile.data?.dimensions?.overall_classification ?? "Ainda não calculada"}</dd></div>
+            <div><dt>Classificação</dt><dd>{investorProfile.data?.dimensions?.overall_classification ? investorProfileRiskLabel(investorProfile.data.dimensions.overall_classification) : "Ainda não calculada"}</dd></div>
             <div><dt>Objetivo</dt><dd>{investorProfileObjectiveLabel(investorProfile.data?.primary_objective)}</dd></div>
             <div><dt>Última revisão</dt><dd>{formatDateTimeBR(investorProfile.data?.last_reviewed_at ?? investorProfile.data?.confirmed_at ?? undefined)}</dd></div>
           </dl>
