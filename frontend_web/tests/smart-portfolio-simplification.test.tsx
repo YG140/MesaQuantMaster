@@ -52,12 +52,40 @@ describe("simplificação da Carteira Inteligente", () => {
     await openBuilder();
     expect(screen.getByLabelText("Patrimônio que quero alcançar")).toBeVisible();
     expect(screen.getByLabelText("Aporte deste mês")).toBeVisible();
-    expect(screen.getByText(/Perfil aplicado:/)).toHaveTextContent("aporte mensal de R$ 900,00");
+    expect(screen.getByText(/Perfil aplicado:/)).toHaveTextContent("Moderado • Prazo de investimento: Longo prazo • Aporte mensal previsto no perfil: R$ 900,00");
     expect(screen.queryByText("Configurações avançadas")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Limite por ativo (%)")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Perfil de risco")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Valor disponível para investir")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Montar minha carteira" })).toBeEnabled();
+  });
+
+  it("mostra rótulos de risco e horizonte do backend em português, sem exibir códigos internos", async () => {
+    server.use(http.get(`${api}/intelligence/policy`, () => HttpResponse.json({
+      id: "policy-test",
+      objective: "crescimento_patrimonial",
+      risk_profile: "Moderado-arrojado",
+      investment_horizon: "mais_10_anos",
+      monthly_contribution: "2000",
+      liquidity_need: "baixa",
+      income_need: false,
+      emergency_reserve_months: 6,
+      maximum_weight_per_asset: "20",
+      maximum_weight_per_sector: "30",
+      maximum_weight_per_issuer: "30",
+      rebalance_tolerance: "5",
+      allocations: [
+        { id: "a1", asset_class: "Ações", target_percentage: "60", minimum_percentage: "50", maximum_percentage: "70", enabled: true },
+        { id: "a2", asset_class: "Tesouro Direto", target_percentage: "40", minimum_percentage: "30", maximum_percentage: "50", enabled: true },
+      ],
+    })));
+    await openBuilder();
+    const summary = screen.getByText(/Perfil aplicado:/);
+    expect(summary).toHaveTextContent("Moderado a arrojado");
+    expect(summary).toHaveTextContent("Prazo de investimento: Mais de 10 anos");
+    expect(summary).toHaveTextContent("Aporte mensal previsto no perfil: R$ 2.000,00");
+    expect(summary).not.toHaveTextContent("mais_10_anos");
+    expect(screen.getByLabelText("Aporte deste mês")).toBeVisible();
   });
 
   it("usa a política persistida, sem overrides avançados, e bloqueia envio duplicado", async () => {
