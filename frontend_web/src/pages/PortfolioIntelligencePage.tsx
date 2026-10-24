@@ -633,7 +633,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
             {cashRemaining > 0 ? <p>Restaram {formatMoney(data.unallocated_amount)} sem alocação. Esse valor não é investido automaticamente em ativos que não atendem à política de risco.</p> : null}
           </div>
         ) : null}
-        {!sortedAssets.length ? <div className="smart-insufficient"><h3>Ainda não há dados suficientes para recomendar ativos.</h3><p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></div> : (
+        {!sortedAssets.length ? <div className="smart-insufficient">{data.goal_gap_before_contribution != null && Number(data.goal_gap_before_contribution) === 0 ? <h3>Sua meta patrimonial já foi alcançada.</h3> : <h3>Ainda não há dados suficientes para recomendar ativos.</h3>}<p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></div> : (
           <div className="recommended-assets" aria-label="Ativos recomendados">
             {sortedAssets.map((asset) => <RecommendedAssetCard asset={asset} key={asset.symbol} />)}
           </div>
