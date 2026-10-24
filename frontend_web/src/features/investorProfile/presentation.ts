@@ -25,6 +25,52 @@ const OBJECTIVE_LABELS: Record<string, string> = {
   formacao_patrimonio: "Formação de patrimônio do zero",
 };
 
+// Traduz códigos internos para rótulos legíveis; não modifica a política persistida
+// nem os valores enviados ao backend ao montar a carteira.
+const HORIZON_LABELS: Record<string, string> = {
+  menos_1_ano: "Menos de 1 ano",
+  "1_a_3_anos": "1 a 3 anos",
+  "3_a_5_anos": "3 a 5 anos",
+  "5_a_10_anos": "5 a 10 anos",
+  mais_10_anos: "Mais de 10 anos",
+  "curto prazo": "Curto prazo",
+  "médio prazo": "Médio prazo",
+  "medio prazo": "Médio prazo",
+  "longo prazo": "Longo prazo",
+};
+
+const RISK_LABELS: Record<string, string> = {
+  conservador: "Conservador",
+  "moderado-conservador": "Moderado a conservador",
+  moderado: "Moderado",
+  "moderado-arrojado": "Moderado a arrojado",
+  arrojado: "Arrojado",
+};
+
+const LIQUIDITY_LABELS: Record<string, string> = {
+  baixa: "Baixa",
+  moderada: "Moderada",
+  alta: "Alta",
+};
+
+export function investorProfileHorizonLabel(horizon?: string | null): string {
+  if (!horizon?.trim()) return "Não informado";
+  const cleaned = horizon.trim();
+  return HORIZON_LABELS[cleaned.toLocaleLowerCase("pt-BR")] ?? cleaned;
+}
+
+export function investorProfileRiskLabel(risk?: string | null): string {
+  if (!risk?.trim()) return "Não informado";
+  const cleaned = risk.trim();
+  return RISK_LABELS[cleaned.toLocaleLowerCase("pt-BR")] ?? cleaned;
+}
+
+export function investorProfileLiquidityLabel(liquidity?: string | null): string {
+  if (!liquidity?.trim()) return "Não informado";
+  const cleaned = liquidity.trim();
+  return LIQUIDITY_LABELS[cleaned.toLocaleLowerCase("pt-BR")] ?? cleaned;
+}
+
 export function investorProfileStatusLabel(status?: string | null): string {
   return ONBOARDING_STATUS_LABELS[status ?? ""] ?? "Não informado";
 }
