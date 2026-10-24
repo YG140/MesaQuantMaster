@@ -103,21 +103,22 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(screen.getByText(/Aporte mensal previsto no perfil:/)).toHaveTextContent("R$ 900,00");
   });
 
-  it("mostra influência da meta no teto de compras e o esforço mensal sem rentabilidade", async () => {
+  it("mostra influência da meta no planejamento sem limitar o aporte de hoje", async () => {
     const response = responseWithAssets();
     Object.assign(response, {
       daily_contribution_amount: "900",
       goal_wealth_before_contribution: "9500",
       goal_gap_before_contribution: "500",
       goal_gap_after_contribution: "350",
-      goal_spend_limit: "500",
+      goal_spend_limit: null,
       required_monthly_contribution_without_returns: "1.46",
     });
     server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(response)));
     const user = await openBuilder();
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByText("Como a meta influencia esta montagem:")).toBeVisible();
-    expect(screen.getByRole("note")).toHaveTextContent("Limite de compra definido pela meta: R$ 500,00");
+    expect(screen.getByRole("note")).toHaveTextContent("não reduz seu orçamento de hoje nem impõe um teto às compras");
+    expect(screen.queryByText(/Limite de compra definido pela meta/)).not.toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("R$ 1,46 por mês");
     expect(screen.getByText("Falta para minha meta após a simulação")).toBeVisible();
     expect(screen.getAllByText("Aporte de hoje").length).toBeGreaterThan(0);
