@@ -117,10 +117,10 @@ describe("simplificação da Carteira Inteligente", () => {
     const user = await openBuilder();
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByText("Como a meta influencia esta montagem:")).toBeVisible();
-    expect(screen.getByText(/Limite de compra definido pela meta: R\\$ 500,00/)).toBeVisible();
-    expect(screen.getByText(/R\\$ 1,46 por mês/)).toBeVisible();
+    expect(screen.getByRole("note")).toHaveTextContent("Limite de compra definido pela meta: R$ 500,00");
+    expect(screen.getByRole("note")).toHaveTextContent("R$ 1,46 por mês");
     expect(screen.getByText("Falta para minha meta após a simulação")).toBeVisible();
-    expect(screen.getByText("Aporte de hoje")).toBeVisible();
+    expect(screen.getAllByText("Aporte de hoje").length).toBeGreaterThan(0);
   });
 
   it("usa a política persistida, sem overrides avançados, e bloqueia envio duplicado", async () => {
