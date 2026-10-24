@@ -15,6 +15,11 @@ async function openBuilder() {
   await user.click(await screen.findByRole("tab", { name: "Montar carteira" }, { timeout: 10_000 }));
   await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" });
   await waitFor(() => expect(screen.getByLabelText("Patrimônio que quero alcançar")).toHaveValue("1.000.000,00"));
+  // O aporte de hoje é independente do aporte mensal confirmado no perfil.
+  const today = screen.getByLabelText("Aporte de hoje");
+  await user.clear(today);
+  await user.type(today, "90000");
+  await waitFor(() => expect(today).toHaveValue("900,00"));
   return user;
 }
 
@@ -48,10 +53,10 @@ function responseWithAssets() {
 }
 
 describe("simplificação da Carteira Inteligente", () => {
-  it("mostra meta, aporte do mês e a estratégia automática do perfil", async () => {
+  it("mostra meta, aporte diário e a estratégia automática do perfil", async () => {
     await openBuilder();
     expect(screen.getByLabelText("Patrimônio que quero alcançar")).toBeVisible();
-    expect(screen.getByLabelText("Aporte deste mês")).toBeVisible();
+    expect(screen.getByLabelText("Aporte de hoje")).toBeVisible();
     expect(screen.getByText(/Perfil aplicado:/)).toHaveTextContent("Moderado • Prazo de investimento: Longo prazo • Aporte mensal previsto no perfil: R$ 900,00");
     expect(screen.queryByText("Configurações avançadas")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Limite por ativo (%)")).not.toBeInTheDocument();
@@ -85,7 +90,37 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(summary).toHaveTextContent("Prazo de investimento: Mais de 10 anos");
     expect(summary).toHaveTextContent("Aporte mensal previsto no perfil: R$ 2.000,00");
     expect(summary).not.toHaveTextContent("mais_10_anos");
-    expect(screen.getByLabelText("Aporte deste mês")).toBeVisible();
+    expect(screen.getByLabelText("Aporte de hoje")).toBeVisible();
+  });
+
+  it("não preenche o aporte de hoje automaticamente com o mensal do perfil", async () => {
+    sessionStorage.setItem("mesa_quant_session", "test-token");
+    renderWithProviders(<AppRouter />, "/planejar?secao=montar-carteira");
+    await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" });
+    await waitFor(() => expect(screen.getByLabelText("Patrimônio que quero alcançar")).toHaveValue("1.000.000,00"));
+    expect(screen.getByLabelText("Aporte de hoje")).toHaveValue("0,00");
+    expect(screen.getByRole("button", { name: "Montar minha carteira" })).toBeDisabled();
+    expect(screen.getByText(/Aporte mensal previsto no perfil:/)).toHaveTextContent("R$ 900,00");
+  });
+
+  it("mostra influência da meta no teto de compras e o esforço mensal sem rentabilidade", async () => {
+    const response = responseWithAssets();
+    Object.assign(response, {
+      daily_contribution_amount: "900",
+      goal_wealth_before_contribution: "9500",
+      goal_gap_before_contribution: "500",
+      goal_gap_after_contribution: "350",
+      goal_spend_limit: "500",
+      required_monthly_contribution_without_returns: "1.46",
+    });
+    server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(response)));
+    const user = await openBuilder();
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    expect(await screen.findByText("Como a meta influencia esta montagem:")).toBeVisible();
+    expect(screen.getByRole("note")).toHaveTextContent("Limite de compra definido pela meta: R$ 500,00");
+    expect(screen.getByRole("note")).toHaveTextContent("R$ 1,46 por mês");
+    expect(screen.getByText("Falta para minha meta após a simulação")).toBeVisible();
+    expect(screen.getAllByText("Aporte de hoje").length).toBeGreaterThan(0);
   });
 
   it("usa a política persistida, sem overrides avançados, e bloqueia envio duplicado", async () => {
@@ -107,6 +142,7 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(payload.wealth_goal_amount).toBe("1000000");
     expect(payload.max_assets).toBeNull();
     expect(payload.monthly_contribution).toBe("900");
+    expect(payload.current_financial_assets).toBeUndefined();
     expect(payload.risk_profile).toBe("moderado");
     expect(payload.horizon).toBe("longo prazo");
     expect(payload.allowed_classes).toEqual(["Ações", "Tesouro Direto"]);
@@ -275,7 +311,7 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(await screen.findByText(/Ainda não há dados suficientes para recomendar ativos/)).toBeVisible();
     expect(screen.getByText("Insuficiente")).toBeVisible();
     server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json({ detail: "internal" }, { status: 500 })));
-    const amount = screen.getByLabelText("Aporte deste mês");
+    const amount = screen.getByLabelText("Aporte de hoje");
     await user.clear(amount); await user.type(amount, "12345");
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/Seus dados foram preservados/);

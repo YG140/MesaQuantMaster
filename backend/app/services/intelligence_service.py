@@ -234,7 +234,7 @@ class PortfolioIntelligenceService:
             if self.portfolio_service is not None else None
         )
         persisted_positions = portfolio.positions if portfolio is not None else []
-        if persisted_positions:
+        if portfolio is not None:
             current_wealth = sum(
                 (
                     position.market_value
@@ -243,8 +243,8 @@ class PortfolioIntelligenceService:
                 )
                 for position in persisted_positions
             )
-            # Impede que um número enviado pelo cliente sobreponha o patrimônio
-            # efetivamente registrado, incluindo no aplicativo Android.
+            # Patrimônio zero também é um dado autoritativo da carteira vazia.
+            # Impede que números do cliente alterem o teto da meta ou a projeção.
             data = data.model_copy(update={"current_financial_assets": current_wealth})
         if self.asset_repository is None or self.market_intelligence_service is None:
             return SmartPortfolioEngine.build(data, [], policy=policy, financial_profile=financial_profile)

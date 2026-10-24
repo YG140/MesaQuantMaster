@@ -1682,6 +1682,83 @@ def test_confirmed_policy_drives_projection_and_risk_even_if_request_disagrees()
     assert all(asset.recommended_percentage <= Decimal("10") for asset in result.assets)
 
 
+def test_daily_contribution_is_quantity_budget_and_goal_caps_remaining_wealth_gap():
+    """A meta limita a compra apenas quando a distância é menor que o aporte de
+    hoje. A política de risco é mantida, mesmo com objetivo patrimonial alto."""
+    p = policy(
+        [policy_allocation("FIIs", 100, minimum=100, maximum=100)],
+        monthly_contribution=Decimal("500"),
+        maximum_weight_per_asset=Decimal("100"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("100"),
+    )
+    today = request(
+        available_amount=Decimal("1000"),
+        max_percentage_per_asset=Decimal("100"),
+        max_percentage_per_sector=Decimal("100"),
+        max_assets=None,
+        current_financial_assets=Decimal("9000"),
+        wealth_goal_amount=Decimal("9150"),
+    )
+    one = candidate("FII11", InvestmentClass.FII, current_price=Decimal("10"), sector="Logística")
+    result = SmartPortfolioEngine.build(today, [one], policy=p)
+    assert [item.symbol for item in result.assets] == ["FII11"]
+    assert result.daily_contribution_amount == Decimal("1000")
+    assert result.goal_gap_before_contribution == Decimal("150")
+    assert result.goal_spend_limit == Decimal("150")
+    assert result.assets[0].executable_quantity == Decimal("15")
+    assert result.total_allocated_amount == Decimal("150.00")
+    assert result.unallocated_amount == Decimal("850.00")
+    assert result.goal_gap_after_contribution == Decimal("0.00")
+    assert result.required_monthly_contribution_without_returns == Decimal("0.00")
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("1000")
+
+    # A mesma quantia de hoje, com meta distante, comporta 100 cotas.
+    distant = SmartPortfolioEngine.build(
+        today.model_copy(update={"wealth_goal_amount": Decimal("1000000")}),
+        [one], policy=p,
+    )
+    assert distant.assets[0].executable_quantity == Decimal("100")
+    assert distant.total_allocated_amount == Decimal("1000.00")
+    assert distant.goal_spend_limit == Decimal("1000")
+    # Prazo do perfil: >10 anos mapeia para 20 anos (240 meses).
+    assert distant.required_monthly_contribution_without_returns == Decimal("4125.00")
+    assert distant.projections[0].total_contributed != result.daily_contribution_amount
+
+
+def test_goal_already_reached_does_not_generate_more_purchases():
+    p = policy([policy_allocation("Ações", 100, maximum=100)])
+    result = SmartPortfolioEngine.build(
+        request(
+            available_amount=Decimal("1000"),
+            current_financial_assets=Decimal("10000"),
+            wealth_goal_amount=Decimal("9500"),
+            max_assets=None,
+        ),
+        [candidate("AAAA3", current_price=Decimal("10"))], policy=p,
+    )
+    assert result.assets == []
+    assert result.goal_spend_limit == Decimal("0")
+    assert result.goal_gap_before_contribution == Decimal("0")
+    assert result.unallocated_amount == Decimal("1000.00")
+    assert result.required_monthly_contribution_without_returns == Decimal("0.00")
+
+
+def test_goal_missing_wealth_does_not_invent_a_zero_balance():
+    result = SmartPortfolioEngine.build(
+        request(
+            available_amount=Decimal("1000"),
+            wealth_goal_amount=Decimal("50"),
+            current_financial_assets=None,
+            max_assets=None,
+        ),
+        [candidate("AAAA3", current_price=Decimal("10"))],
+    )
+    assert result.goal_spend_limit is None
+    assert result.goal_gap_before_contribution is None
+    assert result.assets
+
+
 def test_automatic_builder_explains_one_share_and_budget_limited_alternatives():
     """Uma única cota pode ser correta sem que os outros ativos tenham falhado
     nos filtros de qualidade. A explicação do orçamento deve ser separada.

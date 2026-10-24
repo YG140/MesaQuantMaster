@@ -597,6 +597,12 @@ export type BuildPortfolioResponse = {
   }>;
   exclusions: Array<{ symbol: string; asset_class: string; reasons: string[] }>;
   budget_not_selected?: Array<{ symbol: string; asset_class: string; reasons: string[] }>;
+  daily_contribution_amount?: string | number | null;
+  goal_wealth_before_contribution?: string | number | null;
+  goal_gap_before_contribution?: string | number | null;
+  goal_gap_after_contribution?: string | number | null;
+  goal_spend_limit?: string | number | null;
+  required_monthly_contribution_without_returns?: string | number | null;
   preflight?: {
     universe_total: number;
     universe_considered: number;
