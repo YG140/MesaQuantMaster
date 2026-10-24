@@ -264,37 +264,60 @@ class SmartPortfolioEngine:
         projections = FinancialProjectionEngine.project(request)
         eligible, exclusions = cls.eligibility(strategy, candidates)
         scored = cls.score(strategy, eligible)
+        budget_not_selected: list[BuildPortfolioExclusion] = []
         if request.max_assets is None:
             # Seleção automática sem limite arbitrário de ativos: cada ativo
             # adicional precisa caber em uma cota de orçamento que permita
             # ao menos uma unidade pelo preço de referência disponível.
-            affordable = [
-                pair for pair in scored
-                if pair[0].snapshot.current_price is not None
-                and Decimal("0") < pair[0].snapshot.current_price <= request.available_amount
-            ]
+            affordable = []
+            for pair in scored:
+                snapshot = pair[0].snapshot
+                if snapshot.current_price is None or snapshot.current_price <= 0:
+                    continue  # Já tratado pelos filtros estruturais de elegibilidade.
+                if snapshot.current_price > request.available_amount:
+                    budget_not_selected.append(BuildPortfolioExclusion(
+                        symbol=snapshot.symbol,
+                        asset_class=cls.class_label(snapshot.asset_class),
+                        reasons=["Preço de uma unidade acima do aporte total deste mês."],
+                    ))
+                    continue
+                affordable.append(pair)
+
             ranked = []
             for pair in affordable:
                 proposed = [*ranked, pair]
                 proposed_weights = cls.allocate(request, proposed, strategy)
                 # Só amplia a cesta se TODOS os ativos continuarem com peso
                 # suficiente para ao menos a menor quantidade negociável.
-                if all(
-                    request.available_amount
-                    * proposed_weights.get(item.snapshot.symbol, Decimal("0"))
-                    / HUNDRED
-                    >= item.snapshot.current_price
-                    * (
-                        Decimal("1")
-                        if item.snapshot.asset_class in {
-                            InvestmentClass.STOCK, InvestmentClass.FII,
-                            InvestmentClass.ETF, InvestmentClass.BDR,
-                        }
-                        else Decimal("0.01")
+                insufficient = [
+                    item.snapshot.symbol for item, _ in proposed
+                    if (
+                        request.available_amount
+                        * proposed_weights.get(item.snapshot.symbol, Decimal("0"))
+                        / HUNDRED
+                        < item.snapshot.current_price
+                        * (
+                            Decimal("1")
+                            if item.snapshot.asset_class in {
+                                InvestmentClass.STOCK, InvestmentClass.FII,
+                                InvestmentClass.ETF, InvestmentClass.BDR,
+                            }
+                            else Decimal("0.01")
+                        )
                     )
-                    for item, _ in proposed
-                ):
+                ]
+                if not insufficient:
                     ranked = proposed
+                else:
+                    budget_not_selected.append(BuildPortfolioExclusion(
+                        symbol=pair[0].snapshot.symbol,
+                        asset_class=cls.class_label(pair[0].snapshot.asset_class),
+                        reasons=[
+                            "A divisão do aporte dentro dos limites de concentração "
+                            "não comporta uma unidade negociável para todos os ativos "
+                            "da cesta proposta: " + ", ".join(insufficient) + "."
+                        ],
+                    ))
             replacement_pool = affordable
         else:
             ranked = scored[: request.max_assets]
@@ -434,6 +457,14 @@ class SmartPortfolioEngine:
             for item in class_allocations
         ]
         sorted_exclusions = sorted(exclusions, key=lambda item: item.symbol)
+        # Uma substituição de ativo concentrado pode recuperar uma sugestão
+        # anteriormente rejeitada pelo orçamento. Nunca anuncie como
+        # descartado um ativo efetivamente selecionado no resultado final.
+        selected_symbols = {item.symbol for item in assets}
+        sorted_budget_not_selected = sorted(
+            (item for item in budget_not_selected if item.symbol not in selected_symbols),
+            key=lambda item: item.symbol,
+        )
         preflight = cls._preflight(
             candidates=candidates,
             eligible=eligible,
@@ -450,6 +481,7 @@ class SmartPortfolioEngine:
             selections=selections,
             assets=assets,
             exclusions=sorted_exclusions,
+            budget_not_selected=sorted_budget_not_selected,
             total_allocated_percentage=allocated_percentage,
             total_allocated_amount=allocated_amount,
             unallocated_amount=unallocated,
@@ -459,7 +491,13 @@ class SmartPortfolioEngine:
             preflight=preflight,
             strategy_summary=(
                 f"Objetivo {strategy.objective}; perfil {strategy.risk_profile}; "
-                f"horizonte {strategy.horizon}; até {request.max_assets} ativos."
+                f"horizonte {strategy.horizon}; "
+                + (
+                    "quantidade automática de ativos limitada pelo aporte, "
+                    "preço de referência e política de risco."
+                    if request.max_assets is None
+                    else f"até {request.max_assets} ativos."
+                )
                 + (
                     # Nunca afirma que a origem é o onboarding do Perfil do
                     # Investidor: a policy pode ter sido criada por lá OU
