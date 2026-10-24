@@ -142,6 +142,7 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(screen.getByText(/A quantidade sugerida é 1 unidade/)).toBeVisible();
     expect(screen.getByRole("note")).toHaveTextContent("Restaram R$ 850,00 sem alocação");
     expect(screen.getByRole("note")).toHaveTextContent("1 outro(s) candidato(s) não couberam");
+    await user.click(screen.getByText("Ativos não incluídos"));
     expect(screen.getByText("COTACARO11")).toBeVisible();
     expect(screen.getByText(/A divisão do aporte não comporta uma unidade/)).toBeVisible();
   });
