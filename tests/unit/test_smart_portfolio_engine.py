@@ -1682,6 +1682,57 @@ def test_confirmed_policy_drives_projection_and_risk_even_if_request_disagrees()
     assert all(asset.recommended_percentage <= Decimal("10") for asset in result.assets)
 
 
+def test_automatic_builder_explains_one_share_and_budget_limited_alternatives():
+    """Uma única cota pode ser correta sem que os outros ativos tenham falhado
+    nos filtros de qualidade. A explicação do orçamento deve ser separada.
+    """
+    strategy = policy(
+        [policy_allocation("FIIs", 20, minimum=20, maximum=20)],
+        maximum_weight_per_asset=Decimal("20"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("100"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(available_amount=Decimal("1000"), max_assets=None),
+        [
+            candidate("FII11", InvestmentClass.FII, score="92", current_price=Decimal("190"), sector="Logística"),
+            candidate("FII22", InvestmentClass.FII, score="89", current_price=Decimal("50"), sector="Shoppings"),
+            candidate("FII33", InvestmentClass.FII, score="86", current_price=Decimal("1200"), sector="Papel"),
+        ],
+        policy=strategy,
+    )
+    assert [asset.symbol for asset in result.assets] == ["FII11"]
+    assert result.assets[0].executable_quantity == Decimal("1")
+    assert result.total_allocated_amount == Decimal("190.00")
+    assert result.unallocated_amount == Decimal("810.00")
+    assert result.preflight.eligible_count == 3
+    assert result.preflight.excluded_count == 0
+    assert result.exclusions == []
+    assert {item.symbol for item in result.budget_not_selected} == {"FII22", "FII33"}
+    assert any(
+        "divisão do aporte" in " ".join(item.reasons)
+        for item in result.budget_not_selected if item.symbol == "FII22"
+    )
+    assert any(
+        "Preço de uma unidade" in " ".join(item.reasons)
+        for item in result.budget_not_selected if item.symbol == "FII33"
+    )
+    assert "até None ativos" not in result.strategy_summary
+
+
+def test_automatic_budget_diagnostics_do_not_reject_affordable_eligible_candidates():
+    result = SmartPortfolioEngine.build(
+        request(available_amount=Decimal("1000"), max_assets=None),
+        [
+            candidate("FII11", InvestmentClass.FII, current_price=Decimal("45"), sector="Logística"),
+            candidate("FII22", InvestmentClass.FII, current_price=Decimal("60"), sector="Shoppings"),
+        ],
+    )
+    assert len(result.assets) == 2
+    assert result.budget_not_selected == []
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("1000.00")
+
+
 def test_automatic_asset_count_follows_affordability_not_a_user_maximum():
     candidates = [
         candidate(f"AUTO{i}3", current_price=Decimal("10"), sector=f"Setor{i}")
