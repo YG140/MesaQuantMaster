@@ -16,7 +16,10 @@ import { useAuth } from "../features/auth/useAuth";
 import {
   continueOrReviewInvestorProfile,
   investorProfileActionLabel,
+  investorProfileHorizonLabel,
+  investorProfileLiquidityLabel,
   investorProfileObjectiveLabel,
+  investorProfileRiskLabel,
   investorProfileStatusLabel,
 } from "../features/investorProfile/presentation";
 import { ApiError } from "../services/apiClient";
@@ -187,7 +190,7 @@ function InvestorProfileSummary() {
         <>
           <dl className="settings-facts">
             <div><dt>Status</dt><dd>{investorProfileStatusLabel(investorProfile.data.status)}</dd></div>
-            <div><dt>Classificação</dt><dd>{investorProfile.data.dimensions?.overall_classification ?? "Ainda não calculada"}</dd></div>
+            <div><dt>Classificação</dt><dd>{investorProfile.data.dimensions?.overall_classification ? investorProfileRiskLabel(investorProfile.data.dimensions.overall_classification) : "Ainda não calculada"}</dd></div>
             <div><dt>Objetivo</dt><dd>{investorProfileObjectiveLabel(investorProfile.data.primary_objective)}</dd></div>
             <div><dt>Última revisão</dt><dd>{formatDateTimeBR(investorProfile.data.last_reviewed_at ?? investorProfile.data.confirmed_at ?? undefined)}</dd></div>
           </dl>
@@ -274,11 +277,11 @@ function Strategy() {
   return <Card title="Minha estratégia">
     <p className="helper">Configuração gerada pelo Perfil do Investidor. Para modificar objetivos, restrições ou limites, revise seu perfil no cartão acima.</p>
     <dl className="settings-facts">
-      <div><dt>Objetivo</dt><dd>{applied.objective}</dd></div>
-      <div><dt>Classificação de risco</dt><dd>{applied.risk_profile}</dd></div>
-      <div><dt>Horizonte</dt><dd>{applied.investment_horizon}</dd></div>
+      <div><dt>Objetivo</dt><dd>{investorProfileObjectiveLabel(applied.objective)}</dd></div>
+      <div><dt>Classificação de risco</dt><dd>{investorProfileRiskLabel(applied.risk_profile)}</dd></div>
+      <div><dt>Horizonte</dt><dd>{investorProfileHorizonLabel(applied.investment_horizon)}</dd></div>
       <div><dt>Aporte mensal</dt><dd>{formatMoney(applied.monthly_contribution)}</dd></div>
-      <div><dt>Necessidade de liquidez</dt><dd>{applied.liquidity_need}</dd></div>
+      <div><dt>Necessidade de liquidez</dt><dd>{investorProfileLiquidityLabel(applied.liquidity_need)}</dd></div>
       <div><dt>Limite por ativo</dt><dd>{formatPercent(applied.maximum_weight_per_asset)}</dd></div>
       <div><dt>Limite por setor</dt><dd>{formatPercent(applied.maximum_weight_per_sector)}</dd></div>
       <div><dt>Limite por emissor</dt><dd>{formatPercent(applied.maximum_weight_per_issuer)}</dd></div>
@@ -580,7 +583,7 @@ function BuildPortfolio() {
     <div className="page-stack smart-portfolio-flow">
       <Card title="Monte uma carteira para o seu momento">
         <p className="helper">Sua estratégia é aplicada automaticamente a partir do Perfil do Investidor. Informe sua meta de patrimônio e o aporte deste mês. O sistema determina quantos ativos cabem no valor informado.</p>
-        <p className="helper">Perfil aplicado: {policy.risk_profile} • {policy.investment_horizon} • aporte mensal de {formatMoney(policy.monthly_contribution)}. Para alterar a estratégia, revise seu Perfil do Investidor.</p>
+        <p className="helper">Perfil aplicado: {investorProfileRiskLabel(policy.risk_profile)} • Prazo de investimento: {investorProfileHorizonLabel(policy.investment_horizon)} • Aporte mensal previsto no perfil: {formatMoney(policy.monthly_contribution)}. Para alterar a estratégia, revise seu Perfil do Investidor.</p>
         <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
           <CurrencyInput label="Patrimônio que quero alcançar" value={goalAmount} onChange={(event) => setGoalAmount(event.target.value)} />
