@@ -1714,7 +1714,7 @@ def test_automatic_builder_explains_one_share_and_budget_limited_alternatives():
         for item in result.budget_not_selected if item.symbol == "FII22"
     )
     assert any(
-        "Preço de uma unidade" in " ".join(item.reasons)
+        "quantidade mínima negociável" in " ".join(item.reasons)
         for item in result.budget_not_selected if item.symbol == "FII33"
     )
     assert "até None ativos" not in result.strategy_summary
@@ -1731,6 +1731,26 @@ def test_automatic_budget_diagnostics_do_not_reject_affordable_eligible_candidat
     assert len(result.assets) == 2
     assert result.budget_not_selected == []
     assert result.total_allocated_amount + result.unallocated_amount == Decimal("1000.00")
+
+
+def test_auto_selection_accepts_fractional_treasury_when_full_unit_exceeds_budget():
+    """O filtro antigo exigia preço unitário <= aporte até para Tesouro
+    fracionável, rejeitando títulos cuja menor quantidade de 0,01 cabia."""
+    p = policy([policy_allocation("Tesouro Direto", 60)])
+    result = SmartPortfolioEngine.build(
+        request(available_amount=Decimal("1000"), max_assets=None),
+        [candidate(
+            "TESOURO2031", InvestmentClass.TREASURY,
+            current_price=Decimal("4000"), sector="Tesouro",
+        )],
+        policy=p,
+    )
+    assert [item.symbol for item in result.assets] == ["TESOURO2031"]
+    assert result.assets[0].quantity_step == Decimal("0.01")
+    assert result.assets[0].executable_quantity == Decimal("0.05")
+    assert result.assets[0].executable_amount == Decimal("200.00")
+    assert result.budget_not_selected == []
+    assert result.unallocated_amount == Decimal("800.00")
 
 
 def test_automatic_asset_count_follows_affordability_not_a_user_maximum():
