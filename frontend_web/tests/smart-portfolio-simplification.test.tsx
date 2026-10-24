@@ -117,6 +117,36 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(payload.reinvest_income).toBe(true);
   });
 
+  it("explica uma única cota e os candidatos bloqueados pelo orçamento", async () => {
+    const response = responseWithAssets();
+    response.assets.splice(1);
+    Object.assign(response.assets[0], {
+      reference_price: "150",
+      executable_quantity: "1",
+      executable_amount: "150",
+      recommended_amount: "200",
+    });
+    Object.assign(response, {
+      total_allocated_amount: "150",
+      unallocated_amount: "850",
+      preflight: { snapshots_received: 3, eligible_count: 2, excluded_count: 1 },
+      budget_not_selected: [
+        { symbol: "COTACARO11", asset_class: "FIIs", reasons: ["A divisão do aporte não comporta uma unidade."] },
+      ],
+    });
+    server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(response)));
+    const user = await openBuilder();
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    expect(await screen.findByText("Por que apareceu apenas um ativo?")).toBeVisible();
+    expect(screen.getByText(/2 passaram pelos filtros de elegibilidade/)).toBeVisible();
+    expect(screen.getByText(/A quantidade sugerida é 1 unidade/)).toBeVisible();
+    expect(screen.getByRole("note")).toHaveTextContent("Restaram R$ 850,00 sem alocação");
+    expect(screen.getByRole("note")).toHaveTextContent("1 outro(s) candidato(s) não couberam");
+    await user.click(screen.getByText("Ativos não incluídos"));
+    expect(screen.getByText("COTACARO11")).toBeVisible();
+    expect(screen.getByText(/A divisão do aporte não comporta uma unidade/)).toBeVisible();
+  });
+
   it("bloqueia montagem sem perfil confirmado, sem aplicar defaults de risco", async () => {
     server.use(http.get(`${api}/investor-profile`, () => HttpResponse.json({
       status: "in_progress",

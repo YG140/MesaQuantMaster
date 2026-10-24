@@ -596,6 +596,15 @@ export type BuildPortfolioResponse = {
     }>;
   }>;
   exclusions: Array<{ symbol: string; asset_class: string; reasons: string[] }>;
+  budget_not_selected?: Array<{ symbol: string; asset_class: string; reasons: string[] }>;
+  preflight?: {
+    universe_total: number;
+    universe_considered: number;
+    snapshots_received: number;
+    eligible_count: number;
+    excluded_count: number;
+    assets_with_valid_price: number;
+  };
   total_allocated_percentage: string | number;
   total_allocated_amount: string | number;
   unallocated_amount: string | number;

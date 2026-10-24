@@ -350,6 +350,9 @@ class BuildPortfolioResponse(BaseModel):
     selections: list[BuildPortfolioSelection]
     assets: list[BuildPortfolioAsset] = Field(default_factory=list)
     exclusions: list[BuildPortfolioExclusion] = Field(default_factory=list)
+    # Candidatos estruturalmente elegíveis que ficaram fora por preço/orçamento.
+    # Separados de `exclusions` para preservar as métricas de elegibilidade.
+    budget_not_selected: list[BuildPortfolioExclusion] = Field(default_factory=list)
     total_allocated_percentage: Decimal = Decimal("0")
     total_allocated_amount: Decimal = Decimal("0")
     unallocated_amount: Decimal = Decimal("0")
