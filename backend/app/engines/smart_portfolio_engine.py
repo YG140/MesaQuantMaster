@@ -296,6 +296,8 @@ class SmartPortfolioEngine:
             affordable = []
             for pair in scored:
                 snapshot = pair[0].snapshot
+                if spend_limit == 0:
+                    continue  # Meta atingida: não atribuir falsa falha de preço ao ativo.
                 if snapshot.current_price is None or snapshot.current_price <= 0:
                     continue  # Já tratado pelos filtros estruturais de elegibilidade.
                 if snapshot.current_price * cls._minimum_quantity_step(snapshot.asset_class) > spend_limit:
