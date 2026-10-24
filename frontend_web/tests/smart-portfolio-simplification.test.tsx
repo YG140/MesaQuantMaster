@@ -140,8 +140,8 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(await screen.findByText("Por que apareceu apenas um ativo?")).toBeVisible();
     expect(screen.getByText(/2 passaram pelos filtros de elegibilidade/)).toBeVisible();
     expect(screen.getByText(/A quantidade sugerida é 1 unidade/)).toBeVisible();
-    expect(screen.getByText(/Restaram R\\$ 850,00 sem alocação/)).toBeVisible();
-    expect(screen.getByText(/1 outro\\(s\\) candidato\\(s\\) não couberam/)).toBeVisible();
+    expect(screen.getByRole("note")).toHaveTextContent("Restaram R$ 850,00 sem alocação");
+    expect(screen.getByRole("note")).toHaveTextContent("1 outro(s) candidato(s) não couberam");
     expect(screen.getByText("COTACARO11")).toBeVisible();
     expect(screen.getByText(/A divisão do aporte não comporta uma unidade/)).toBeVisible();
   });
