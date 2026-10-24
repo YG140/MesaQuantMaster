@@ -237,6 +237,18 @@ class PortfolioStrategy:
 class SmartPortfolioEngine:
     """Regras puras de elegibilidade, pontuação e alocação da carteira V1."""
 
+    @staticmethod
+    def _minimum_quantity_step(asset_class: InvestmentClass) -> Decimal:
+        """Mesmo passo mínimo usado no cálculo da quantidade executável.
+        Nunca exigir uma unidade inteira para um título fracionável.
+        """
+        if asset_class in {
+            InvestmentClass.STOCK, InvestmentClass.FII,
+            InvestmentClass.ETF, InvestmentClass.BDR,
+        }:
+            return Decimal("1")
+        return Decimal("0.01")
+
     @classmethod
     def build(
         cls,
@@ -274,11 +286,11 @@ class SmartPortfolioEngine:
                 snapshot = pair[0].snapshot
                 if snapshot.current_price is None or snapshot.current_price <= 0:
                     continue  # Já tratado pelos filtros estruturais de elegibilidade.
-                if snapshot.current_price > request.available_amount:
+                if snapshot.current_price * cls._minimum_quantity_step(snapshot.asset_class) > request.available_amount:
                     budget_not_selected.append(BuildPortfolioExclusion(
                         symbol=snapshot.symbol,
                         asset_class=cls.class_label(snapshot.asset_class),
-                        reasons=["Preço de uma unidade acima do aporte total deste mês."],
+                        reasons=["O valor da quantidade mínima negociável pelo preço de referência supera o aporte total deste mês."],
                     ))
                     continue
                 affordable.append(pair)
@@ -296,14 +308,7 @@ class SmartPortfolioEngine:
                         * proposed_weights.get(item.snapshot.symbol, Decimal("0"))
                         / HUNDRED
                         < item.snapshot.current_price
-                        * (
-                            Decimal("1")
-                            if item.snapshot.asset_class in {
-                                InvestmentClass.STOCK, InvestmentClass.FII,
-                                InvestmentClass.ETF, InvestmentClass.BDR,
-                            }
-                            else Decimal("0.01")
-                        )
+                        * cls._minimum_quantity_step(item.snapshot.asset_class)
                     )
                 ]
                 if not insufficient:
@@ -893,17 +898,7 @@ class SmartPortfolioEngine:
                 "Execução suspensa enquanto reserva ou dívidas prioritárias exigem proteção."
             )
         elif price and price > 0:
-            quantity_step = (
-                Decimal("1")
-                if snapshot.asset_class
-                in {
-                    InvestmentClass.STOCK,
-                    InvestmentClass.FII,
-                    InvestmentClass.ETF,
-                    InvestmentClass.BDR,
-                }
-                else Decimal("0.01")
-            )
+            quantity_step = cls._minimum_quantity_step(snapshot.asset_class)
             calculated_quantity = (target_amount / price / quantity_step).to_integral_value(
                 rounding=ROUND_DOWN
             ) * quantity_step
