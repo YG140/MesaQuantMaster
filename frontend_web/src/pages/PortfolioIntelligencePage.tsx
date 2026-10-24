@@ -613,10 +613,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
         {data.goal_gap_before_contribution != null ? (
           <div className="helper" role="note">
             <strong>Como a meta influencia esta montagem:</strong>
-            <p>Faltam {formatMoney(data.goal_gap_before_contribution)} para o patrimônio desejado, antes do aporte de hoje. O sistema limita as compras simuladas ao menor valor entre o aporte de hoje e o que falta para a meta, respeitando também o Perfil do Investidor.</p>
-            {data.goal_spend_limit != null && (parseBrazilianNumber(data.goal_spend_limit) ?? 0) < (parseBrazilianNumber(totalConsidered) ?? 0) ? (
-              <p>Limite de compra definido pela meta: {formatMoney(data.goal_spend_limit)}. O excedente do aporte de hoje fica sem alocação nesta simulação.</p>
-            ) : null}
+            <p>Antes desta simulação, faltavam {formatMoney(data.goal_gap_before_contribution)} para o patrimônio desejado. A meta serve para acompanhar o progresso e planejar os aportes futuros; não reduz seu orçamento de hoje nem impõe um teto às compras. Quantidades e valores dependem do aporte informado, dos preços e dos limites do Perfil do Investidor.</p>
             {data.required_monthly_contribution_without_returns != null ? (
               <p>Para buscar a meta no prazo do perfil, seriam necessários aproximadamente {formatMoney(data.required_monthly_contribution_without_returns)} por mês após as compras simuladas hoje, sem considerar rendimentos. Isto é apenas uma referência matemática, não uma promessa de retorno.</p>
             ) : null}
@@ -633,7 +630,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
             {cashRemaining > 0 ? <p>Restaram {formatMoney(data.unallocated_amount)} sem alocação. Esse valor não é investido automaticamente em ativos que não atendem à política de risco.</p> : null}
           </div>
         ) : null}
-        {!sortedAssets.length ? <div className="smart-insufficient">{data.goal_gap_before_contribution != null && Number(data.goal_gap_before_contribution) === 0 ? <h3>Sua meta patrimonial já foi alcançada.</h3> : <h3>Ainda não há dados suficientes para recomendar ativos.</h3>}{data.goal_gap_before_contribution != null && Number(data.goal_gap_before_contribution) === 0 ? <p>O patrimônio registrado já atingiu a meta informada. Nenhuma compra adicional é sugerida nesta simulação, e o aporte de hoje permanece disponível.</p> : <><p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></>}</div> : (
+        {!sortedAssets.length ? <div className="smart-insufficient"><h3>Ainda não há dados suficientes para recomendar ativos.</h3><p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></div> : (
           <div className="recommended-assets" aria-label="Ativos recomendados">
             {sortedAssets.map((asset) => <RecommendedAssetCard asset={asset} key={asset.symbol} />)}
           </div>

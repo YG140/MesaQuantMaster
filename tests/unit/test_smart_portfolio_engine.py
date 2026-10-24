@@ -1682,9 +1682,8 @@ def test_confirmed_policy_drives_projection_and_risk_even_if_request_disagrees()
     assert all(asset.recommended_percentage <= Decimal("10") for asset in result.assets)
 
 
-def test_daily_contribution_is_quantity_budget_and_goal_caps_remaining_wealth_gap():
-    """A meta limita a compra apenas quando a distância é menor que o aporte de
-    hoje. A política de risco é mantida, mesmo com objetivo patrimonial alto."""
+def test_daily_contribution_sets_quantity_regardless_of_goal_size():
+    """A meta influencia progresso/planejamento, nunca restringe cotas."""
     p = policy(
         [policy_allocation("FIIs", 100, minimum=100, maximum=100)],
         monthly_contribution=Decimal("500"),
@@ -1701,32 +1700,33 @@ def test_daily_contribution_is_quantity_budget_and_goal_caps_remaining_wealth_ga
         wealth_goal_amount=Decimal("9150"),
     )
     one = candidate("FII11", InvestmentClass.FII, current_price=Decimal("10"), sector="Logística")
-    result = SmartPortfolioEngine.build(today, [one], policy=p)
-    assert [item.symbol for item in result.assets] == ["FII11"]
-    assert result.daily_contribution_amount == Decimal("1000")
-    assert result.goal_gap_before_contribution == Decimal("150")
-    assert result.goal_spend_limit == Decimal("150")
-    assert result.assets[0].executable_quantity == Decimal("15")
-    assert result.total_allocated_amount == Decimal("150.00")
-    assert result.unallocated_amount == Decimal("850.00")
-    assert result.goal_gap_after_contribution == Decimal("0.00")
-    assert result.required_monthly_contribution_without_returns == Decimal("0.00")
-    assert result.total_allocated_amount + result.unallocated_amount == Decimal("1000")
+    near = SmartPortfolioEngine.build(today, [one], policy=p)
+    assert [item.symbol for item in near.assets] == ["FII11"]
+    assert near.daily_contribution_amount == Decimal("1000")
+    assert near.assets[0].executable_quantity == Decimal("100")
+    assert near.total_allocated_amount == Decimal("1000.00")
+    assert near.unallocated_amount == Decimal("0.00")
+    assert near.goal_gap_before_contribution == Decimal("150")
+    assert near.goal_gap_after_contribution == Decimal("0.00")
+    assert near.goal_spend_limit is None
+    assert near.required_monthly_contribution_without_returns == Decimal("0.00")
+    assert near.total_allocated_amount + near.unallocated_amount == Decimal("1000")
 
-    # A mesma quantia de hoje, com meta distante, comporta 100 cotas.
     distant = SmartPortfolioEngine.build(
         today.model_copy(update={"wealth_goal_amount": Decimal("1000000")}),
         [one], policy=p,
     )
-    assert distant.assets[0].executable_quantity == Decimal("100")
-    assert distant.total_allocated_amount == Decimal("1000.00")
-    assert distant.goal_spend_limit == Decimal("1000")
+    assert distant.assets[0].executable_quantity == near.assets[0].executable_quantity
+    assert distant.total_allocated_amount == near.total_allocated_amount
+    assert distant.goal_spend_limit is None
+    assert distant.goal_gap_before_contribution == Decimal("991000")
+    assert distant.goal_gap_after_contribution == Decimal("990000")
     # Prazo do perfil: >10 anos mapeia para 20 anos (240 meses).
     assert distant.required_monthly_contribution_without_returns == Decimal("4125.00")
-    assert distant.projections[0].total_contributed != result.daily_contribution_amount
+    assert distant.projections[0].total_contributed != distant.daily_contribution_amount
 
 
-def test_goal_already_reached_does_not_generate_more_purchases():
+def test_goal_already_reached_still_allows_new_purchases_with_daily_budget():
     p = policy([policy_allocation("Ações", 100, maximum=100)])
     result = SmartPortfolioEngine.build(
         request(
@@ -1737,11 +1737,14 @@ def test_goal_already_reached_does_not_generate_more_purchases():
         ),
         [candidate("AAAA3", current_price=Decimal("10"))], policy=p,
     )
-    assert result.assets == []
-    assert result.goal_spend_limit == Decimal("0")
+    assert result.assets
+    assert result.assets[0].symbol == "AAAA3"
+    assert result.total_allocated_amount > 0
+    assert result.goal_spend_limit is None
     assert result.goal_gap_before_contribution == Decimal("0")
-    assert result.unallocated_amount == Decimal("1000.00")
+    assert result.goal_gap_after_contribution == Decimal("0")
     assert result.required_monthly_contribution_without_returns == Decimal("0.00")
+    assert result.total_allocated_amount + result.unallocated_amount == Decimal("1000.00")
 
 
 def test_goal_missing_wealth_does_not_invent_a_zero_balance():
