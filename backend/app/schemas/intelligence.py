@@ -353,6 +353,14 @@ class BuildPortfolioResponse(BaseModel):
     # Candidatos estruturalmente elegíveis que ficaram fora por preço/orçamento.
     # Separados de `exclusions` para preservar as métricas de elegibilidade.
     budget_not_selected: list[BuildPortfolioExclusion] = Field(default_factory=list)
+    # Planejamento do aporte de hoje em relação à meta patrimonial. Campos
+    # aditivos e opcionais para manter clientes antigos compatíveis.
+    daily_contribution_amount: Decimal | None = None
+    goal_wealth_before_contribution: Decimal | None = None
+    goal_gap_before_contribution: Decimal | None = None
+    goal_gap_after_contribution: Decimal | None = None
+    goal_spend_limit: Decimal | None = None
+    required_monthly_contribution_without_returns: Decimal | None = None
     total_allocated_percentage: Decimal = Decimal("0")
     total_allocated_amount: Decimal = Decimal("0")
     unallocated_amount: Decimal = Decimal("0")
