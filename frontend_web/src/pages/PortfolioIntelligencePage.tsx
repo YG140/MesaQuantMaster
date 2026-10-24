@@ -588,7 +588,7 @@ function BuildPortfolio() {
           <div className="span-2"><Button type="submit" disabled={mutation.isPending || (parseBrazilianNumber(dailyAmount) ?? 0) <= 0 || (parseBrazilianNumber(goalAmount) ?? 0) <= 0}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button></div>
         </form>
       </Card>
-      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={mutation.data.daily_contribution_amount ?? normalizeDecimalForApi(dailyAmount)} /> : null}
+      {mutation.data ? <BuildResult data={mutation.data} totalConsidered={String(mutation.data.daily_contribution_amount ?? normalizeDecimalForApi(dailyAmount))} /> : null}
     </div>
   );
 }
