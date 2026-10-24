@@ -272,18 +272,16 @@ class SmartPortfolioEngine:
             else PortfolioStrategy.from_request(request)
         )
         request = apply_policy_to_planning_request(request, policy)
-        # O aporte de hoje é o limite operacional, e a meta patrimonial pode
-        # reduzir esse teto. Não inventar patrimônio caso seja desconhecido.
+        # O aporte de hoje é o ÚNICO orçamento da montagem; a meta de patrimônio
+        # orienta o planejamento e não é um limite de compra.
         current_wealth = request.current_financial_assets
         goal_gap = (
             max(Decimal("0"), request.wealth_goal_amount - current_wealth)
             if request.wealth_goal_amount is not None and current_wealth is not None
             else None
         )
-        spend_limit = min(request.available_amount, goal_gap) if goal_gap is not None else request.available_amount
-        # Cópia exclusiva da execução. Projeções continuam usando o aporte
-        # mensal confirmado no perfil, nunca multiplicam o aporte de hoje por 30.
-        execution_request = request.model_copy(update={"available_amount": spend_limit})
+        # As projeções usam o aporte mensal confirmado no perfil; não
+        # presumimos que o aporte de hoje será repetido diariamente.
         diagnosis = FinancialDiagnosisEngine.diagnose(request, financial_profile)
         projections = FinancialProjectionEngine.project(request)
         eligible, exclusions = cls.eligibility(strategy, candidates)
@@ -296,11 +294,9 @@ class SmartPortfolioEngine:
             affordable = []
             for pair in scored:
                 snapshot = pair[0].snapshot
-                if spend_limit == 0:
-                    continue  # Meta atingida: não atribuir falsa falha de preço ao ativo.
                 if snapshot.current_price is None or snapshot.current_price <= 0:
                     continue  # Já tratado pelos filtros estruturais de elegibilidade.
-                if snapshot.current_price * cls._minimum_quantity_step(snapshot.asset_class) > spend_limit:
+                if snapshot.current_price * cls._minimum_quantity_step(snapshot.asset_class) > request.available_amount:
                     budget_not_selected.append(BuildPortfolioExclusion(
                         symbol=snapshot.symbol,
                         asset_class=cls.class_label(snapshot.asset_class),
@@ -312,13 +308,13 @@ class SmartPortfolioEngine:
             ranked = []
             for pair in affordable:
                 proposed = [*ranked, pair]
-                proposed_weights = cls.allocate(execution_request, proposed, strategy)
+                proposed_weights = cls.allocate(request, proposed, strategy)
                 # Só amplia a cesta se TODOS os ativos continuarem com peso
                 # suficiente para ao menos a menor quantidade negociável.
                 insufficient = [
                     item.snapshot.symbol for item, _ in proposed
                     if (
-                        spend_limit
+                        request.available_amount
                         * proposed_weights.get(item.snapshot.symbol, Decimal("0"))
                         / HUNDRED
                         < item.snapshot.current_price
@@ -339,10 +335,10 @@ class SmartPortfolioEngine:
                     ))
             replacement_pool = affordable
         else:
-            ranked = scored[: request.max_assets] if spend_limit > 0 else []
+            ranked = scored[: request.max_assets]
             replacement_pool = scored
         max_selected = len(ranked)
-        percentages = cls.allocate(execution_request, ranked, strategy)
+        percentages = cls.allocate(request, ranked, strategy)
         holding_notes: dict[str, str] = {}
         blocked_by_holdings = []
         if holdings:
@@ -351,7 +347,7 @@ class SmartPortfolioEngine:
             attempted = {item.snapshot.symbol for item, _ in ranked}
             while True:
                 percentages, holding_notes = limit_new_contributions(
-                    execution_request, ranked, strategy, percentages, holdings, cls.class_label
+                    request, ranked, strategy, percentages, holdings, cls.class_label
                 )
                 zeroed = [
                     pair for pair in ranked
@@ -371,13 +367,13 @@ class SmartPortfolioEngine:
                         attempted.add(symbol)
                         replacements.append(pair)
                 if not replacements:
-                    percentages = cls.allocate(execution_request, ranked, strategy)
+                    percentages = cls.allocate(request, ranked, strategy)
                     percentages, holding_notes = limit_new_contributions(
-                        execution_request, ranked, strategy, percentages, holdings, cls.class_label
+                        request, ranked, strategy, percentages, holdings, cls.class_label
                     )
                     break
                 ranked.extend(replacements)
-                percentages = cls.allocate(execution_request, ranked, strategy)
+                percentages = cls.allocate(request, ranked, strategy)
             for candidate, _ in blocked_by_holdings:
                 exclusions.append(BuildPortfolioExclusion(
                     symbol=candidate.snapshot.symbol,
@@ -397,14 +393,14 @@ class SmartPortfolioEngine:
                     )
                 )
                 continue
-            recommended = cls.explain(execution_request, candidate, score, percentage, diagnosis.phase)
+            recommended = cls.explain(request, candidate, score, percentage, diagnosis.phase)
             if holdings:
                 existing = next(
                     (item for item in holdings if item.symbol == candidate.snapshot.symbol.upper()),
                     None,
                 )
                 previous_value = existing.value if existing else Decimal("0")
-                portfolio_after = sum((item.value for item in holdings), Decimal("0")) + spend_limit
+                portfolio_after = sum((item.value for item in holdings), Decimal("0")) + request.available_amount
                 post_weight = (
                     (previous_value + recommended.executable_amount) / portfolio_after * HUNDRED
                 ).quantize(CENT)
@@ -421,7 +417,7 @@ class SmartPortfolioEngine:
         class_totals: dict[str, Decimal] = defaultdict(Decimal)
         for asset in assets:
             class_totals[asset.asset_class] += asset.recommended_percentage
-        class_allocations = cls._class_allocations(execution_request, strategy, class_totals)
+        class_allocations = cls._class_allocations(request, strategy, class_totals)
         allocated_amount = sum(
             (item.executable_amount for item in assets), Decimal("0")
         ).quantize(CENT)
@@ -517,7 +513,7 @@ class SmartPortfolioEngine:
                 max(Decimal("0"), goal_gap - allocated_amount).quantize(CENT)
                 if goal_gap is not None else None
             ),
-            goal_spend_limit=spend_limit if goal_gap is not None else None,
+            goal_spend_limit=None,  # Campo legado sem restrição por objetivo.
             required_monthly_contribution_without_returns=monthly_required,
             total_allocated_percentage=allocated_percentage,
             total_allocated_amount=allocated_amount,
@@ -536,8 +532,8 @@ class SmartPortfolioEngine:
                     else f"até {request.max_assets} ativos."
                 )
                 + (
-                    " A meta patrimonial limita as novas compras ao valor "
-                    "que falta para atingi-la, sem ultrapassar o aporte informado."
+                    " A meta patrimonial orienta o progresso e o esforço "
+                    "mensal projetado, sem limitar compras nem ampliar riscos."
                     if goal_gap is not None else ""
                 )
                 + (
