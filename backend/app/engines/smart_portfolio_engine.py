@@ -371,7 +371,7 @@ class SmartPortfolioEngine:
                 if not replacements:
                     percentages = cls.allocate(execution_request, ranked, strategy)
                     percentages, holding_notes = limit_new_contributions(
-                        request, ranked, strategy, percentages, holdings, cls.class_label
+                        execution_request, ranked, strategy, percentages, holdings, cls.class_label
                     )
                     break
                 ranked.extend(replacements)
@@ -402,7 +402,7 @@ class SmartPortfolioEngine:
                     None,
                 )
                 previous_value = existing.value if existing else Decimal("0")
-                portfolio_after = sum((item.value for item in holdings), Decimal("0")) + request.available_amount
+                portfolio_after = sum((item.value for item in holdings), Decimal("0")) + spend_limit
                 post_weight = (
                     (previous_value + recommended.executable_amount) / portfolio_after * HUNDRED
                 ).quantize(CENT)
