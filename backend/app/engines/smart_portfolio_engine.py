@@ -329,9 +329,8 @@ class SmartPortfolioEngine:
             before = selected.get(symbol)
             if before is None:
                 before = cls.explain(request, candidate, score, Decimal("0"), phase)
-            amount = ((before.executable_quantity or Decimal("0")) + step * steps) * price
-            amount = amount.quantize(CENT)
-            quantity = amount / price
+            quantity = (before.executable_quantity or Decimal("0")) + step * steps
+            amount = (quantity * price).quantize(CENT)
             pct = before.recommended_percentage
             goal = before.recommended_amount
             if before.recommended_percentage <= 0:
