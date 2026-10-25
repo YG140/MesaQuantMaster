@@ -20,6 +20,20 @@ class ReserveBucket(BaseModel):
     description: str
 
 
+class ReserveAssetAllocation(BaseModel):
+    """Alocação em reais por tipo de instrumento, nunca ordem de compra.
+
+    Os produtos individuais/emissores não foram consultados nem verificados.
+    """
+    asset_type: str
+    suggested_asset: str
+    target_amount: Decimal
+    next_contribution_amount: Decimal
+    rationale: str
+    selection_status: str = "categoria_sem_produto_validado"
+    liquidity_warning: str
+
+
 class EmergencyReservePlanResponse(BaseModel):
     status: str
     basis: str
@@ -35,5 +49,6 @@ class EmergencyReservePlanResponse(BaseModel):
     remaining_next_contribution: Decimal
     estimated_months_to_goal: int | None = None
     allocation_targets: list[ReserveBucket]
+    asset_allocations: list[ReserveAssetAllocation] = Field(default_factory=list)
     has_relevant_debt: bool
     warnings: list[str]
