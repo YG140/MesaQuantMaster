@@ -116,10 +116,10 @@ describe("simplificação da Carteira Inteligente", () => {
     server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(response)));
     const user = await openBuilder();
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
-    expect(await screen.findByText("Como a meta influencia esta montagem:")).toBeVisible();
-    expect(screen.getByRole("note")).toHaveTextContent("A meta não limita o aporte");
+    expect(screen.queryByText("Como a meta influencia esta montagem:")).not.toBeInTheDocument();
     expect(screen.queryByText(/Limite de compra definido pela meta/)).not.toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent("R$ 1,46 por mês");
+    await user.click(await screen.findByText("Planejamento financeiro"));
+    expect(screen.getByText(/R$ 1,46/)).toBeVisible();
     expect(screen.getByText("Falta para minha meta após a simulação")).toBeVisible();
     expect(screen.getAllByText("Valor de aporte desejável").length).toBeGreaterThan(0);
   });
@@ -200,13 +200,26 @@ describe("simplificação da Carteira Inteligente", () => {
     const user = await openBuilder();
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByText("Por que apareceu apenas um ativo?")).toBeVisible();
-    expect(screen.getByText(/2 ativos passaram pelos critérios/)).toBeVisible();
-    expect(screen.getByText(/Quantidade sugerida: 1 unidade/)).toBeVisible();
-    expect(screen.getByRole("note")).toHaveTextContent("Restaram R$ 850,00 sem alocação");
-    expect(screen.getByRole("note")).toHaveTextContent("1 candidato(s) ficaram fora por orçamento");
+    expect(screen.getByText("Por que apareceu apenas um ativo?").closest("details")).not.toHaveAttribute("open");
+    await user.click(screen.getByText("Por que apareceu apenas um ativo?"));
+    expect(screen.getByText(/2 ativos passaram nos critérios/)).toBeVisible();
+    expect(screen.getByText(/1 outro\(s\) não couberam/)).toBeVisible();
+    expect(screen.getByText(/Saldo não alocado: R\$ 850,00/)).toBeVisible();
     await user.click(screen.getByText("Ativos não incluídos"));
     expect(screen.getByText("COTACARO11")).toBeVisible();
     expect(screen.getByText(/A divisão do aporte não comporta uma unidade/)).toBeVisible();
+  });
+
+  it("não exibe alertas técnicos repetidos quando existem vários ativos válidos", async () => {
+    server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json(responseWithAssets())));
+    const user = await openBuilder();
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    expect(await screen.findByRole("heading", { name: "Sua carteira recomendada" })).toBeVisible();
+    expect(screen.queryByText("Por que apareceu apenas um ativo?")).not.toBeInTheDocument();
+    expect(screen.queryByText("Como a meta influencia esta montagem:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ativos não incluídos")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dados e fontes")).not.toBeInTheDocument();
+    expect(screen.getByText("Planejamento financeiro").closest("details")).not.toHaveAttribute("open");
   });
 
   it("bloqueia montagem sem perfil confirmado, sem aplicar defaults de risco", async () => {
@@ -238,7 +251,7 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(within(assets[0]).getByText("Boa aderência à estratégia.")).toBeVisible();
     expect(screen.getByText("Carteira executável")).toBeVisible();
     expect(screen.getByText("Plano de aportes")).toBeVisible();
-    expect(screen.getAllByText(/Simulação educacional/).some((item) => item.offsetParent !== null || item.textContent?.includes("Simulação"))).toBe(true);
+    expect(screen.getByText(/Simulação sem compra automática e sem garantia de retorno/)).toBeVisible();
   });
 
   it("mostra execução no cartão, valor dos indicadores e procedência secundária", async () => {
