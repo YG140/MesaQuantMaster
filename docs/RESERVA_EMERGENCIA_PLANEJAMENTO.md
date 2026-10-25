@@ -25,3 +25,10 @@ Resultado: meta em reais, lacuna integral a partir de R$ 0, progresso inicial de
 
 ## Testes
 Regressões de cálculo, liquidez, renda sazonal, dependentes, dívida, zero aporte, meta completa, limites numéricos, permissão por usuário e ausência de gravação na carteira. A interface usa os componentes e endpoints já existentes.
+
+
+## Plano por instrumento (interface)
+
+A tela exibe o próximo aporte e a meta para duas categorias de instrumentos: primeiro uma parcela de acesso imediato (exemplo: CDB de resgate imediato com condições verificadas; caso não seja efetivamente acessível, manter saldo disponível em conta), depois Tesouro Selic para a parcela complementar. O backend calcula esses valores a partir das despesas, meses do perfil, renda instável, saldo inicial e aporte mensal. Na interface o saldo inicial continua **R$ 0**. A soma das metas por tipo de ativo é igual à reserva-alvo e a soma das parcelas do próximo aporte é igual à contribuição sugerida à reserva. Não há consulta ou validação de emissor, vencimento, título ofertado ou preço do dia: esta etapa **não informa ticker, quantidade negociável nem ordem de compra**. Condições de resgate, tributação e risco devem ser verificadas antes da aplicação.
+
+Os dois blocos explicativos anteriores à montagem foram retirados; a interface prioriza formulário, resultado, valores por instrumento e advertências pontuais.
