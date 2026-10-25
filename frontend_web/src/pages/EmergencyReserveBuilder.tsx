@@ -47,7 +47,7 @@ export function EmergencyReserveBuilder() {
       <Card title="Monte sua reserva de emergência">
         {policy.isLoading ? <LoadingState label="Consultando sua estratégia de proteção..." /> : null}
         {policy.isError ? (
-          <p className="warning-box">Não foi possível carregar a política. A simulação usará uma referência inicial de 6 meses; sua carteira não será alterada.</p>
+          <p className="warning-box" role="alert">Perfil indisponível. Usaremos 6 meses como referência nesta simulação.</p>
         ) : null}
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); if (valid) build.mutate(); }}>
           <CurrencyInput label="Despesas essenciais por mês" value={expenses} onChange={(event) => setExpenses(event.target.value)} />
@@ -59,7 +59,7 @@ export function EmergencyReserveBuilder() {
               <option value="variavel">Variável ou sazonal</option>
             </select>
           </label>
-          {build.isError ? <div className="span-2"><ErrorState message="Não foi possível calcular sua reserva. Seus investimentos não foram alterados." /></div> : null}
+          {build.isError ? <div className="span-2"><ErrorState message="Não foi possível calcular a reserva. Tente novamente." /></div> : null}
           <div className="span-2">
             <Button type="submit" disabled={!valid || build.isPending}>
               {build.isPending ? "Calculando minha reserva..." : "Montar minha reserva"}
@@ -87,24 +87,25 @@ export function EmergencyReserveBuilder() {
                 <span>{item.suggested_asset}</span>
                 <strong>{formatMoney(item.next_contribution_amount)} no próximo aporte</strong>
                 <small>Meta neste ativo: {formatMoney(item.target_amount)}</small>
-                <small>{item.rationale}</small>
                 <details>
                   <summary>Condições antes de investir</summary>
+                  <p>{item.rationale}</p>
                   <p>{item.liquidity_warning}</p>
                 </details>
               </div>
             ))}
           </div>
         ) : (
-          <p className="warning-box">O servidor ainda não informou quais ativos recebem cada parcela. Reinicie o backend atualizado para obter o plano por ativo.</p>
+          <p className="warning-box" role="alert">Não foi possível definir os investimentos da reserva. Verifique a conexão e tente novamente.</p>
         )}
-        <p className="helper">Valores por tipo de investimento, não por produto validado. Nenhuma ordem de compra foi enviada.</p>
         {build.data.has_relevant_debt ? <p className="warning-box">Seu perfil informa dívida relevante. Avalie os juros da dívida antes de direcionar qualquer sobra para investimentos de risco.</p> : null}
         {build.data.basis !== "confirmed_profile_policy" ? <p className="warning-box">A meta de meses é provisória. Confirme o Perfil do Investidor para personalizá-la.</p> : null}
-        <details>
-          <summary>Cuidados e limitações</summary>
-          <ul>{build.data.warnings.map((notice) => <li key={notice}>{notice}</li>)}</ul>
-        </details>
+        {build.data.warnings.length > 0 ? (
+          <details>
+            <summary>Mais informações</summary>
+            <ul>{build.data.warnings.map((notice) => <li key={notice}>{notice}</li>)}</ul>
+          </details>
+        ) : null}
       </Card> : null}
     </div>
   );
