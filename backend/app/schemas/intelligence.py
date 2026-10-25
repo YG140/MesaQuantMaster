@@ -114,6 +114,9 @@ class BuildPortfolioRequest(BaseModel):
     # Modo de aproveitamento de saldo: sempre respeita universo, cotação,
     # restrições de risco e limites de concentração. Não executa ordens.
     maximize_daily_contribution: bool = False
+    # Simulação opcional: inclui até uma última unidade mínima negociável
+    # se ela ultrapassar o aporte desejável, sem compra automática.
+    auto_complete_last_unit: bool = False
     # Zero desabilita qualquer gasto acima do aporte. Um valor positivo
     # constitui autorização EXPLÍCITA e limitada para a simulação.
     maximum_extra_spend: Decimal = Field(default=Decimal("0"), ge=0)
