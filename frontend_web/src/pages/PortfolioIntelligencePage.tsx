@@ -521,7 +521,6 @@ function BuildPortfolio() {
   });
   const [goalAmount, setGoalAmount] = useState("");
   const [dailyAmount, setDailyAmount] = useState("");
-  const [maximumExtraAmount, setMaximumExtraAmount] = useState("");
   useEffect(() => {
     if (savedGoal.data?.wealth_goal_amount != null) setGoalAmount(String(savedGoal.data.wealth_goal_amount));
   }, [savedGoal.data?.wealth_goal_amount]);
@@ -538,7 +537,7 @@ function BuildPortfolio() {
       return endpoints.buildPortfolio(token!, {
         available_amount: normalizeDecimalForApi(dailyAmount),
         maximize_daily_contribution: true,
-        maximum_extra_spend: normalizeDecimalForApi(maximumExtraAmount),
+        auto_complete_last_unit: true,
         wealth_goal_amount: wealthGoal,
         objective: policy.objective,
         horizon: policy.investment_horizon,
@@ -581,16 +580,11 @@ function BuildPortfolio() {
   return (
     <div className="page-stack smart-portfolio-flow">
       <Card title="Monte uma carteira para o seu momento">
-        <p className="helper">Sua estratégia é aplicada automaticamente a partir do Perfil do Investidor. Informe sua meta de patrimônio e o aporte disponível hoje. A quantidade de unidades usa o aporte de hoje, o preço negociável e os limites da estratégia. A meta também entra no cálculo do quanto falta alcançar.</p>
-        <p className="helper">Perfil aplicado: {investorProfileRiskLabel(policy.risk_profile)} • Prazo de investimento: {investorProfileHorizonLabel(policy.investment_horizon)} • Aporte mensal previsto no perfil: {formatMoney(policy.monthly_contribution)}. Para alterar a estratégia, revise seu Perfil do Investidor.</p>
-        <div className="warning-box">Simulação educacional. Não constitui ordem de compra e não oferece garantia de retorno.</div>
+        <p className="helper">Perfil: {investorProfileRiskLabel(policy.risk_profile)} • Prazo: {investorProfileHorizonLabel(policy.investment_horizon)}</p>
+        <p className="helper">Simulação, sem compra automática.</p>
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
           <CurrencyInput label="Patrimônio que quero alcançar" value={goalAmount} onChange={(event) => setGoalAmount(event.target.value)} />
-          <CurrencyInput label="Aporte de hoje" value={dailyAmount} onChange={(event) => setDailyAmount(event.target.value)} />
-          <div className="span-2">
-            <CurrencyInput label="Valor extra máximo permitido (opcional)" value={maximumExtraAmount} onChange={(event) => setMaximumExtraAmount(event.target.value)} />
-            <p className="helper">O sistema tentará aproveitar todo o aporte com ativos elegíveis. Para permitir uma última unidade que ultrapasse o valor do dia, informe o máximo extra que você aceita gastar. Deixe em zero para nunca exceder seu dinheiro disponível. Nenhuma compra será executada automaticamente.</p>
-          </div>
+          <CurrencyInput label="Valor de aporte desejável" value={dailyAmount} onChange={(event) => setDailyAmount(event.target.value)} />
           {mutation.error ? <div className="span-2"><ErrorState message="Não foi possível montar sua carteira agora. Seus dados foram preservados."><Button type="button" variant="secondary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>Tentar novamente</Button></ErrorState></div> : null}
           <div className="span-2"><Button type="submit" disabled={mutation.isPending || (parseBrazilianNumber(dailyAmount) ?? 0) <= 0 || (parseBrazilianNumber(goalAmount) ?? 0) <= 0}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button></div>
         </form>
@@ -610,24 +604,25 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
       <Card title="Sua carteira recomendada">
         <div className="metric-grid compact smart-summary">
           <MetricCard label="Confiança" value={confidenceLabel(data.confidence)} />
-          <MetricCard label="Aporte de hoje" value={formatMoney(totalConsidered)} />
+          <MetricCard label="Aporte desejável" value={formatMoney(totalConsidered)} />
           <MetricCard label="Valor alocado" value={formatMoney(data.total_allocated_amount)} />
           <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
-          {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? <MetricCard label="Valor acima do aporte autorizado" value={formatMoney(data.budget_overrun_amount)} /> : null}
+          {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? <MetricCard label="Valor acima do aporte desejável" value={formatMoney(data.budget_overrun_amount)} /> : null}
           <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />
+          {data.preflight ? <MetricCard label="Ativos elegíveis" value={data.preflight.eligible_count} /> : null}
           {data.goal_gap_after_contribution != null ? <MetricCard label="Falta para minha meta após a simulação" value={formatMoney(data.goal_gap_after_contribution)} /> : null}
           {(data.existing_positions_count ?? 0) > 0 ? <MetricCard label="Carteira registrada" value={formatMoney(data.existing_portfolio_value)} /> : null}
         </div>
         {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? (
-          <div className="warning-box" role="alert">A simulação sugeriu compras que ultrapassam o aporte de hoje em {formatMoney(data.budget_overrun_amount)}. Esse gasto extra deve ser coberto separadamente antes de qualquer operação. Nenhuma ordem foi enviada.</div>
+          <div className="warning-box" role="alert">Total sugerido: {formatMoney(data.total_allocated_amount)}. Ultrapassa o valor desejável em {formatMoney(data.budget_overrun_amount)} por uma unidade adicional. Confira se dispõe desse dinheiro antes de comprar. Nenhuma ordem foi enviada.</div>
         ) : null}
         {cashRemaining > 0 && sortedAssets.length > 0 ? (
-          <p className="helper">Não foi possível investir os {formatMoney(data.unallocated_amount)} restantes sem ultrapassar o aporte, o limite extra autorizado ou os limites de risco e preço dos ativos elegíveis.</p>
+          <p className="helper">Restaram {formatMoney(data.unallocated_amount)}: não existe outra unidade elegível que caiba na combinação de preço e limites de risco.</p>
         ) : null}
         {data.goal_gap_before_contribution != null ? (
           <div className="helper" role="note">
             <strong>Como a meta influencia esta montagem:</strong>
-            <p>Antes desta simulação, faltavam {formatMoney(data.goal_gap_before_contribution)} para o patrimônio desejado. A meta serve para acompanhar o progresso e planejar os aportes futuros; não reduz seu orçamento de hoje nem impõe um teto às compras. Quantidades e valores dependem do aporte informado, dos preços e dos limites do Perfil do Investidor.</p>
+            <p>Faltavam {formatMoney(data.goal_gap_before_contribution)} para a meta antes da simulação. A meta não limita o aporte.</p>
             {data.required_monthly_contribution_without_returns != null ? (
               <p>Para buscar a meta no prazo do perfil, seriam necessários aproximadamente {formatMoney(data.required_monthly_contribution_without_returns)} por mês após as compras simuladas hoje, sem considerar rendimentos. Isto é apenas uma referência matemática, não uma promessa de retorno.</p>
             ) : null}
@@ -636,11 +631,14 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
         {sortedAssets.length === 1 ? (
           <div className="warning-box" role="note">
             <strong>Por que apareceu apenas um ativo?</strong>
+            <p>Não há limite fixo de um ativo: o motor analisa todos os candidatos disponíveis e seleciona os que passam nos filtros.</p>
             {data.preflight ? (
-              <p>O sistema recebeu {data.preflight.snapshots_received} análise(s) de ativos e {data.preflight.eligible_count} passaram pelos filtros de elegibilidade. Isso não significa que todos caibam no orçamento e nos limites da estratégia.</p>
+              data.preflight.eligible_count <= 1
+                ? <p>Dos {data.preflight.universe_considered} ativos considerados, {data.preflight.snapshots_received} tiveram análise recebida e somente {data.preflight.eligible_count} passou pelos critérios. Isso não significa que seja o único bom ativo do mercado.</p>
+                : <p>{data.preflight.eligible_count} ativos passaram pelos critérios, mas só {sortedAssets.length} coube na distribuição de preços, lotes e concentração. Consulte os motivos em “Ativos não incluídos”.</p>
             ) : null}
-            <p>A quantidade sugerida é {formatQuantityBR(sortedAssets[0].executable_quantity)} unidade(s) do ativo selecionado, calculada com o aporte de hoje, o preço de referência e a parcela permitida para esse ativo.</p>
-            {budgetNotSelected.length > 0 ? <p>{budgetNotSelected.length} outro(s) candidato(s) não couberam na divisão do aporte. Consulte os motivos na seção “Ativos não incluídos”.</p> : null}
+            <p>Quantidade sugerida: {formatQuantityBR(sortedAssets[0].executable_quantity)} unidade(s). O cálculo considera preço, aporte desejável e limites de risco.</p>
+            {budgetNotSelected.length > 0 ? <p>{budgetNotSelected.length} candidato(s) ficaram fora por orçamento ou divisão do aporte.</p> : null}
             {cashRemaining > 0 ? <p>Restaram {formatMoney(data.unallocated_amount)} sem alocação. Esse valor não é investido automaticamente em ativos que não atendem à política de risco.</p> : null}
           </div>
         ) : null}
