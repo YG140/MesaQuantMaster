@@ -521,6 +521,7 @@ function BuildPortfolio() {
   });
   const [goalAmount, setGoalAmount] = useState("");
   const [dailyAmount, setDailyAmount] = useState("");
+  const [maximumExtraAmount, setMaximumExtraAmount] = useState("");
   useEffect(() => {
     if (savedGoal.data?.wealth_goal_amount != null) setGoalAmount(String(savedGoal.data.wealth_goal_amount));
   }, [savedGoal.data?.wealth_goal_amount]);
@@ -536,6 +537,8 @@ function BuildPortfolio() {
       void queryClient.invalidateQueries({ queryKey: ["financial-future", token] });
       return endpoints.buildPortfolio(token!, {
         available_amount: normalizeDecimalForApi(dailyAmount),
+        maximize_daily_contribution: true,
+        maximum_extra_spend: normalizeDecimalForApi(maximumExtraAmount),
         wealth_goal_amount: wealthGoal,
         objective: policy.objective,
         horizon: policy.investment_horizon,
@@ -584,6 +587,10 @@ function BuildPortfolio() {
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
           <CurrencyInput label="Patrimônio que quero alcançar" value={goalAmount} onChange={(event) => setGoalAmount(event.target.value)} />
           <CurrencyInput label="Aporte de hoje" value={dailyAmount} onChange={(event) => setDailyAmount(event.target.value)} />
+          <div className="span-2">
+            <CurrencyInput label="Valor extra máximo permitido (opcional)" value={maximumExtraAmount} onChange={(event) => setMaximumExtraAmount(event.target.value)} />
+            <p className="helper">O sistema tentará aproveitar todo o aporte com ativos elegíveis. Para permitir uma última unidade que ultrapasse o valor do dia, informe o máximo extra que você aceita gastar. Deixe em zero para nunca exceder seu dinheiro disponível. Nenhuma compra será executada automaticamente.</p>
+          </div>
           {mutation.error ? <div className="span-2"><ErrorState message="Não foi possível montar sua carteira agora. Seus dados foram preservados."><Button type="button" variant="secondary" onClick={() => mutation.mutate()} disabled={mutation.isPending}>Tentar novamente</Button></ErrorState></div> : null}
           <div className="span-2"><Button type="submit" disabled={mutation.isPending || (parseBrazilianNumber(dailyAmount) ?? 0) <= 0 || (parseBrazilianNumber(goalAmount) ?? 0) <= 0}>{mutation.isPending ? "Analisando dados e montando sua carteira..." : "Montar minha carteira"}</Button></div>
         </form>
@@ -606,10 +613,17 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
           <MetricCard label="Aporte de hoje" value={formatMoney(totalConsidered)} />
           <MetricCard label="Valor alocado" value={formatMoney(data.total_allocated_amount)} />
           <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
+          {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? <MetricCard label="Valor acima do aporte autorizado" value={formatMoney(data.budget_overrun_amount)} /> : null}
           <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />
           {data.goal_gap_after_contribution != null ? <MetricCard label="Falta para minha meta após a simulação" value={formatMoney(data.goal_gap_after_contribution)} /> : null}
           {(data.existing_positions_count ?? 0) > 0 ? <MetricCard label="Carteira registrada" value={formatMoney(data.existing_portfolio_value)} /> : null}
         </div>
+        {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? (
+          <div className="warning-box" role="alert">A simulação sugeriu compras que ultrapassam o aporte de hoje em {formatMoney(data.budget_overrun_amount)}. Esse gasto extra deve ser coberto separadamente antes de qualquer operação. Nenhuma ordem foi enviada.</div>
+        ) : null}
+        {cashRemaining > 0 && sortedAssets.length > 0 ? (
+          <p className="helper" role="note">Não foi possível investir os {formatMoney(data.unallocated_amount)} restantes sem ultrapassar o aporte, o limite extra autorizado ou os limites de risco e preço dos ativos elegíveis.</p>
+        ) : null}
         {data.goal_gap_before_contribution != null ? (
           <div className="helper" role="note">
             <strong>Como a meta influencia esta montagem:</strong>
