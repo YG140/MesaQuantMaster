@@ -605,51 +605,34 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
           <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
           {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? <MetricCard label="Valor acima do aporte desejável" value={formatMoney(data.budget_overrun_amount)} /> : null}
           <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />
-          {data.preflight ? <MetricCard label="Ativos elegíveis" value={data.preflight.eligible_count} /> : null}
           {data.goal_gap_after_contribution != null ? <MetricCard label="Falta para minha meta após a simulação" value={formatMoney(data.goal_gap_after_contribution)} /> : null}
           {(data.existing_positions_count ?? 0) > 0 ? <MetricCard label="Carteira registrada" value={formatMoney(data.existing_portfolio_value)} /> : null}
         </div>
         {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? (
           <div className="warning-box" role="alert">Total sugerido: {formatMoney(data.total_allocated_amount)}. Ultrapassa o valor desejável em {formatMoney(data.budget_overrun_amount)} por uma unidade adicional. Confira se dispõe desse dinheiro antes de comprar. Nenhuma ordem foi enviada.</div>
         ) : null}
-        {cashRemaining > 0 && sortedAssets.length > 0 ? (
-          <p className="helper">Restaram {formatMoney(data.unallocated_amount)}: não existe outra unidade elegível que caiba na combinação de preço e limites de risco.</p>
-        ) : null}
-        {data.goal_gap_before_contribution != null ? (
-          <div className="helper" role="note">
-            <strong>Como a meta influencia esta montagem:</strong>
-            <p>Faltavam {formatMoney(data.goal_gap_before_contribution)} para a meta antes da simulação. A meta não limita o aporte.</p>
-            {data.required_monthly_contribution_without_returns != null ? (
-              <p>Para buscar a meta no prazo do perfil, seriam necessários aproximadamente {formatMoney(data.required_monthly_contribution_without_returns)} por mês após as compras simuladas hoje, sem considerar rendimentos. Isto é apenas uma referência matemática, não uma promessa de retorno.</p>
-            ) : null}
-          </div>
-        ) : null}
         {sortedAssets.length === 1 ? (
-          <div className="warning-box" role="note">
-            <strong>Por que apareceu apenas um ativo?</strong>
-            <p>Não há limite fixo de um ativo: o motor analisa todos os candidatos disponíveis e seleciona os que passam nos filtros.</p>
+          <details className="details-panel">
+            <summary>Por que apareceu apenas um ativo?</summary>
+            <p>Não há limite fixo de um ativo na montagem.</p>
             {data.preflight ? (
               data.preflight.eligible_count <= 1
-                ? <p>Dos {data.preflight.universe_considered ?? data.preflight.snapshots_received} ativos considerados, {data.preflight.snapshots_received} tiveram análise recebida e somente {data.preflight.eligible_count} passou pelos critérios. Isso não significa que seja o único bom ativo do mercado.</p>
-                : <p>{data.preflight.eligible_count} ativos passaram pelos critérios, mas só {sortedAssets.length} coube na distribuição de preços, lotes e concentração. Consulte os motivos em “Ativos não incluídos”.</p>
+                ? <p>{data.preflight.eligible_count} ativo(s) passaram nos critérios, dentre {data.preflight.snapshots_received} análises recebidas. Isso não representa todo o mercado.</p>
+                : <p>{data.preflight.eligible_count} ativos passaram nos critérios, mas apenas um foi selecionado após considerar preços e limites do seu perfil.</p>
             ) : null}
-            <p>Quantidade sugerida: {formatQuantityBR(sortedAssets[0].executable_quantity)} unidade(s). O cálculo considera preço, aporte desejável e limites de risco.</p>
-            {budgetNotSelected.length > 0 ? <p>{budgetNotSelected.length} candidato(s) ficaram fora por orçamento ou divisão do aporte.</p> : null}
-            {cashRemaining > 0 ? <p>Restaram {formatMoney(data.unallocated_amount)} sem alocação. Esse valor não é investido automaticamente em ativos que não atendem à política de risco.</p> : null}
-          </div>
+            {budgetNotSelected.length > 0 ? <p>{budgetNotSelected.length} outro(s) não couberam na distribuição do aporte.</p> : null}
+            {cashRemaining > 0 ? <p>Saldo não alocado: {formatMoney(data.unallocated_amount)}. Nenhuma compra fora do perfil foi forçada.</p> : null}
+          </details>
         ) : null}
         {!sortedAssets.length ? <div className="smart-insufficient"><h3>Ainda não há dados suficientes para recomendar ativos.</h3><p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></div> : (
           <div className="recommended-assets" aria-label="Ativos recomendados">
             {sortedAssets.map((asset) => <RecommendedAssetCard asset={asset} key={asset.symbol} />)}
           </div>
         )}
-        <p className="helper smart-disclaimer">{data.disclaimer}</p>
-        {(data.existing_positions_count ?? 0) > 0 ? <p className="helper">Novas compras calculadas considerando {data.existing_positions_count} posição(ões) registradas e os limites do seu perfil.</p> : null}
-        {(data.holdings_warnings ?? []).map((warning) => <p className="helper" role="note" key={warning}>{warning}</p>)}
+        <p className="helper smart-disclaimer">Simulação sem compra automática e sem garantia de retorno.</p>
       </Card>
       {(data.existing_holdings_assessments ?? []).length > 0 ? (
         <ResultDetails title="Avaliação dos ativos já comprados">
-          <p className="helper">Avaliação das posições cadastradas na aba Carteira, usando indicadores, confiança e limites de concentração.</p>
           <div className="holdings-assessments">
             {data.existing_holdings_assessments!.map((holding) => (
               <article className="holding-assessment" key={holding.symbol}>
@@ -672,13 +655,25 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
         </ResultDetails>
       ) : null}
       <ResultDetails title="Por que esta carteira?"><p>{data.strategy_summary}</p><TextList items={data.selections.map((item) => `${item.asset_class}: ${item.message}`)} /></ResultDetails>
-      <ResultDetails title="Riscos e cuidados"><TextList items={[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks]} fallback="Nenhum cuidado adicional foi identificado com os dados disponíveis." /></ResultDetails>
+      {[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks].length > 0 ? (
+        <ResultDetails title="Riscos e cuidados">
+          <TextList items={[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks]} />
+        </ResultDetails>
+      ) : null}
       <ResultDetails title="Distribuição por classe">{!data.class_allocations.length ? <EmptyState title="Cobertura insuficiente para alocar com segurança." /> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Classe</th><th>Percentual</th><th>Valor sugerido</th><th>Explicação</th></tr></thead><tbody>{data.class_allocations.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatPercent(item.percentage)}</td><td>{formatMoney(item.amount)}</td><td>{item.explanation}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
       <ResultDetails title="Planejamento financeiro"><div className="metric-grid compact"><MetricCard label="Fase" value={data.diagnosis.phase} /><MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} /><MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} /><MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} /></div><TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} /><ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable></ResultDetails>
       <ResultDetails title="Carteira executável">{!sortedAssets.length ? <p>Sem ativos executáveis.</p> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Preço</th><th>Quantidade</th><th>Valor executável</th><th>Diferença do alvo</th></tr></thead><tbody>{sortedAssets.map((asset) => <tr key={`execution-${asset.symbol}`}><td>{asset.symbol}</td><td>{formatMoney(asset.reference_price)}</td><td>{asset.executable_quantity ?? "—"}</td><td>{formatMoney(asset.executable_amount)}</td><td>{formatMoney(asset.target_gap)}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
       <ResultDetails title="Plano de aportes">{!data.contribution_plan.length ? <p>Sem aporte mensal informado.</p> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Prioridade</th><th>Destino</th><th>Valor</th><th>Motivo</th></tr></thead><tbody>{data.contribution_plan.map((item) => <tr key={`${item.priority}-${item.symbol}`}><td>{item.priority}</td><td>{item.symbol}</td><td>{formatMoney(item.suggested_amount)}</td><td>{item.reason}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
-      <ResultDetails title="Dados e fontes"><TextList items={[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments)]} fallback="Sem avisos adicionais sobre dados e fontes." /></ResultDetails>
-      <ResultDetails title="Ativos não incluídos">{notIncluded.length ? <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo</th></tr></thead><tbody>{notIncluded.map((item, index) => <tr key={`${item.symbol}-${index}`}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></ResponsiveTable> : <p>Nenhum ativo adicional foi excluído.</p>}</ResultDetails>
+      {[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments), ...(data.holdings_warnings ?? [])].length > 0 ? (
+        <ResultDetails title="Detalhes sobre os dados">
+          <TextList items={[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments), ...(data.holdings_warnings ?? [])]} />
+        </ResultDetails>
+      ) : null}
+      {notIncluded.length > 0 ? (
+        <ResultDetails title="Ativos não incluídos">
+          <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo</th></tr></thead><tbody>{notIncluded.map((item, index) => <tr key={`${item.symbol}-${index}`}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></ResponsiveTable>
+        </ResultDetails>
+      ) : null}
     </div>
   );
 }
