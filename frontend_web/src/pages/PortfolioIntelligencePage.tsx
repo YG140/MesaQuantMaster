@@ -234,7 +234,15 @@ function FutureFinancial() {
         <MetricCard label="Progresso" value={formatPercent(data.goal.achieved_percentage)} />
         <MetricCard label="Prazo estimado (cenário central)" value={timeToGoal} />
       </div>
-      {data.valuation_note ? <p className="warning-box">{data.valuation_note}</p> : null}
+      {data.valuation_note ? (
+        <>
+          <p className="warning-box" role="note">Alguns valores da carteira são estimados. A projeção pode variar.</p>
+          <details>
+            <summary>Sobre os valores utilizados</summary>
+            <p>{data.valuation_note}</p>
+          </details>
+        </>
+      ) : null}
     </Card>
     <Card title="Cenários do futuro">
       <ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total contribuído</th><th>Patrimônio estimado</th><th>Em reais de hoje</th><th>Renda mensal hipotética</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}>
