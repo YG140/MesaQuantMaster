@@ -119,7 +119,7 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(screen.queryByText("Como a meta influencia esta montagem:")).not.toBeInTheDocument();
     expect(screen.queryByText(/Limite de compra definido pela meta/)).not.toBeInTheDocument();
     await user.click(await screen.findByText("Planejamento financeiro"));
-    expect(screen.getByText(/R$ 1,46/)).toBeVisible();
+    expect(screen.getByText("Referência de aporte mensal para a meta, sem rendimentos: R$ 1,46.")).toBeVisible();
     expect(screen.getByText("Falta para minha meta após a simulação")).toBeVisible();
     expect(screen.getAllByText("Valor de aporte desejável").length).toBeGreaterThan(0);
   });
