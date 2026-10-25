@@ -325,7 +325,6 @@ class SmartPortfolioEngine:
             symbol = candidate.snapshot.symbol
             price = candidate.snapshot.current_price
             step = cls._minimum_quantity_step(candidate.snapshot.asset_class)
-            added = price * step * steps
             before = selected.get(symbol)
             if before is None:
                 before = cls.explain(request, candidate, score, Decimal("0"), phase)
@@ -348,6 +347,7 @@ class SmartPortfolioEngine:
                     trading, segment = None, "mixed"
                 else:
                     trading, segment = identity.canonical_symbol, "standard_lot"
+            actual_added = amount - before.executable_amount
             selected[symbol] = before.model_copy(update={
                 "recommended_percentage": pct,
                 "recommended_amount": goal,
@@ -362,11 +362,11 @@ class SmartPortfolioEngine:
                 "reasons": [*before.reasons, "Saldo reaproveitado dentro dos limites de risco."],
             })
             sym, group, sector, issuer = keys(candidate)
-            symbol_value[sym] += added
-            class_value[group] += added
-            sector_value[sector] += added
-            issuer_value[issuer] += added
-            invested += added
+            symbol_value[sym] += actual_added
+            class_value[group] += actual_added
+            sector_value[sector] += actual_added
+            issuer_value[issuer] += actual_added
+            invested += actual_added
 
         # Primeiro, comprar múltiplos de unidades que caibam no aporte.
         # Avança várias unidades por ciclo, sem laço por cada cota.
