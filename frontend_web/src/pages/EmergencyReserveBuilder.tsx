@@ -21,7 +21,6 @@ export function EmergencyReserveBuilder() {
     enabled: Boolean(token),
   });
   const [expenses, setExpenses] = useState("");
-  const [saved, setSaved] = useState("");
   const [available, setAvailable] = useState("");
   const [unstableIncome, setUnstableIncome] = useState(false);
   const [monthlyEdited, setMonthlyEdited] = useState(false);
@@ -35,13 +34,12 @@ export function EmergencyReserveBuilder() {
   const build = useMutation({
     mutationFn: () => endpoints.emergencyReservePlan(token!, {
       essential_monthly_expenses: normalizeDecimalForApi(expenses),
-      current_reserve: normalizeDecimalForApi(saved),
+      current_reserve: "0", // Planejamento sempre parte de uma reserva zerada.
       monthly_available: normalizeDecimalForApi(available),
       income_unstable: unstableIncome,
     }),
   });
   const valid = (parseBrazilianNumber(expenses) ?? 0) > 0
-    && (parseBrazilianNumber(saved) ?? -1) >= 0
     && (parseBrazilianNumber(available) ?? -1) >= 0;
 
   return (
@@ -50,7 +48,8 @@ export function EmergencyReserveBuilder() {
         <p className="helper">
           Sua reserva protege despesas essenciais durante imprevistos.
           O Perfil do Investidor define os meses de proteção; você informa
-          os valores reais. O cálculo é separado da carteira de investimentos.
+          suas despesas e o valor que pode guardar. O cálculo considera uma
+          reserva inicial de R$ 0 e é separado da carteira de investimentos.
         </p>
         {policy.isLoading ? <LoadingState label="Consultando sua estratégia de proteção..." /> : null}
         {policy.isError ? (
@@ -59,7 +58,6 @@ export function EmergencyReserveBuilder() {
         {policy.data ? <p className="helper">Meta-base do perfil: {policy.data.emergency_reserve_months} meses, antes de ajustes por renda instável e dependentes.</p> : null}
         <form className="form-grid two" onSubmit={(event) => { event.preventDefault(); if (valid) build.mutate(); }}>
           <CurrencyInput label="Despesas essenciais por mês" value={expenses} onChange={(event) => setExpenses(event.target.value)} />
-          <CurrencyInput label="Quanto já tenho na reserva" value={saved} onChange={(event) => setSaved(event.target.value)} />
           <CurrencyInput label="Quanto posso guardar por mês" value={available} onChange={(event) => { setMonthlyEdited(true); setAvailable(event.target.value); }} />
           <label className="field">
             <span>Minha renda mensal</span>
@@ -69,7 +67,7 @@ export function EmergencyReserveBuilder() {
             </select>
           </label>
           <div className="span-2">
-            <p className="helper">Informe apenas o dinheiro realmente reservado, não o valor de ações, FIIs ou patrimônio total. O aporte sugerido é uma simulação, sem transferência automática.</p>
+            <p className="helper">A reserva começa em R$ 0 para este planejamento. Ações, FIIs e o patrimônio da carteira não são considerados como reserva. O aporte sugerido é apenas uma simulação, sem transferência automática.</p>
           </div>
           {build.isError ? <div className="span-2"><ErrorState message="Não foi possível calcular sua reserva. Seus investimentos não foram alterados." /></div> : null}
           <div className="span-2">
@@ -84,7 +82,6 @@ export function EmergencyReserveBuilder() {
         <div className="metric-grid compact">
           <MetricCard label="Meta da reserva" value={formatMoney(build.data.target_amount)} />
           <MetricCard label="Proteção desejada" value={`${build.data.target_months} meses`} />
-          <MetricCard label="Já guardado (informado)" value={formatMoney(build.data.current_reserve)} />
           <MetricCard label="Falta guardar" value={formatMoney(build.data.shortfall)} />
           <MetricCard label="Meses cobertos hoje" value={formatDecimalBR(build.data.months_covered, 1)} />
           <MetricCard label="Progresso estimado" value={`${formatDecimalBR(build.data.progress_percentage, 1)}%`} />
