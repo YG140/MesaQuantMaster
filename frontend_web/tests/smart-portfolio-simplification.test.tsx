@@ -201,7 +201,7 @@ describe("simplificação da Carteira Inteligente", () => {
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByText("Por que apareceu apenas um ativo?")).toBeVisible();
     expect(screen.getByText(/2 ativos passaram pelos critérios/)).toBeVisible();
-    expect(screen.getByText(/A quantidade sugerida é 1 unidade/)).toBeVisible();
+    expect(screen.getByText(/Quantidade sugerida: 1 unidade/)).toBeVisible();
     expect(screen.getByRole("note")).toHaveTextContent("Restaram R$ 850,00 sem alocação");
     expect(screen.getByRole("note")).toHaveTextContent("1 candidato(s) ficaram fora por orçamento");
     await user.click(screen.getByText("Ativos não incluídos"));
