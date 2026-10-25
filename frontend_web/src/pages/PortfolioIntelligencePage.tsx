@@ -634,7 +634,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
             <p>Não há limite fixo de um ativo: o motor analisa todos os candidatos disponíveis e seleciona os que passam nos filtros.</p>
             {data.preflight ? (
               data.preflight.eligible_count <= 1
-                ? <p>Dos {data.preflight.universe_considered} ativos considerados, {data.preflight.snapshots_received} tiveram análise recebida e somente {data.preflight.eligible_count} passou pelos critérios. Isso não significa que seja o único bom ativo do mercado.</p>
+                ? <p>Dos {data.preflight.universe_considered ?? data.preflight.snapshots_received} ativos considerados, {data.preflight.snapshots_received} tiveram análise recebida e somente {data.preflight.eligible_count} passou pelos critérios. Isso não significa que seja o único bom ativo do mercado.</p>
                 : <p>{data.preflight.eligible_count} ativos passaram pelos critérios, mas só {sortedAssets.length} coube na distribuição de preços, lotes e concentração. Consulte os motivos em “Ativos não incluídos”.</p>
             ) : null}
             <p>Quantidade sugerida: {formatQuantityBR(sortedAssets[0].executable_quantity)} unidade(s). O cálculo considera preço, aporte desejável e limites de risco.</p>
