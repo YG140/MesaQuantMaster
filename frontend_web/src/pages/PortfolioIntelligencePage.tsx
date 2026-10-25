@@ -234,8 +234,15 @@ function FutureFinancial() {
         <MetricCard label="Progresso" value={formatPercent(data.goal.achieved_percentage)} />
         <MetricCard label="Prazo estimado (cenário central)" value={timeToGoal} />
       </div>
-      <p className="helper">O tempo é uma simulação, não uma previsão garantida. Usa o aporte recorrente e o horizonte definidos no Perfil do Investidor.</p>
-      {data.valuation_note ? <p className="warning-box">{data.valuation_note}</p> : null}
+      {data.valuation_note ? (
+        <>
+          <p className="warning-box" role="note">Alguns valores da carteira são estimados. A projeção pode variar.</p>
+          <details>
+            <summary>Sobre os valores utilizados</summary>
+            <p>{data.valuation_note}</p>
+          </details>
+        </>
+      ) : null}
     </Card>
     <Card title="Cenários do futuro">
       <ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total contribuído</th><th>Patrimônio estimado</th><th>Em reais de hoje</th><th>Renda mensal hipotética</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}>
@@ -252,7 +259,7 @@ function FutureFinancial() {
         </div>
         <TextList items={data.diagnosis.priority_actions} />
       </details>
-      <p className="helper smart-disclaimer">{data.disclaimer}</p>
+      <p className="helper smart-disclaimer">Projeção estimada, sem garantia de retorno.</p>
       <Button variant="secondary" type="button" onClick={() => { void future.refetch(); }} disabled={future.isFetching}>{future.isFetching ? "Atualizando..." : "Atualizar projeção"}</Button>
     </Card>
   </div>;
@@ -275,7 +282,6 @@ function Strategy() {
   const allocations = applied.allocations.filter((item) => item.enabled);
   const total = allocations.reduce((sum, item) => sum + (parseBrazilianNumber(item.target_percentage) ?? 0), 0);
   return <Card title="Minha estratégia">
-    <p className="helper">Configuração gerada pelo Perfil do Investidor. Para modificar objetivos, restrições ou limites, revise seu perfil no cartão acima.</p>
     <dl className="settings-facts">
       <div><dt>Objetivo</dt><dd>{investorProfileObjectiveLabel(applied.objective)}</dd></div>
       <div><dt>Classificação de risco</dt><dd>{investorProfileRiskLabel(applied.risk_profile)}</dd></div>
@@ -309,8 +315,7 @@ function Overview({ data }: { data: PortfolioIntelligence }) {
   return (
     <>
       {!data.policy ? <div className="warning-box">Configure sua estratégia para receber análises e sugestões personalizadas.</div> : null}
-      {overview.market_data_status === "partial" ? <div className="warning-box">Dados parciais: alguns ativos ainda não possuem cotação atual.</div> : null}
-      {overview.market_data_status === "unavailable" ? <div className="warning-box">Provedor indisponível ou sem cotações disponíveis. A carteira continua acessível.</div> : null}
+      {overview.market_data_status === "unavailable" ? <div className="warning-box" role="alert">Cotações indisponíveis. Os valores podem estar desatualizados.</div> : null}
       <div className="metric-grid">
         <MetricCard label="Patrimônio atual" value={formatMoney(overview.current_equity)} />
         <MetricCard label="Total investido" value={formatMoney(overview.total_invested)} />
@@ -322,8 +327,6 @@ function Overview({ data }: { data: PortfolioIntelligence }) {
         <MetricCard label="Renda variável" value={formatPercent(overview.variable_income_percentage)} />
         <MetricCard label="Classificação" value={overview.portfolio_classification} />
         <MetricCard label="Risco estimado" value={overview.risk_level} />
-        <MetricCard label="Qualidade dos dados" value={overview.data_quality} />
-        <MetricCard label="Última atualização" value={formatDateTimeBR(overview.last_updated_at)} />
       </div>
     </>
   );
@@ -340,26 +343,28 @@ function Diagnosis({ data }: { data: PortfolioIntelligence }) {
   return <div className="page-stack">
     <Card title="Resumo do diagnóstico">
       <h3>{state}</h3>
-      <p>A avaliação considera distribuição, concentração, limites do seu perfil e cobertura de cotações. Não mede a qualidade fundamentalista de todos os ativos nem garante retorno.</p>
       <div className="metric-grid compact">
         <MetricCard label="Pontuação estrutural" value={diagnosis.portfolio_score == null ? "Não calculável com segurança" : formatPercent(diagnosis.portfolio_score)} />
         <MetricCard label="Risco por concentração" value={diagnosis.risk_level} />
-        <MetricCard label="Qualidade dos dados" value={diagnosis.data_quality} />
       </div>
     </Card>
-    <Card title="O que precisa de atenção">
-      <TextList items={diagnosis.warnings} fallback="Nenhum alerta estrutural identificado com os dados atuais." />
-      <h3>O que já está bom</h3>
-      <TextList items={diagnosis.strengths} fallback="Aguardando dados suficientes." />
-    </Card>
+    {diagnosis.warnings.length > 0 ? (
+      <Card title="Pontos de atenção">
+        <TextList items={diagnosis.warnings} />
+      </Card>
+    ) : null}
+    {diagnosis.strengths.length > 0 ? (
+      <details>
+        <summary>Pontos positivos</summary>
+        <TextList items={diagnosis.strengths} />
+      </details>
+    ) : null}
     <details><summary>Indicadores e distribuição detalhados</summary>
       <div className="score-grid">
         <ScoreGauge label="Diversificação estrutural" value={diagnosis.diversification_score} />
         <ScoreGauge label="Baixa concentração" value={diagnosis.concentration_score} />
       </div>
-      <p className="helper">Liquidez e renda não recebem nota sem dados de proventos, volumes e condições de resgate.</p>
       <ClassAllocationTable items={diagnosis.class_allocations} />
-      {diagnosis.unclassified_assets.length ? <p className="helper">Ativos sem classificação: {diagnosis.unclassified_assets.join(", ")}.</p> : null}
     </details>
   </div>;
 }
@@ -377,8 +382,7 @@ function Recommendations({ data }: { data: PortfolioIntelligence }) {
   if (market.data?.snapshots.length) {
     return (
       <div className="page-stack">
-        {market.data.errors.length ? <div className="warning-box">Alguns investimentos estão sem dados de mercado suficientes.</div> : null}
-        {market.data.snapshots.map((item) => <MarketRecommendationCard key={item.symbol} item={item} />)}
+          {market.data.snapshots.map((item) => <MarketRecommendationCard key={item.symbol} item={item} />)}
       </div>
     );
   }
@@ -428,22 +432,30 @@ function MarketRecommendationCard({ item }: { item: AssetIntelligenceSnapshot })
       {item.data_quality?.anomaly_flags.length ? (
         <div className="warning-box">{item.data_quality.anomaly_flags.join(" ")}</div>
       ) : null}
-      <h3>Indicadores por categoria</h3>
-      {Object.entries(grouped).map(([category, indicators]) => (
-        <details key={category} className="details-panel" open={category === "preço e mercado"}>
-          <summary>{category}</summary>
-          <IndicatorTable items={indicators} />
-        </details>
-      ))}
-      <h3>Dados ausentes</h3>
-      <TextList
-        items={missing.map((indicator) => `${indicator.label}: ${indicator.unavailable_reason || statusLabel(indicator.status)}`)}
-        fallback="Nenhum dado ausente nos indicadores analisados."
-      />
-      <h3>Motivos</h3>
-      <TextList items={item.positive_reasons} />
-      <h3>Pontos de atenção</h3>
-      <TextList items={item.warning_reasons} fallback="Sem pontos de atenção com os dados disponíveis." />
+      <details className="details-panel">
+        <summary>Ver análise detalhada</summary>
+        <h3>Indicadores por categoria</h3>
+        {Object.entries(grouped).map(([category, indicators]) => (
+          <details key={category} className="details-panel">
+            <summary>{category}</summary>
+            <IndicatorTable items={indicators} />
+          </details>
+        ))}
+        {missing.length > 0 ? (
+          <>
+            <h3>Dados não disponíveis</h3>
+            <TextList items={missing.map((indicator) => `${indicator.label}: ${indicator.unavailable_reason || statusLabel(indicator.status)}`)} />
+          </>
+        ) : null}
+        <h3>Motivos</h3>
+        <TextList items={item.positive_reasons} />
+        {item.warning_reasons.length > 0 ? (
+          <>
+            <h3>Outros pontos de atenção</h3>
+            <TextList items={item.warning_reasons} />
+          </>
+        ) : null}
+      </details>
     </Card>
   );
 }
@@ -609,51 +621,34 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
           <MetricCard label="Saldo não alocado" value={formatMoney(data.unallocated_amount)} />
           {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? <MetricCard label="Valor acima do aporte desejável" value={formatMoney(data.budget_overrun_amount)} /> : null}
           <MetricCard label="Quantidade de ativos" value={sortedAssets.length} />
-          {data.preflight ? <MetricCard label="Ativos elegíveis" value={data.preflight.eligible_count} /> : null}
           {data.goal_gap_after_contribution != null ? <MetricCard label="Falta para minha meta após a simulação" value={formatMoney(data.goal_gap_after_contribution)} /> : null}
           {(data.existing_positions_count ?? 0) > 0 ? <MetricCard label="Carteira registrada" value={formatMoney(data.existing_portfolio_value)} /> : null}
         </div>
         {(parseBrazilianNumber(data.budget_overrun_amount) ?? 0) > 0 ? (
           <div className="warning-box" role="alert">Total sugerido: {formatMoney(data.total_allocated_amount)}. Ultrapassa o valor desejável em {formatMoney(data.budget_overrun_amount)} por uma unidade adicional. Confira se dispõe desse dinheiro antes de comprar. Nenhuma ordem foi enviada.</div>
         ) : null}
-        {cashRemaining > 0 && sortedAssets.length > 0 ? (
-          <p className="helper">Restaram {formatMoney(data.unallocated_amount)}: não existe outra unidade elegível que caiba na combinação de preço e limites de risco.</p>
-        ) : null}
-        {data.goal_gap_before_contribution != null ? (
-          <div className="helper" role="note">
-            <strong>Como a meta influencia esta montagem:</strong>
-            <p>Faltavam {formatMoney(data.goal_gap_before_contribution)} para a meta antes da simulação. A meta não limita o aporte.</p>
-            {data.required_monthly_contribution_without_returns != null ? (
-              <p>Para buscar a meta no prazo do perfil, seriam necessários aproximadamente {formatMoney(data.required_monthly_contribution_without_returns)} por mês após as compras simuladas hoje, sem considerar rendimentos. Isto é apenas uma referência matemática, não uma promessa de retorno.</p>
-            ) : null}
-          </div>
-        ) : null}
         {sortedAssets.length === 1 ? (
-          <div className="warning-box" role="note">
-            <strong>Por que apareceu apenas um ativo?</strong>
-            <p>Não há limite fixo de um ativo: o motor analisa todos os candidatos disponíveis e seleciona os que passam nos filtros.</p>
+          <details className="details-panel">
+            <summary>Por que apareceu apenas um ativo?</summary>
+            <p>Não há limite fixo de um ativo na montagem.</p>
             {data.preflight ? (
               data.preflight.eligible_count <= 1
-                ? <p>Dos {data.preflight.universe_considered ?? data.preflight.snapshots_received} ativos considerados, {data.preflight.snapshots_received} tiveram análise recebida e somente {data.preflight.eligible_count} passou pelos critérios. Isso não significa que seja o único bom ativo do mercado.</p>
-                : <p>{data.preflight.eligible_count} ativos passaram pelos critérios, mas só {sortedAssets.length} coube na distribuição de preços, lotes e concentração. Consulte os motivos em “Ativos não incluídos”.</p>
+                ? <p>{data.preflight.eligible_count} ativo(s) passaram nos critérios, dentre {data.preflight.snapshots_received} análises recebidas. Isso não representa todo o mercado.</p>
+                : <p>{data.preflight.eligible_count} ativos passaram nos critérios, mas apenas um foi selecionado após considerar preços e limites do seu perfil.</p>
             ) : null}
-            <p>Quantidade sugerida: {formatQuantityBR(sortedAssets[0].executable_quantity)} unidade(s). O cálculo considera preço, aporte desejável e limites de risco.</p>
-            {budgetNotSelected.length > 0 ? <p>{budgetNotSelected.length} candidato(s) ficaram fora por orçamento ou divisão do aporte.</p> : null}
-            {cashRemaining > 0 ? <p>Restaram {formatMoney(data.unallocated_amount)} sem alocação. Esse valor não é investido automaticamente em ativos que não atendem à política de risco.</p> : null}
-          </div>
+            {budgetNotSelected.length > 0 ? <p>{budgetNotSelected.length} outro(s) não couberam na distribuição do aporte.</p> : null}
+            {cashRemaining > 0 ? <p>Saldo não alocado: {formatMoney(data.unallocated_amount)}. Nenhuma compra fora do perfil foi forçada.</p> : null}
+          </details>
         ) : null}
         {!sortedAssets.length ? <div className="smart-insufficient"><h3>Ainda não há dados suficientes para recomendar ativos.</h3><p>O valor não alocado permanece disponível. Revise os dados ausentes abaixo ou tente novamente.</p><TextList items={data.missing_data} fallback="A cobertura atual não permite uma recomendação segura." /></div> : (
           <div className="recommended-assets" aria-label="Ativos recomendados">
             {sortedAssets.map((asset) => <RecommendedAssetCard asset={asset} key={asset.symbol} />)}
           </div>
         )}
-        <p className="helper smart-disclaimer">{data.disclaimer}</p>
-        {(data.existing_positions_count ?? 0) > 0 ? <p className="helper">Novas compras calculadas considerando {data.existing_positions_count} posição(ões) registradas e os limites do seu perfil.</p> : null}
-        {(data.holdings_warnings ?? []).map((warning) => <p className="helper" role="note" key={warning}>{warning}</p>)}
+        <p className="helper smart-disclaimer">Simulação sem compra automática e sem garantia de retorno.</p>
       </Card>
       {(data.existing_holdings_assessments ?? []).length > 0 ? (
         <ResultDetails title="Avaliação dos ativos já comprados">
-          <p className="helper">Avaliação das posições cadastradas na aba Carteira, usando indicadores, confiança e limites de concentração.</p>
           <div className="holdings-assessments">
             {data.existing_holdings_assessments!.map((holding) => (
               <article className="holding-assessment" key={holding.symbol}>
@@ -676,13 +671,25 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
         </ResultDetails>
       ) : null}
       <ResultDetails title="Por que esta carteira?"><p>{data.strategy_summary}</p><TextList items={data.selections.map((item) => `${item.asset_class}: ${item.message}`)} /></ResultDetails>
-      <ResultDetails title="Riscos e cuidados"><TextList items={[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks]} fallback="Nenhum cuidado adicional foi identificado com os dados disponíveis." /></ResultDetails>
+      {[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks].length > 0 ? (
+        <ResultDetails title="Riscos e cuidados">
+          <TextList items={[...data.diagnosis.debt_alerts, ...data.freedom_goal.risks]} />
+        </ResultDetails>
+      ) : null}
       <ResultDetails title="Distribuição por classe">{!data.class_allocations.length ? <EmptyState title="Cobertura insuficiente para alocar com segurança." /> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Classe</th><th>Percentual</th><th>Valor sugerido</th><th>Explicação</th></tr></thead><tbody>{data.class_allocations.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatPercent(item.percentage)}</td><td>{formatMoney(item.amount)}</td><td>{item.explanation}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
-      <ResultDetails title="Planejamento financeiro"><div className="metric-grid compact"><MetricCard label="Fase" value={data.diagnosis.phase} /><MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} /><MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} /><MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} /></div><TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} /><ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable></ResultDetails>
+      <ResultDetails title="Planejamento financeiro"><div className="metric-grid compact"><MetricCard label="Fase" value={data.diagnosis.phase} /><MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} /><MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} /><MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} /></div>{data.required_monthly_contribution_without_returns != null ? <p>Referência de aporte mensal para a meta, sem rendimentos: {formatMoney(data.required_monthly_contribution_without_returns)}.</p> : null}<TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} /><ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable></ResultDetails>
       <ResultDetails title="Carteira executável">{!sortedAssets.length ? <p>Sem ativos executáveis.</p> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Preço</th><th>Quantidade</th><th>Valor executável</th><th>Diferença do alvo</th></tr></thead><tbody>{sortedAssets.map((asset) => <tr key={`execution-${asset.symbol}`}><td>{asset.symbol}</td><td>{formatMoney(asset.reference_price)}</td><td>{asset.executable_quantity ?? "—"}</td><td>{formatMoney(asset.executable_amount)}</td><td>{formatMoney(asset.target_gap)}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
       <ResultDetails title="Plano de aportes">{!data.contribution_plan.length ? <p>Sem aporte mensal informado.</p> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Prioridade</th><th>Destino</th><th>Valor</th><th>Motivo</th></tr></thead><tbody>{data.contribution_plan.map((item) => <tr key={`${item.priority}-${item.symbol}`}><td>{item.priority}</td><td>{item.symbol}</td><td>{formatMoney(item.suggested_amount)}</td><td>{item.reason}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
-      <ResultDetails title="Dados e fontes"><TextList items={[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments)]} fallback="Sem avisos adicionais sobre dados e fontes." /></ResultDetails>
-      <ResultDetails title="Ativos não incluídos">{notIncluded.length ? <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo</th></tr></thead><tbody>{notIncluded.map((item, index) => <tr key={`${item.symbol}-${index}`}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></ResponsiveTable> : <p>Nenhum ativo adicional foi excluído.</p>}</ResultDetails>
+      {[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments), ...(data.holdings_warnings ?? [])].length > 0 ? (
+        <ResultDetails title="Detalhes sobre os dados">
+          <TextList items={[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments), ...(data.holdings_warnings ?? [])]} />
+        </ResultDetails>
+      ) : null}
+      {notIncluded.length > 0 ? (
+        <ResultDetails title="Ativos não incluídos">
+          <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Classe</th><th>Motivo</th></tr></thead><tbody>{notIncluded.map((item, index) => <tr key={`${item.symbol}-${index}`}><td>{item.symbol}</td><td>{item.asset_class}</td><td>{item.reasons.join(" ")}</td></tr>)}</tbody></table></ResponsiveTable>
+        </ResultDetails>
+      ) : null}
     </div>
   );
 }

@@ -85,5 +85,12 @@ describe("Reserva inicia sempre do zero na interface", () => {
     expect(screen.getByText("Tesouro Selic (vencimento disponível a confirmar)")).toBeVisible();
     expect(screen.getByText("R$ 1.000,00 no próximo aporte")).toBeVisible();
     expect(screen.getByText("R$ 0,00 no próximo aporte")).toBeVisible();
+    expect(screen.queryByText(/Valores por tipo de investimento, não por produto validado/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Mais informações")).not.toBeInTheDocument();
+    const conditions = screen.getAllByText("Condições antes de investir");
+    expect(conditions).toHaveLength(2);
+    expect(conditions[0].closest("details")).not.toHaveAttribute("open");
+    await user.click(conditions[0]);
+    expect(screen.getByText("Confirme o acesso efetivo ao dinheiro.")).toBeVisible();
   });
 });
