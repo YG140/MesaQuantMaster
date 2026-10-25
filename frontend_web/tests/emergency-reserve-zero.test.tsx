@@ -29,6 +29,26 @@ describe("Reserva inicia sempre do zero na interface", () => {
           remaining_next_contribution: "0.00",
           estimated_months_to_goal: 21,
           allocation_targets: [],
+          asset_allocations: [
+            {
+              asset_type: "renda_fixa_bancaria",
+              suggested_asset: "CDB com resgate imediato (produto a confirmar)",
+              target_amount: "3500.00",
+              next_contribution_amount: "1000.00",
+              rationale: "Formar primeiro um mês de despesas.",
+              selection_status: "categoria_sem_produto_validado",
+              liquidity_warning: "Confirme o acesso efetivo ao dinheiro.",
+            },
+            {
+              asset_type: "titulo_publico_pos_fixado",
+              suggested_asset: "Tesouro Selic (vencimento disponível a confirmar)",
+              target_amount: "17500.00",
+              next_contribution_amount: "0.00",
+              rationale: "Aplicar depois da proteção imediata.",
+              selection_status: "categoria_sem_produto_validado",
+              liquidity_warning: "Resgate não é instantâneo.",
+            },
+          ],
           has_relevant_debt: false,
           warnings: [],
         });
@@ -39,7 +59,8 @@ describe("Reserva inicia sempre do zero na interface", () => {
     renderWithProviders(<EmergencyReserveBuilder />, "/planejar?secao=reserva");
 
     expect(screen.queryByLabelText("Quanto já tenho na reserva")).not.toBeInTheDocument();
-    expect(screen.getByText(/reserva inicial de R\$ 0/)).toBeVisible();
+    expect(screen.queryByText(/Sua reserva protege despesas essenciais/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/A reserva começa em R\$ 0/)).not.toBeInTheDocument();
 
     const expenses = screen.getByLabelText("Despesas essenciais por mês");
     await user.clear(expenses);
@@ -59,5 +80,10 @@ describe("Reserva inicia sempre do zero na interface", () => {
     expect(await screen.findByText("Falta guardar")).toBeVisible();
     expect(screen.getAllByText("R$ 21.000,00").length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("Já guardado (informado)")).not.toBeInTheDocument();
+    expect(screen.getByText("Onde alocar a reserva")).toBeVisible();
+    expect(screen.getByText("CDB com resgate imediato (produto a confirmar)")).toBeVisible();
+    expect(screen.getByText("Tesouro Selic (vencimento disponível a confirmar)")).toBeVisible();
+    expect(screen.getByText("R$ 1.000,00 no próximo aporte")).toBeVisible();
+    expect(screen.getByText("R$ 0,00 no próximo aporte")).toBeVisible();
   });
 });
