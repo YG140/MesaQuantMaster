@@ -169,16 +169,16 @@ for (const viewport of [
     await page.route("**/intelligence/emergency-reserve/plan", async route => {
       const body = route.request().postDataJSON();
       expect(Number(body.essential_monthly_expenses)).toBe(3500);
-      expect(Number(body.current_reserve)).toBe(4000);
+      expect(Number(body.current_reserve)).toBe(0);
       expect(Number(body.monthly_available)).toBe(1000);
       await route.fulfill({ json: {
         status: "planned", basis: "confirmed_profile_policy",
         essential_monthly_expenses: "3500", target_months: 6,
-        target_amount: "21000.00", current_reserve: "4000.00",
-        months_covered: "1.14", progress_percentage: "19.05",
-        shortfall: "17000.00", monthly_available: "1000.00",
+        target_amount: "21000.00", current_reserve: "0.00",
+        months_covered: "0.00", progress_percentage: "0.00",
+        shortfall: "21000.00", monthly_available: "1000.00",
         suggested_next_reserve_contribution: "1000.00",
-        remaining_next_contribution: "0.00", estimated_months_to_goal: 17,
+        remaining_next_contribution: "0.00", estimated_months_to_goal: 21,
         allocation_targets: [
           { label: "Acesso imediato", target_amount: "3500.00", suggested_months: 1, description: "Liquidez imediata." },
           { label: "Reserva complementar", target_amount: "17500.00", suggested_months: 5, description: "Liquidez diária." },
@@ -189,12 +189,13 @@ for (const viewport of [
     await page.goto("/planejar?secao=reserva", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Monte sua reserva de emergência" })).toBeVisible();
     await page.getByLabel("Despesas essenciais por mês").fill("350000");
-    await page.getByLabel("Quanto já tenho na reserva").fill("400000");
+    await expect(page.getByLabel("Quanto já tenho na reserva")).toHaveCount(0);
     await page.getByLabel("Quanto posso guardar por mês").fill("100000");
     await page.getByRole("button", { name: "Montar minha reserva" }).click();
     await expect(page.getByRole("heading", { name: "Seu plano de proteção" })).toBeVisible();
-    await expect(page.getByText("R$ 21.000,00")).toBeVisible();
-    await expect(page.getByText("R$ 17.000,00")).toBeVisible();
+    await expect(page.getByText("R$ 21.000,00")).toHaveCount(2);
+    await expect(page.getByText("Já guardado (informado)")).toHaveCount(0);
+    await expect(page.getByText("Falta guardar")).toBeVisible();
     expect(await page.locator("html").evaluate(root => root.scrollWidth <= root.clientWidth)).toBe(true);
   });
 }
