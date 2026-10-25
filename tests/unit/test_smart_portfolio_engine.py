@@ -1723,6 +1723,67 @@ def test_daily_spend_reuses_whole_shares_and_explicit_extra_one_unit():
     assert all(a.effective_percentage <= Decimal("60") for a in allowed.assets)
 
 
+def test_auto_complete_last_unit_uses_smallest_valid_overrun_without_extra_limit_field():
+    p = policy(
+        [policy_allocation("FIIs", 100, minimum=100, maximum=100)],
+        maximum_weight_per_asset=Decimal("60"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("100"),
+    )
+    contribution = request(
+        available_amount=Decimal("1000"),
+        max_assets=None,
+        max_percentage_per_asset=Decimal("60"),
+        max_percentage_per_sector=Decimal("100"),
+        maximize_daily_contribution=True,
+        auto_complete_last_unit=True,
+        maximum_extra_spend=Decimal("0"),
+    )
+    result = SmartPortfolioEngine.build(
+        contribution,
+        [
+            candidate("FII11", InvestmentClass.FII, score="91", current_price=Decimal("36"), sector="Logística"),
+            candidate("FII22", InvestmentClass.FII, score="89", current_price=Decimal("49"), sector="Shopping"),
+        ],
+        policy=p,
+    )
+    assert {a.symbol: a.executable_quantity for a in result.assets} == {
+        "FII11": Decimal("15"), "FII22": Decimal("10")
+    }
+    assert result.preflight.eligible_count == 2
+    assert result.total_allocated_amount == Decimal("1030.00")
+    assert result.budget_overrun_amount == Decimal("30.00")
+    assert result.unallocated_amount == Decimal("0")
+    assert result.total_allocated_amount == (
+        contribution.available_amount + result.budget_overrun_amount
+    )
+
+
+def test_automatic_diversification_never_invents_more_good_assets():
+    p = policy(
+        [policy_allocation("FIIs", 100, minimum=100, maximum=100)],
+        maximum_weight_per_asset=Decimal("20"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("100"),
+    )
+    result = SmartPortfolioEngine.build(
+        request(
+            available_amount=Decimal("1000"),
+            max_assets=None,
+            max_percentage_per_asset=Decimal("20"),
+            max_percentage_per_sector=Decimal("100"),
+            maximize_daily_contribution=True,
+            auto_complete_last_unit=True,
+        ),
+        [candidate("FII11", InvestmentClass.FII, score="91", current_price=Decimal("50"), sector="Logística")],
+        policy=p,
+    )
+    assert result.preflight.eligible_count == 1
+    assert len(result.assets) == 1
+    assert result.total_allocated_amount <= Decimal("200.00")
+    assert result.budget_overrun_amount == 0
+
+
 def test_daily_spend_never_forces_purchases_beyond_risk_or_without_consent():
     allocation = policy(
         [policy_allocation("FIIs", 100, minimum=100, maximum=100)],
