@@ -33,6 +33,71 @@ def test_basic_reserve_target_liquidity_split_and_time_without_returns():
     assert result.status == "planned"
 
 
+def test_zero_reserve_distributes_next_contribution_to_named_asset_types():
+    result = EmergencyReserveEngine.build(
+        request(
+            essential_monthly_expenses=Decimal("3000"),
+            current_reserve=Decimal("0"),
+            monthly_available=Decimal("2000"),
+        ),
+        policy_confirmed=True,
+    )
+    assert result.target_amount == Decimal("18000.00")
+    assert result.shortfall == Decimal("18000.00")
+    assert result.estimated_months_to_goal == 9
+    immediate, treasury = result.asset_allocations
+    assert immediate.suggested_asset.startswith("CDB")
+    assert treasury.suggested_asset.startswith("Tesouro Selic")
+    assert immediate.target_amount == Decimal("3000.00")
+    assert treasury.target_amount == Decimal("15000.00")
+    assert immediate.next_contribution_amount == Decimal("2000.00")
+    assert treasury.next_contribution_amount == Decimal("0.00")
+    assert sum((x.target_amount for x in result.asset_allocations), Decimal("0")) == result.target_amount
+    assert sum(
+        (x.next_contribution_amount for x in result.asset_allocations),
+        Decimal("0"),
+    ) == result.suggested_next_reserve_contribution
+    assert all(x.selection_status == "categoria_sem_produto_validado" for x in result.asset_allocations)
+
+
+def test_contribution_finishes_immediate_reserve_then_goes_to_treasury():
+    result = EmergencyReserveEngine.build(
+        request(
+            essential_monthly_expenses=Decimal("3000"),
+            current_reserve=Decimal("0"),
+            monthly_available=Decimal("5000"),
+        ),
+        policy_confirmed=True,
+    )
+    immediate, treasury = result.asset_allocations
+    assert immediate.next_contribution_amount == Decimal("3000.00")
+    assert treasury.next_contribution_amount == Decimal("2000.00")
+    assert result.estimated_months_to_goal == 4
+    assert all(x.next_contribution_amount >= 0 for x in result.asset_allocations)
+
+
+def test_asset_allocation_respects_remaining_gap_for_legacy_positive_balance():
+    result = EmergencyReserveEngine.build(
+        request(
+            essential_monthly_expenses=Decimal("3000"),
+            current_reserve=Decimal("17500"),
+            monthly_available=Decimal("4000"),
+        )
+    )
+    assert result.shortfall == Decimal("500.00")
+    assert sum((x.next_contribution_amount for x in result.asset_allocations), Decimal("0")) == Decimal("500.00")
+    assert result.remaining_next_contribution == Decimal("3500.00")
+
+
+def test_zero_monthly_reserve_yields_zero_asset_contributions_without_prices():
+    result = EmergencyReserveEngine.build(
+        request(current_reserve=Decimal("0"), monthly_available=Decimal("0"))
+    )
+    assert sum((x.next_contribution_amount for x in result.asset_allocations), Decimal("0")) == 0
+    assert all(x.target_amount >= 0 for x in result.asset_allocations)
+    assert result.estimated_months_to_goal is None
+
+
 def test_unstable_income_dependents_adjust_safety_and_instant_liquidity():
     result = EmergencyReserveEngine.build(
         request(), base_months=6, unstable_income=True, dependents=2,
