@@ -530,6 +530,7 @@ export type EmergencyReservePlan = {
 export type BuildPortfolioRequest = {
   available_amount: string;
   maximize_daily_contribution?: boolean;
+  auto_complete_last_unit?: boolean;
   maximum_extra_spend?: string;
   objective: string;
   horizon: string;

@@ -66,7 +66,7 @@ describe("resiliência de /planejar", () => {
     expect(await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" })).toBeInTheDocument();
     const submit = await screen.findByRole("button", { name: "Montar minha carteira" });
     expect(submit).toBeDisabled(); // Sem supor que aporte mensal = aporte de hoje.
-    const daily = screen.getByLabelText("Aporte de hoje");
+    const daily = screen.getByLabelText("Valor de aporte desejável");
     await user.clear(daily);
     await user.type(daily, "90000");
     expect(submit).toBeEnabled();

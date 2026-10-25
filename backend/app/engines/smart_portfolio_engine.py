@@ -253,7 +253,8 @@ class SmartPortfolioEngine:
     def _maximize_execution(cls, request, strategy, assets, scored, holdings, phase):
         """Reaproveita saldo com ativos elegíveis, respeitando o perfil.
 
-        O excesso exige maximum_extra_spend positivo e nunca é ordem de compra.
+        O excesso ocorre apenas com consentimento de simulação (última unidade)
+        ou limite monetário legado; nunca é ordem de compra.
         """
         if not request.maximize_daily_contribution or phase == "protection":
             return assets
@@ -392,14 +393,21 @@ class SmartPortfolioEngine:
             )[0]
             apply(candidate, score, steps)
 
-        # Excesso: até uma unidade adicional e até o limite informado.
-        if request.maximum_extra_spend > 0 and invested < budget:
+        # Segunda etapa: se o dinheiro ainda não foi totalmente aproveitado,
+        # simular no máximo UMA unidade mínima negociável acima da meta de
+        # aporte, escolhendo o menor excesso dentre os candidatos elegíveis.
+        # O modo novo é explícito no request; clientes legados mantêm o teto.
+        if (request.auto_complete_last_unit or request.maximum_extra_spend > 0) and invested < budget:
             choices = []
             for candidate, score in candidates.values():
                 price = candidate.snapshot.current_price
                 unit = price * cls._minimum_quantity_step(candidate.snapshot.asset_class)
-                delta = invested + unit - budget
-                if unit >= CENT and 0 < delta <= request.maximum_extra_spend and room_steps(candidate, delta) > 0:
+                delta = (invested + unit - budget).quantize(CENT)
+                if (
+                    unit >= CENT and delta > 0
+                    and (request.auto_complete_last_unit or delta <= request.maximum_extra_spend)
+                    and room_steps(candidate, delta) > 0
+                ):
                     choices.append((delta, -score, candidate.snapshot.symbol, candidate, score))
             if choices:
                 _, _, _, candidate, score = min(choices, key=lambda item: item[:3])

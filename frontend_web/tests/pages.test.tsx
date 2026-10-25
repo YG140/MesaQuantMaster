@@ -487,7 +487,7 @@ describe("paginas autenticadas", () => {
     // depois que essa política própria (rápida, mockada) resolve.
     const user = await login("/planejar?secao=montar-carteira");
     await user.click(await screen.findByRole("tab", { name: "Montar carteira" }));
-    const daily = await screen.findByLabelText("Aporte de hoje");
+    const daily = await screen.findByLabelText("Valor de aporte desejável");
     await user.clear(daily);
     await user.type(daily, "90000");
     await user.click(await screen.findByRole("button", { name: "Montar minha carteira" }));
