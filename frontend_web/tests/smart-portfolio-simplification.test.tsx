@@ -16,7 +16,7 @@ async function openBuilder() {
   await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" });
   await waitFor(() => expect(screen.getByLabelText("Patrimônio que quero alcançar")).toHaveValue("1.000.000,00"));
   // O aporte de hoje é independente do aporte mensal confirmado no perfil.
-  const today = screen.getByLabelText("Aporte de hoje");
+  const today = screen.getByLabelText("Valor de aporte desejável");
   await user.clear(today);
   await user.type(today, "90000");
   await waitFor(() => expect(today).toHaveValue("900,00"));
@@ -56,8 +56,8 @@ describe("simplificação da Carteira Inteligente", () => {
   it("mostra meta, aporte diário e a estratégia automática do perfil", async () => {
     await openBuilder();
     expect(screen.getByLabelText("Patrimônio que quero alcançar")).toBeVisible();
-    expect(screen.getByLabelText("Aporte de hoje")).toBeVisible();
-    expect(screen.getByText(/Perfil aplicado:/)).toHaveTextContent("Moderado • Prazo de investimento: Longo prazo • Aporte mensal previsto no perfil: R$ 900,00");
+    expect(screen.getByLabelText("Valor de aporte desejável")).toBeVisible();
+    expect(screen.getByText(/Perfil:/)).toHaveTextContent("Moderado • Prazo: Longo prazo");
     expect(screen.queryByText("Configurações avançadas")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Limite por ativo (%)")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Perfil de risco")).not.toBeInTheDocument();
@@ -85,12 +85,12 @@ describe("simplificação da Carteira Inteligente", () => {
       ],
     })));
     await openBuilder();
-    const summary = screen.getByText(/Perfil aplicado:/);
+    const summary = screen.getByText(/Perfil:/);
     expect(summary).toHaveTextContent("Moderado a arrojado");
-    expect(summary).toHaveTextContent("Prazo de investimento: Mais de 10 anos");
-    expect(summary).toHaveTextContent("Aporte mensal previsto no perfil: R$ 2.000,00");
+    expect(summary).toHaveTextContent("Prazo: Mais de 10 anos");
     expect(summary).not.toHaveTextContent("mais_10_anos");
-    expect(screen.getByLabelText("Aporte de hoje")).toBeVisible();
+    expect(summary).not.toHaveTextContent("mais_10_anos");
+    expect(screen.getByLabelText("Valor de aporte desejável")).toBeVisible();
   });
 
   it("não preenche o aporte de hoje automaticamente com o mensal do perfil", async () => {
@@ -98,9 +98,9 @@ describe("simplificação da Carteira Inteligente", () => {
     renderWithProviders(<AppRouter />, "/planejar?secao=montar-carteira");
     await screen.findByRole("heading", { name: "Monte uma carteira para o seu momento" });
     await waitFor(() => expect(screen.getByLabelText("Patrimônio que quero alcançar")).toHaveValue("1.000.000,00"));
-    expect(screen.getByLabelText("Aporte de hoje")).toHaveValue("0,00");
+    expect(screen.getByLabelText("Valor de aporte desejável")).toHaveValue("0,00");
     expect(screen.getByRole("button", { name: "Montar minha carteira" })).toBeDisabled();
-    expect(screen.getByText(/Aporte mensal previsto no perfil:/)).toHaveTextContent("R$ 900,00");
+    expect(screen.getByText(/Perfil:/)).toHaveTextContent("Moderado • Prazo: Longo prazo");
   });
 
   it("mostra influência da meta no planejamento sem limitar o aporte de hoje", async () => {
@@ -117,11 +117,11 @@ describe("simplificação da Carteira Inteligente", () => {
     const user = await openBuilder();
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByText("Como a meta influencia esta montagem:")).toBeVisible();
-    expect(screen.getByRole("note")).toHaveTextContent("não reduz seu orçamento de hoje nem impõe um teto às compras");
+    expect(screen.getByRole("note")).toHaveTextContent("A meta não limita o aporte");
     expect(screen.queryByText(/Limite de compra definido pela meta/)).not.toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("R$ 1,46 por mês");
     expect(screen.getByText("Falta para minha meta após a simulação")).toBeVisible();
-    expect(screen.getAllByText("Aporte de hoje").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Valor de aporte desejável").length).toBeGreaterThan(0);
   });
 
   it("usa a política persistida, sem overrides avançados, e bloqueia envio duplicado", async () => {
@@ -141,7 +141,8 @@ describe("simplificação da Carteira Inteligente", () => {
     await waitFor(() => expect(payload.max_percentage_per_asset).toBe("20"));
     expect(payload.available_amount).toBe("900");
     expect(payload.maximize_daily_contribution).toBe(true);
-    expect(payload.maximum_extra_spend).toBe("0");
+    expect(payload.auto_complete_last_unit).toBe(true);
+    expect(payload.maximum_extra_spend).toBeUndefined();
     expect(payload.wealth_goal_amount).toBe("1000000");
     expect(payload.max_assets).toBeNull();
     expect(payload.monthly_contribution).toBe("900");
@@ -156,7 +157,7 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(payload.reinvest_income).toBe(true);
   });
 
-  it("permite definir um limite explícito e mostra o valor excedente antes da compra", async () => {
+  it("inclui última unidade negociável sem campo extra e alerta sobre excedente", async () => {
     const response = responseWithAssets();
     Object.assign(response, {
       total_allocated_amount: "930",
@@ -169,14 +170,13 @@ describe("simplificação da Carteira Inteligente", () => {
       return HttpResponse.json(response);
     }));
     const user = await openBuilder();
-    const extra = screen.getByLabelText("Valor extra máximo permitido (opcional)");
-    await user.clear(extra);
-    await user.type(extra, "3000");
+    expect(screen.queryByLabelText("Valor extra máximo permitido (opcional)")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
-    expect(await screen.findByText("Valor acima do aporte autorizado")).toBeVisible();
+    expect(await screen.findByText("Valor acima do aporte desejável")).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("R$ 30,00");
     expect(payload.maximize_daily_contribution).toBe(true);
-    expect(payload.maximum_extra_spend).toBe("30");
+    expect(payload.auto_complete_last_unit).toBe(true);
+    expect(payload.maximum_extra_spend).toBeUndefined();
   });
 
   it("explica uma única cota e os candidatos bloqueados pelo orçamento", async () => {
@@ -200,10 +200,10 @@ describe("simplificação da Carteira Inteligente", () => {
     const user = await openBuilder();
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByText("Por que apareceu apenas um ativo?")).toBeVisible();
-    expect(screen.getByText(/2 passaram pelos filtros de elegibilidade/)).toBeVisible();
+    expect(screen.getByText(/2 ativos passaram pelos critérios/)).toBeVisible();
     expect(screen.getByText(/A quantidade sugerida é 1 unidade/)).toBeVisible();
     expect(screen.getByRole("note")).toHaveTextContent("Restaram R$ 850,00 sem alocação");
-    expect(screen.getByRole("note")).toHaveTextContent("1 outro(s) candidato(s) não couberam");
+    expect(screen.getByRole("note")).toHaveTextContent("1 candidato(s) ficaram fora por orçamento");
     await user.click(screen.getByText("Ativos não incluídos"));
     expect(screen.getByText("COTACARO11")).toBeVisible();
     expect(screen.getByText(/A divisão do aporte não comporta uma unidade/)).toBeVisible();
@@ -337,7 +337,7 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(await screen.findByText(/Ainda não há dados suficientes para recomendar ativos/)).toBeVisible();
     expect(screen.getByText("Insuficiente")).toBeVisible();
     server.use(http.post(`${api}/intelligence/build-portfolio`, () => HttpResponse.json({ detail: "internal" }, { status: 500 })));
-    const amount = screen.getByLabelText("Aporte de hoje");
+    const amount = screen.getByLabelText("Valor de aporte desejável");
     await user.clear(amount); await user.type(amount, "12345");
     await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/Seus dados foram preservados/);
