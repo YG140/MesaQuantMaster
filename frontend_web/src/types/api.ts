@@ -515,6 +515,15 @@ export type EmergencyReservePlan = {
     description: string;
   }>;
   has_relevant_debt: boolean;
+  asset_allocations?: Array<{
+    asset_type: string;
+    suggested_asset: string;
+    target_amount: string | number;
+    next_contribution_amount: string | number;
+    rationale: string;
+    selection_status: string;
+    liquidity_warning: string;
+  }>;
   warnings: string[];
 };
 

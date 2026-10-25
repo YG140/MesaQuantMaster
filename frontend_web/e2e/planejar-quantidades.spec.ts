@@ -183,6 +183,20 @@ for (const viewport of [
           { label: "Acesso imediato", target_amount: "3500.00", suggested_months: 1, description: "Liquidez imediata." },
           { label: "Reserva complementar", target_amount: "17500.00", suggested_months: 5, description: "Liquidez diária." },
         ],
+        asset_allocations: [
+          { asset_type: "renda_fixa_bancaria",
+            suggested_asset: "CDB com resgate imediato (produto a confirmar)",
+            target_amount: "3500.00", next_contribution_amount: "1000.00",
+            rationale: "Um mês de cobertura imediata.",
+            selection_status: "categoria_sem_produto_validado",
+            liquidity_warning: "Confirme resgate imediato." },
+          { asset_type: "titulo_publico_pos_fixado",
+            suggested_asset: "Tesouro Selic (vencimento disponível a confirmar)",
+            target_amount: "17500.00", next_contribution_amount: "0.00",
+            rationale: "Complementar após o primeiro mês.",
+            selection_status: "categoria_sem_produto_validado",
+            liquidity_warning: "Resgate sujeito a liquidação." },
+        ],
         has_relevant_debt: false, warnings: ["Nenhuma movimentação automática."],
       } });
     });
@@ -196,6 +210,12 @@ for (const viewport of [
     await expect(page.getByText("R$ 21.000,00")).toHaveCount(2);
     await expect(page.getByText("Já guardado (informado)")).toHaveCount(0);
     await expect(page.getByText("Falta guardar")).toBeVisible();
+    await expect(page.getByText("Onde alocar a reserva")).toBeVisible();
+    await expect(page.getByText("CDB com resgate imediato (produto a confirmar)")).toBeVisible();
+    await expect(page.getByText("Tesouro Selic (vencimento disponível a confirmar)")).toBeVisible();
+    await expect(page.getByText("R$ 1.000,00 no próximo aporte")).toBeVisible();
+    await expect(page.getByText("R$ 0,00 no próximo aporte")).toBeVisible();
+    await expect(page.getByText(/A reserva começa em R\$ 0/)).toHaveCount(0);
     expect(await page.locator("html").evaluate(root => root.scrollWidth <= root.clientWidth)).toBe(true);
   });
 }

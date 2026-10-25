@@ -9,6 +9,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 
 from app.schemas.emergency_reserve import (
     EmergencyReservePlanRequest, EmergencyReservePlanResponse, ReserveBucket,
+    ReserveAssetAllocation,
 )
 
 CENT = Decimal("0.01")
@@ -57,9 +58,19 @@ class EmergencyReserveEngine:
         immediate_months = min(months, 2 if (unstable_income or dependents > 0) else 1)
         immediate_target = (expenses * immediate_months).quantize(CENT)
         liquid_target = (target - immediate_target).quantize(CENT)
+        # Do zero na UI: formar primeiro a parte de saque imediato, e só
+        # depois destinar a próxima contribuição ao Tesouro Selic.
+        # Para clientes antigos com reserva existente, trata-se de uma
+        # estimativa: a localização do saldo NÃO foi verificada.
+        credited_immediate = min(saved, immediate_target)
+        immediate_gap = (immediate_target - credited_immediate).quantize(CENT)
+        next_immediate = min(reserve_from_next_month, immediate_gap).quantize(CENT)
+        next_treasury = (reserve_from_next_month - next_immediate).quantize(CENT)
         notes = [
             "Plano hipotético, sem movimentação de dinheiro ou alteração da carteira.",
-            "Valor guardado informado manualmente: não é saldo bancário comprovado ou sincronizado.",
+            "O cálculo por ativo aponta TIPOS de investimento; não confirma emissor, produto disponível, cotação ou quantidade negociável.",
+            "Para o primeiro mês de proteção, confirme que o dinheiro pode ser sacado efetivamente quando houver imprevisto.",
+            "O Tesouro Selic tem liquidez, mas o dinheiro do resgate não fica necessariamente disponível na mesma hora.",
             "O orçamento do próximo mês é uma sugestão, não uma ordem automática.",
             "Priorizar segurança, baixo risco e acesso ao dinheiro; não usar ações, FIIs ou cripto como reserva.",
             "Verificar prazos reais de resgate, garantias, tributação e condições de cada instituição.",
@@ -104,6 +115,39 @@ class EmergencyReserveEngine:
                     description=(
                         "Liquidez diária em instituição confiável ou Tesouro Selic; "
                         "o Tesouro não garante disponibilidade instantânea ou preço fixo antes do vencimento."
+                    ),
+                ),
+            ],
+            asset_allocations=[
+                ReserveAssetAllocation(
+                    asset_type="renda_fixa_bancaria",
+                    suggested_asset="CDB com resgate imediato (produto a confirmar)",
+                    target_amount=immediate_target,
+                    next_contribution_amount=next_immediate,
+                    rationale=(
+                        f"Construir primeiro {immediate_months} mês(es) de despesas "
+                        "em dinheiro de acesso rápido."
+                    ),
+                    liquidity_warning=(
+                        "Só utilizar um CDB se o resgate e a transferência "
+                        "estiverem disponíveis quando necessário. Caso contrário, "
+                        "manter esta parcela em saldo bancário imediatamente "
+                        "acessível. Conferir emissor, condições e cobertura aplicável."
+                    ),
+                ),
+                ReserveAssetAllocation(
+                    asset_type="titulo_publico_pos_fixado",
+                    suggested_asset="Tesouro Selic (vencimento disponível a confirmar)",
+                    target_amount=liquid_target,
+                    next_contribution_amount=next_treasury,
+                    rationale=(
+                        "Formar a parcela complementar depois de completar "
+                        "a proteção imediata."
+                    ),
+                    liquidity_warning=(
+                        "Resgate sujeito a dias/horários de liquidação e "
+                        "preço de mercado. Confirmar título vigente, "
+                        "preço de compra e aplicação mínima antes de operar."
                     ),
                 ),
             ],
