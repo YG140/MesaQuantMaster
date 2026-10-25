@@ -30,6 +30,17 @@ def test_reserve_preview_without_profile_is_provisional_and_read_only(client, db
     assert data["target_amount"] == "21000.00"
     assert data["shortfall"] == "17000.00"
     assert data["estimated_months_to_goal"] == 17
+    assert [asset["asset_type"] for asset in data["asset_allocations"]] == [
+        "renda_fixa_bancaria", "titulo_publico_pos_fixado",
+    ]
+    assert sum(
+        (Decimal(asset["next_contribution_amount"]) for asset in data["asset_allocations"]),
+        Decimal("0"),
+    ) == Decimal("1000.00")
+    assert all(
+        asset["selection_status"] == "categoria_sem_produto_validado"
+        for asset in data["asset_allocations"]
+    )
     assert db_session.query(Operation).count() == before_ops
     assert db_session.query(InvestorProfile).count() == before_profiles
 
