@@ -1682,6 +1682,81 @@ def test_confirmed_policy_drives_projection_and_risk_even_if_request_disagrees()
     assert all(asset.recommended_percentage <= Decimal("10") for asset in result.assets)
 
 
+def test_daily_spend_reuses_whole_shares_and_explicit_extra_one_unit():
+    allocation = policy(
+        [policy_allocation("FIIs", 100, minimum=100, maximum=100)],
+        maximum_weight_per_asset=Decimal("60"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("100"),
+    )
+    original = request(
+        available_amount=Decimal("1000"),
+        max_assets=None,
+        max_percentage_per_asset=Decimal("60"),
+        max_percentage_per_sector=Decimal("100"),
+        maximize_daily_contribution=True,
+    )
+    candidates = [
+        candidate("FII11", InvestmentClass.FII, score="91", current_price=Decimal("36"), sector="Logística"),
+        candidate("FII22", InvestmentClass.FII, score="89", current_price=Decimal("49"), sector="Shopping"),
+    ]
+    no_extra = SmartPortfolioEngine.build(original, candidates, policy=allocation)
+    assert no_extra.total_allocated_amount == Decimal("994.00")
+    assert no_extra.unallocated_amount == Decimal("6.00")
+    assert no_extra.budget_overrun_amount == Decimal("0")
+    assert {a.symbol: a.executable_quantity for a in no_extra.assets} == {
+        "FII11": Decimal("14"), "FII22": Decimal("10")
+    }
+    assert no_extra.total_allocated_amount + no_extra.unallocated_amount == original.available_amount
+
+    allowed = SmartPortfolioEngine.build(
+        original.model_copy(update={"maximum_extra_spend": Decimal("30")}),
+        candidates, policy=allocation,
+    )
+    assert allowed.total_allocated_amount == Decimal("1030.00")
+    assert allowed.unallocated_amount == Decimal("0")
+    assert allowed.budget_overrun_amount == Decimal("30.00")
+    assert {a.symbol: a.executable_quantity for a in allowed.assets} == {
+        "FII11": Decimal("15"), "FII22": Decimal("10")
+    }
+    assert allowed.total_allocated_amount == original.available_amount + allowed.budget_overrun_amount
+    assert all(a.effective_percentage <= Decimal("60") for a in allowed.assets)
+
+
+def test_daily_spend_never_forces_purchases_beyond_risk_or_without_consent():
+    allocation = policy(
+        [policy_allocation("FIIs", 100, minimum=100, maximum=100)],
+        maximum_weight_per_asset=Decimal("50"),
+        maximum_weight_per_sector=Decimal("100"),
+        maximum_weight_per_issuer=Decimal("100"),
+    )
+    original = request(
+        available_amount=Decimal("1000"),
+        max_assets=None,
+        max_percentage_per_asset=Decimal("50"),
+        max_percentage_per_sector=Decimal("100"),
+        maximize_daily_contribution=True,
+        maximum_extra_spend=Decimal("150"),
+    )
+    assets = [
+        candidate("FII11", InvestmentClass.FII, score="91", current_price=Decimal("36"), sector="Logística"),
+        candidate("FII22", InvestmentClass.FII, score="89", current_price=Decimal("49"), sector="Shopping"),
+    ]
+    result = SmartPortfolioEngine.build(original, assets, policy=allocation)
+    assert result.total_allocated_amount == Decimal("958.00")
+    assert result.unallocated_amount == Decimal("42.00")
+    assert result.budget_overrun_amount == Decimal("0")
+    assert result.total_allocated_amount <= original.available_amount
+    assert all(a.effective_percentage <= Decimal("50") for a in result.assets)
+
+    # Opt-in ausente, mesmo com recursos no mercado, não autoriza excedente.
+    strict = SmartPortfolioEngine.build(
+        original.model_copy(update={"maximum_extra_spend": Decimal("0")}),
+        assets, policy=allocation,
+    )
+    assert strict.budget_overrun_amount == Decimal("0")
+
+
 def test_daily_contribution_sets_quantity_regardless_of_goal_size():
     """A meta influencia progresso/planejamento, nunca restringe cotas."""
     p = policy(

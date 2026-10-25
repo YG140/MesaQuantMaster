@@ -111,6 +111,12 @@ class PortfolioOverview(BaseModel):
 
 class BuildPortfolioRequest(BaseModel):
     available_amount: Decimal = Field(gt=0)
+    # Modo de aproveitamento de saldo: sempre respeita universo, cotação,
+    # restrições de risco e limites de concentração. Não executa ordens.
+    maximize_daily_contribution: bool = False
+    # Zero desabilita qualquer gasto acima do aporte. Um valor positivo
+    # constitui autorização EXPLÍCITA e limitada para a simulação.
+    maximum_extra_spend: Decimal = Field(default=Decimal("0"), ge=0)
     objective: str
     horizon: str
     risk_profile: str
@@ -364,6 +370,7 @@ class BuildPortfolioResponse(BaseModel):
     total_allocated_percentage: Decimal = Decimal("0")
     total_allocated_amount: Decimal = Decimal("0")
     unallocated_amount: Decimal = Decimal("0")
+    budget_overrun_amount: Decimal = Decimal("0")
     confidence: str = "insufficient"
     status: str = "unavailable"
     missing_data: list[str] = Field(default_factory=list)

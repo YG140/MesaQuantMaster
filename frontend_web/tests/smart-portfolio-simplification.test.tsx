@@ -140,6 +140,8 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(calls).toBe(1);
     await waitFor(() => expect(payload.max_percentage_per_asset).toBe("20"));
     expect(payload.available_amount).toBe("900");
+    expect(payload.maximize_daily_contribution).toBe(true);
+    expect(payload.maximum_extra_spend).toBe("0");
     expect(payload.wealth_goal_amount).toBe("1000000");
     expect(payload.max_assets).toBeNull();
     expect(payload.monthly_contribution).toBe("900");
@@ -152,6 +154,29 @@ describe("simplificação da Carteira Inteligente", () => {
     expect(payload.high_cost_debt).toBeUndefined();
     expect(payload.projection_years).toBeUndefined();
     expect(payload.reinvest_income).toBe(true);
+  });
+
+  it("permite definir um limite explícito e mostra o valor excedente antes da compra", async () => {
+    const response = responseWithAssets();
+    Object.assign(response, {
+      total_allocated_amount: "930",
+      unallocated_amount: "0",
+      budget_overrun_amount: "30",
+    });
+    let payload: Record<string, unknown> = {};
+    server.use(http.post(`${api}/intelligence/build-portfolio`, async ({ request }) => {
+      payload = await request.json() as Record<string, unknown>;
+      return HttpResponse.json(response);
+    }));
+    const user = await openBuilder();
+    const extra = screen.getByLabelText("Valor extra máximo permitido (opcional)");
+    await user.clear(extra);
+    await user.type(extra, "3000");
+    await user.click(screen.getByRole("button", { name: "Montar minha carteira" }));
+    expect(await screen.findByText("Valor acima do aporte autorizado")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("R$ 30,00");
+    expect(payload.maximize_daily_contribution).toBe(true);
+    expect(payload.maximum_extra_spend).toBe("30");
   });
 
   it("explica uma única cota e os candidatos bloqueados pelo orçamento", async () => {

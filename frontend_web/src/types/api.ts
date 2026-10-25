@@ -520,6 +520,8 @@ export type EmergencyReservePlan = {
 
 export type BuildPortfolioRequest = {
   available_amount: string;
+  maximize_daily_contribution?: boolean;
+  maximum_extra_spend?: string;
   objective: string;
   horizon: string;
   risk_profile: string;
@@ -614,6 +616,7 @@ export type BuildPortfolioResponse = {
   total_allocated_percentage: string | number;
   total_allocated_amount: string | number;
   unallocated_amount: string | number;
+  budget_overrun_amount?: string | number | null;
   confidence: string;
   status: string;
   missing_data: string[];

@@ -250,6 +250,176 @@ class SmartPortfolioEngine:
         return Decimal("0.01")
 
     @classmethod
+    def _maximize_execution(cls, request, strategy, assets, scored, holdings, phase):
+        """Reaproveita saldo com ativos elegíveis, respeitando o perfil.
+
+        O excesso exige maximum_extra_spend positivo e nunca é ordem de compra.
+        """
+        if not request.maximize_daily_contribution or phase == "protection":
+            return assets
+        holdings = holdings or []
+        budget = request.available_amount
+        invested = sum((item.executable_amount for item in assets), Decimal("0"))
+        existing = sum((h.value for h in holdings), Decimal("0"))
+        # Para compras dentro do aporte, os limites usam o orçamento do dia.
+        # Apenas na última unidade explicitamente autorizada, os limites
+        # consideram o gasto total após o excesso realmente necessário.
+        basis = existing + budget
+        symbol_value = defaultdict(lambda: Decimal("0"))
+        sector_value = defaultdict(lambda: Decimal("0"))
+        issuer_value = defaultdict(lambda: Decimal("0"))
+        class_value = defaultdict(lambda: Decimal("0"))
+        for h in holdings:
+            symbol_value[h.symbol.upper()] += h.value
+            sector_value[(h.sector or f"unknown:{h.symbol}").casefold()] += h.value
+            issuer_value[h.issuer or f"unknown:{h.symbol}"] += h.value
+            if h.asset_class:
+                class_value[h.asset_class] += h.value
+
+        def keys(candidate):
+            sym = candidate.snapshot.symbol.upper()
+            return (
+                sym, cls.class_label(candidate.snapshot.asset_class),
+                (candidate.sector or f"unknown:{sym}").casefold(),
+                candidate.issuer or f"unknown:{sym}",
+            )
+
+        candidates = {
+            c.snapshot.symbol: (c, score)
+            for c, score in scored
+            if c.snapshot.current_price is not None and c.snapshot.current_price > 0
+        }
+        selected = {a.symbol: a for a in assets}
+        for a in assets:
+            pair = candidates.get(a.symbol)
+            if pair is not None:
+                sym, group, sector, issuer = keys(pair[0])
+                symbol_value[sym] += a.executable_amount
+                class_value[group] += a.executable_amount
+                sector_value[sector] += a.executable_amount
+                issuer_value[issuer] += a.executable_amount
+
+        def room_steps(candidate, extra_budget=Decimal("0")):
+            sym, group, sector, issuer = keys(candidate)
+            denominator = basis + extra_budget
+            target = strategy.class_targets.get(group)
+            if strategy.class_targets and target is None:
+                return 0
+            class_cap = (
+                target.maximum_percentage if target
+                else request.max_percentage_per_class
+            )
+            limits = [
+                denominator * strategy.max_percentage_per_asset / HUNDRED - symbol_value[sym],
+                denominator * strategy.max_percentage_per_sector / HUNDRED - sector_value[sector],
+                denominator * class_cap / HUNDRED - class_value[group],
+            ]
+            if strategy.max_percentage_per_issuer is not None:
+                limits.append(
+                    denominator * strategy.max_percentage_per_issuer / HUNDRED - issuer_value[issuer]
+                )
+            unit = candidate.snapshot.current_price * cls._minimum_quantity_step(candidate.snapshot.asset_class)
+            if unit <= 0:
+                return 0
+            return max(0, int((min(limits) / unit).to_integral_value(rounding=ROUND_DOWN)))
+
+        def apply(candidate, score, steps):
+            nonlocal invested
+            symbol = candidate.snapshot.symbol
+            price = candidate.snapshot.current_price
+            step = cls._minimum_quantity_step(candidate.snapshot.asset_class)
+            before = selected.get(symbol)
+            if before is None:
+                before = cls.explain(request, candidate, score, Decimal("0"), phase)
+            quantity = (before.executable_quantity or Decimal("0")) + step * steps
+            amount = (quantity * price).quantize(CENT)
+            pct = before.recommended_percentage
+            goal = before.recommended_amount
+            if before.recommended_percentage <= 0:
+                pct = (amount / budget * HUNDRED).quantize(CENT)
+                goal = amount
+            trading = before.trading_symbol
+            segment = before.market_segment
+            if candidate.market_context == B3_MARKET and candidate.snapshot.asset_class == InvestmentClass.STOCK:
+                identity = resolve_symbol_identity(symbol, market=candidate.market_context)
+                rest = quantity % Decimal("100")
+                if quantity < 100:
+                    trading = identity.trading_symbol if identity.is_fractional else f"{identity.canonical_symbol}F"
+                    segment = "fractional"
+                elif rest:
+                    trading, segment = None, "mixed"
+                else:
+                    trading, segment = identity.canonical_symbol, "standard_lot"
+            actual_added = amount - before.executable_amount
+            selected[symbol] = before.model_copy(update={
+                "recommended_percentage": pct,
+                "recommended_amount": goal,
+                "executable_quantity": quantity,
+                "executable_amount": amount,
+                "effective_percentage": (amount / budget * HUNDRED).quantize(CENT),
+                "target_gap": (goal - amount).quantize(CENT),
+                "quantity_step": step,
+                "trading_symbol": trading,
+                "market_segment": segment,
+                "execution_impediments": [],
+                "reasons": [*before.reasons, "Saldo reaproveitado dentro dos limites de risco."],
+            })
+            sym, group, sector, issuer = keys(candidate)
+            symbol_value[sym] += actual_added
+            class_value[group] += actual_added
+            sector_value[sector] += actual_added
+            issuer_value[issuer] += actual_added
+            invested += actual_added
+
+        # Primeiro, comprar múltiplos de unidades que caibam no aporte.
+        # Avança várias unidades por ciclo, sem laço por cada cota.
+        for _ in range(len(candidates) + 1):
+            remaining = budget - invested
+            if remaining <= 0:
+                break
+            options = []
+            for candidate, score in candidates.values():
+                unit = candidate.snapshot.current_price * cls._minimum_quantity_step(candidate.snapshot.asset_class)
+                if unit < CENT:
+                    continue
+                steps = min(room_steps(candidate), int((remaining / unit).to_integral_value(rounding=ROUND_DOWN)))
+                if steps:
+                    options.append((steps * unit, score, candidate.snapshot.symbol, candidate, steps))
+            if not options:
+                break
+            value, score, _, candidate, steps = sorted(
+                options, key=lambda x: (-x[0], -x[1], x[2])
+            )[0]
+            apply(candidate, score, steps)
+
+        # Excesso: até uma unidade adicional e até o limite informado.
+        if request.maximum_extra_spend > 0 and invested < budget:
+            choices = []
+            for candidate, score in candidates.values():
+                price = candidate.snapshot.current_price
+                unit = price * cls._minimum_quantity_step(candidate.snapshot.asset_class)
+                delta = invested + unit - budget
+                if unit >= CENT and 0 < delta <= request.maximum_extra_spend and room_steps(candidate, delta) > 0:
+                    choices.append((delta, -score, candidate.snapshot.symbol, candidate, score))
+            if choices:
+                _, _, _, candidate, score = min(choices, key=lambda item: item[:3])
+                apply(candidate, score, 1)
+
+        total = existing + invested
+        already_held = {h.symbol.upper(): h.value for h in holdings}
+        result = []
+        for symbol, item in selected.items():
+            if not item.executable_quantity:
+                continue
+            if holdings and total > 0:
+                value = already_held.get(symbol.upper(), Decimal("0"))
+                item = item.model_copy(update={
+                    "post_purchase_weight": ((value + item.executable_amount) / total * HUNDRED).quantize(CENT)
+                })
+            result.append(item)
+        return result
+
+    @classmethod
     def build(
         cls,
         request: BuildPortfolioRequest,
@@ -414,6 +584,7 @@ class SmartPortfolioEngine:
                 })
             assets.append(recommended)
 
+        assets = cls._maximize_execution(request, strategy, assets, scored, holdings, diagnosis.phase)
         class_totals: dict[str, Decimal] = defaultdict(Decimal)
         for asset in assets:
             class_totals[asset.asset_class] += asset.recommended_percentage
@@ -426,7 +597,8 @@ class SmartPortfolioEngine:
             if request.available_amount
             else Decimal("0")
         )
-        unallocated = (request.available_amount - allocated_amount).quantize(CENT)
+        unallocated = max(Decimal("0"), request.available_amount - allocated_amount).quantize(CENT)
+        overrun = max(Decimal("0"), allocated_amount - request.available_amount).quantize(CENT)
         missing = sorted({item for asset in assets for item in asset.missing_data})
         if provider_errors:
             missing.append("Parte das fontes de mercado não respondeu.")
@@ -518,6 +690,7 @@ class SmartPortfolioEngine:
             total_allocated_percentage=allocated_percentage,
             total_allocated_amount=allocated_amount,
             unallocated_amount=unallocated,
+            budget_overrun_amount=overrun,
             confidence=confidence,
             status=status,
             missing_data=missing,
