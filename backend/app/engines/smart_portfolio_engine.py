@@ -261,7 +261,9 @@ class SmartPortfolioEngine:
         budget = request.available_amount
         invested = sum((item.executable_amount for item in assets), Decimal("0"))
         existing = sum((h.value for h in holdings), Decimal("0"))
-        # Usar o denominador original, sem afrouxar limites com gasto extra.
+        # Para compras dentro do aporte, os limites usam o orçamento do dia.
+        # Apenas na última unidade explicitamente autorizada, os limites
+        # consideram o gasto total após o excesso realmente necessário.
         basis = existing + budget
         symbol_value = defaultdict(lambda: Decimal("0"))
         sector_value = defaultdict(lambda: Decimal("0"))
@@ -297,8 +299,9 @@ class SmartPortfolioEngine:
                 sector_value[sector] += a.executable_amount
                 issuer_value[issuer] += a.executable_amount
 
-        def room_steps(candidate):
+        def room_steps(candidate, extra_budget=Decimal("0")):
             sym, group, sector, issuer = keys(candidate)
+            denominator = basis + extra_budget
             target = strategy.class_targets.get(group)
             if strategy.class_targets and target is None:
                 return 0
@@ -307,13 +310,13 @@ class SmartPortfolioEngine:
                 else request.max_percentage_per_class
             )
             limits = [
-                basis * strategy.max_percentage_per_asset / HUNDRED - symbol_value[sym],
-                basis * strategy.max_percentage_per_sector / HUNDRED - sector_value[sector],
-                basis * class_cap / HUNDRED - class_value[group],
+                denominator * strategy.max_percentage_per_asset / HUNDRED - symbol_value[sym],
+                denominator * strategy.max_percentage_per_sector / HUNDRED - sector_value[sector],
+                denominator * class_cap / HUNDRED - class_value[group],
             ]
             if strategy.max_percentage_per_issuer is not None:
                 limits.append(
-                    basis * strategy.max_percentage_per_issuer / HUNDRED - issuer_value[issuer]
+                    denominator * strategy.max_percentage_per_issuer / HUNDRED - issuer_value[issuer]
                 )
             unit = candidate.snapshot.current_price * cls._minimum_quantity_step(candidate.snapshot.asset_class)
             if unit <= 0:
@@ -396,7 +399,7 @@ class SmartPortfolioEngine:
                 price = candidate.snapshot.current_price
                 unit = price * cls._minimum_quantity_step(candidate.snapshot.asset_class)
                 delta = invested + unit - budget
-                if unit >= CENT and room_steps(candidate) > 0 and 0 < delta <= request.maximum_extra_spend:
+                if unit >= CENT and 0 < delta <= request.maximum_extra_spend and room_steps(candidate, delta) > 0:
                     choices.append((delta, -score, candidate.snapshot.symbol, candidate, score))
             if choices:
                 _, _, _, candidate, score = min(choices, key=lambda item: item[:3])
