@@ -234,7 +234,6 @@ function FutureFinancial() {
         <MetricCard label="Progresso" value={formatPercent(data.goal.achieved_percentage)} />
         <MetricCard label="Prazo estimado (cenário central)" value={timeToGoal} />
       </div>
-      <p className="helper">O tempo é uma simulação, não uma previsão garantida. Usa o aporte recorrente e o horizonte definidos no Perfil do Investidor.</p>
       {data.valuation_note ? <p className="warning-box">{data.valuation_note}</p> : null}
     </Card>
     <Card title="Cenários do futuro">
@@ -252,7 +251,7 @@ function FutureFinancial() {
         </div>
         <TextList items={data.diagnosis.priority_actions} />
       </details>
-      <p className="helper smart-disclaimer">{data.disclaimer}</p>
+      <p className="helper smart-disclaimer">Projeção estimada, sem garantia de retorno.</p>
       <Button variant="secondary" type="button" onClick={() => { void future.refetch(); }} disabled={future.isFetching}>{future.isFetching ? "Atualizando..." : "Atualizar projeção"}</Button>
     </Card>
   </div>;
@@ -275,7 +274,6 @@ function Strategy() {
   const allocations = applied.allocations.filter((item) => item.enabled);
   const total = allocations.reduce((sum, item) => sum + (parseBrazilianNumber(item.target_percentage) ?? 0), 0);
   return <Card title="Minha estratégia">
-    <p className="helper">Configuração gerada pelo Perfil do Investidor. Para modificar objetivos, restrições ou limites, revise seu perfil no cartão acima.</p>
     <dl className="settings-facts">
       <div><dt>Objetivo</dt><dd>{investorProfileObjectiveLabel(applied.objective)}</dd></div>
       <div><dt>Classificação de risco</dt><dd>{investorProfileRiskLabel(applied.risk_profile)}</dd></div>
@@ -309,8 +307,7 @@ function Overview({ data }: { data: PortfolioIntelligence }) {
   return (
     <>
       {!data.policy ? <div className="warning-box">Configure sua estratégia para receber análises e sugestões personalizadas.</div> : null}
-      {overview.market_data_status === "partial" ? <div className="warning-box">Dados parciais: alguns ativos ainda não possuem cotação atual.</div> : null}
-      {overview.market_data_status === "unavailable" ? <div className="warning-box">Provedor indisponível ou sem cotações disponíveis. A carteira continua acessível.</div> : null}
+      {overview.market_data_status === "unavailable" ? <div className="warning-box" role="alert">Cotações indisponíveis. Os valores podem estar desatualizados.</div> : null}
       <div className="metric-grid">
         <MetricCard label="Patrimônio atual" value={formatMoney(overview.current_equity)} />
         <MetricCard label="Total investido" value={formatMoney(overview.total_invested)} />
@@ -322,8 +319,6 @@ function Overview({ data }: { data: PortfolioIntelligence }) {
         <MetricCard label="Renda variável" value={formatPercent(overview.variable_income_percentage)} />
         <MetricCard label="Classificação" value={overview.portfolio_classification} />
         <MetricCard label="Risco estimado" value={overview.risk_level} />
-        <MetricCard label="Qualidade dos dados" value={overview.data_quality} />
-        <MetricCard label="Última atualização" value={formatDateTimeBR(overview.last_updated_at)} />
       </div>
     </>
   );
@@ -340,26 +335,28 @@ function Diagnosis({ data }: { data: PortfolioIntelligence }) {
   return <div className="page-stack">
     <Card title="Resumo do diagnóstico">
       <h3>{state}</h3>
-      <p>A avaliação considera distribuição, concentração, limites do seu perfil e cobertura de cotações. Não mede a qualidade fundamentalista de todos os ativos nem garante retorno.</p>
       <div className="metric-grid compact">
         <MetricCard label="Pontuação estrutural" value={diagnosis.portfolio_score == null ? "Não calculável com segurança" : formatPercent(diagnosis.portfolio_score)} />
         <MetricCard label="Risco por concentração" value={diagnosis.risk_level} />
-        <MetricCard label="Qualidade dos dados" value={diagnosis.data_quality} />
       </div>
     </Card>
-    <Card title="O que precisa de atenção">
-      <TextList items={diagnosis.warnings} fallback="Nenhum alerta estrutural identificado com os dados atuais." />
-      <h3>O que já está bom</h3>
-      <TextList items={diagnosis.strengths} fallback="Aguardando dados suficientes." />
-    </Card>
+    {diagnosis.warnings.length > 0 ? (
+      <Card title="Pontos de atenção">
+        <TextList items={diagnosis.warnings} />
+      </Card>
+    ) : null}
+    {diagnosis.strengths.length > 0 ? (
+      <details>
+        <summary>Pontos positivos</summary>
+        <TextList items={diagnosis.strengths} />
+      </details>
+    ) : null}
     <details><summary>Indicadores e distribuição detalhados</summary>
       <div className="score-grid">
         <ScoreGauge label="Diversificação estrutural" value={diagnosis.diversification_score} />
         <ScoreGauge label="Baixa concentração" value={diagnosis.concentration_score} />
       </div>
-      <p className="helper">Liquidez e renda não recebem nota sem dados de proventos, volumes e condições de resgate.</p>
       <ClassAllocationTable items={diagnosis.class_allocations} />
-      {diagnosis.unclassified_assets.length ? <p className="helper">Ativos sem classificação: {diagnosis.unclassified_assets.join(", ")}.</p> : null}
     </details>
   </div>;
 }
@@ -377,8 +374,7 @@ function Recommendations({ data }: { data: PortfolioIntelligence }) {
   if (market.data?.snapshots.length) {
     return (
       <div className="page-stack">
-        {market.data.errors.length ? <div className="warning-box">Alguns investimentos estão sem dados de mercado suficientes.</div> : null}
-        {market.data.snapshots.map((item) => <MarketRecommendationCard key={item.symbol} item={item} />)}
+          {market.data.snapshots.map((item) => <MarketRecommendationCard key={item.symbol} item={item} />)}
       </div>
     );
   }
