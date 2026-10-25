@@ -424,22 +424,30 @@ function MarketRecommendationCard({ item }: { item: AssetIntelligenceSnapshot })
       {item.data_quality?.anomaly_flags.length ? (
         <div className="warning-box">{item.data_quality.anomaly_flags.join(" ")}</div>
       ) : null}
-      <h3>Indicadores por categoria</h3>
-      {Object.entries(grouped).map(([category, indicators]) => (
-        <details key={category} className="details-panel" open={category === "preço e mercado"}>
-          <summary>{category}</summary>
-          <IndicatorTable items={indicators} />
-        </details>
-      ))}
-      <h3>Dados ausentes</h3>
-      <TextList
-        items={missing.map((indicator) => `${indicator.label}: ${indicator.unavailable_reason || statusLabel(indicator.status)}`)}
-        fallback="Nenhum dado ausente nos indicadores analisados."
-      />
-      <h3>Motivos</h3>
-      <TextList items={item.positive_reasons} />
-      <h3>Pontos de atenção</h3>
-      <TextList items={item.warning_reasons} fallback="Sem pontos de atenção com os dados disponíveis." />
+      <details className="details-panel">
+        <summary>Ver análise detalhada</summary>
+        <h3>Indicadores por categoria</h3>
+        {Object.entries(grouped).map(([category, indicators]) => (
+          <details key={category} className="details-panel">
+            <summary>{category}</summary>
+            <IndicatorTable items={indicators} />
+          </details>
+        ))}
+        {missing.length > 0 ? (
+          <>
+            <h3>Dados não disponíveis</h3>
+            <TextList items={missing.map((indicator) => `${indicator.label}: ${indicator.unavailable_reason || statusLabel(indicator.status)}`)} />
+          </>
+        ) : null}
+        <h3>Motivos</h3>
+        <TextList items={item.positive_reasons} />
+        {item.warning_reasons.length > 0 ? (
+          <>
+            <h3>Outros pontos de atenção</h3>
+            <TextList items={item.warning_reasons} />
+          </>
+        ) : null}
+      </details>
     </Card>
   );
 }
@@ -661,7 +669,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
         </ResultDetails>
       ) : null}
       <ResultDetails title="Distribuição por classe">{!data.class_allocations.length ? <EmptyState title="Cobertura insuficiente para alocar com segurança." /> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Classe</th><th>Percentual</th><th>Valor sugerido</th><th>Explicação</th></tr></thead><tbody>{data.class_allocations.map((item) => <tr key={item.asset_class}><td>{item.asset_class}</td><td>{formatPercent(item.percentage)}</td><td>{formatMoney(item.amount)}</td><td>{item.explanation}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
-      <ResultDetails title="Planejamento financeiro"><div className="metric-grid compact"><MetricCard label="Fase" value={data.diagnosis.phase} /><MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} /><MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} /><MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} /></div><TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} /><ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable></ResultDetails>
+      <ResultDetails title="Planejamento financeiro"><div className="metric-grid compact"><MetricCard label="Fase" value={data.diagnosis.phase} /><MetricCard label="Capacidade mensal estimada" value={formatMoney(data.diagnosis.estimated_monthly_capacity)} /><MetricCard label="Meta de reserva" value={formatMoney(data.diagnosis.reserve_target)} /><MetricCard label="Progresso do objetivo" value={formatPercent(data.freedom_goal.achieved_percentage)} /></div>{data.required_monthly_contribution_without_returns != null ? <p>Referência de aporte mensal para a meta, sem rendimentos: {formatMoney(data.required_monthly_contribution_without_returns)}.</p> : null}<TextList items={[...data.diagnosis.priority_actions, ...data.freedom_goal.improvement_actions]} /><ResponsiveTable className="table-wrap"><table><thead><tr><th>Cenário</th><th>Total aportado</th><th>Patrimônio projetado</th><th>Renda estimada</th></tr></thead><tbody>{data.projections.map((item) => <tr key={item.name}><td>{item.name}</td><td>{formatMoney(item.total_contributed)}</td><td>{formatMoney(item.projected_wealth)}</td><td>{formatMoney(item.estimated_periodic_income)}</td></tr>)}</tbody></table></ResponsiveTable></ResultDetails>
       <ResultDetails title="Carteira executável">{!sortedAssets.length ? <p>Sem ativos executáveis.</p> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Ativo</th><th>Preço</th><th>Quantidade</th><th>Valor executável</th><th>Diferença do alvo</th></tr></thead><tbody>{sortedAssets.map((asset) => <tr key={`execution-${asset.symbol}`}><td>{asset.symbol}</td><td>{formatMoney(asset.reference_price)}</td><td>{asset.executable_quantity ?? "—"}</td><td>{formatMoney(asset.executable_amount)}</td><td>{formatMoney(asset.target_gap)}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
       <ResultDetails title="Plano de aportes">{!data.contribution_plan.length ? <p>Sem aporte mensal informado.</p> : <ResponsiveTable className="table-wrap"><table><thead><tr><th>Prioridade</th><th>Destino</th><th>Valor</th><th>Motivo</th></tr></thead><tbody>{data.contribution_plan.map((item) => <tr key={`${item.priority}-${item.symbol}`}><td>{item.priority}</td><td>{item.symbol}</td><td>{formatMoney(item.suggested_amount)}</td><td>{item.reason}</td></tr>)}</tbody></table></ResponsiveTable>}</ResultDetails>
       {[...data.missing_data, ...sortedAssets.flatMap((asset) => asset.execution_impediments), ...(data.holdings_warnings ?? [])].length > 0 ? (
