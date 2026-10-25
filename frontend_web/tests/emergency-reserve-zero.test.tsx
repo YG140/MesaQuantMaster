@@ -44,6 +44,9 @@ describe("Reserva inicia sempre do zero na interface", () => {
     const expenses = screen.getByLabelText("Despesas essenciais por mês");
     await user.clear(expenses);
     await user.type(expenses, "350000");
+    const monthly = screen.getByLabelText("Quanto posso guardar por mês");
+    await user.clear(monthly);
+    await user.type(monthly, "100000");
 
     await user.click(screen.getByRole("button", { name: "Montar minha reserva" }));
     await waitFor(() => expect(submitted).not.toBeNull());
@@ -54,7 +57,7 @@ describe("Reserva inicia sempre do zero na interface", () => {
       income_unstable: false,
     });
     expect(await screen.findByText("Falta guardar")).toBeVisible();
-    expect(screen.getByText("R$ 21.000,00")).toBeVisible();
+    expect(screen.getAllByText("R$ 21.000,00").length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("Já guardado (informado)")).not.toBeInTheDocument();
   });
 });
