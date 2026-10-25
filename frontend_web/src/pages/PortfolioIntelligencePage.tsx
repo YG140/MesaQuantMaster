@@ -622,7 +622,7 @@ function BuildResult({ data, totalConsidered }: { data: BuildPortfolioResponse; 
           <div className="warning-box" role="alert">A simulação sugeriu compras que ultrapassam o aporte de hoje em {formatMoney(data.budget_overrun_amount)}. Esse gasto extra deve ser coberto separadamente antes de qualquer operação. Nenhuma ordem foi enviada.</div>
         ) : null}
         {cashRemaining > 0 && sortedAssets.length > 0 ? (
-          <p className="helper" role="note">Não foi possível investir os {formatMoney(data.unallocated_amount)} restantes sem ultrapassar o aporte, o limite extra autorizado ou os limites de risco e preço dos ativos elegíveis.</p>
+          <p className="helper">Não foi possível investir os {formatMoney(data.unallocated_amount)} restantes sem ultrapassar o aporte, o limite extra autorizado ou os limites de risco e preço dos ativos elegíveis.</p>
         ) : null}
         {data.goal_gap_before_contribution != null ? (
           <div className="helper" role="note">
