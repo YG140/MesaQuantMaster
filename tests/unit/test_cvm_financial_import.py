@@ -134,6 +134,44 @@ def test_direct_and_indirect_cash_flow_are_supported(tmp_path):
     }
 
 
+@pytest.mark.parametrize(
+    "expected_method",
+    ["DFC_MD", "DFC_MI"],
+)
+def test_import_selects_one_cash_flow_method_per_period(
+    tmp_path, db_session, expected_method
+):
+    direct = row(
+        "DFC_MD", code="6.01", value="100", start="2025-01-01",
+        reference="2025-12-31", end="2025-12-31",
+    )
+    indirect = row(
+        "DFC_MI", code="6.01", value="200", start="2025-01-01",
+        reference="2025-12-31", end="2025-12-31",
+    )
+    entries = {}
+    if expected_method == "DFC_MD":
+        entries["dfp_cia_aberta_DFC_MD_con_2025.csv"] = HEADER_FLOW + direct
+        entries["dfp_cia_aberta_DFC_MI_con_2025.csv"] = HEADER_FLOW + indirect
+    else:
+        entries["dfp_cia_aberta_DFC_MI_con_2025.csv"] = HEADER_FLOW + indirect
+
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    service.import_archive(write_archive(tmp_path, entries), "DFP", COLLECTED)
+
+    documents = db_session.query(CvmFinancialDocument).all()
+    assert {document.statement_type for document in documents} == {expected_method}
+    accounts = db_session.query(CvmFinancialAccount).all()
+    assert len(accounts) == 1
+    assert accounts[0].normalized_value == (
+        Decimal("100000") if expected_method == "DFC_MD" else Decimal("200000")
+    )
+
+
 def test_bpp_total_passivo_is_not_mapped_as_liabilities_only(tmp_path):
     path = write_archive(
         tmp_path, {"dfp_cia_aberta_BPP_con_2025.csv": HEADER_BALANCE + row("BPP", code="2")}
@@ -181,6 +219,12 @@ def test_isolated_quarter_is_calculated_only_from_compatible_accumulated_periods
     assert result is not None
     assert result.normalized_value == Decimal("15000")
     assert result.period_kind == "quarterly_calculated"
+
+
+def test_isolated_quarter_rejects_non_adjacent_accumulated_periods():
+    first_quarter = raw_itr("10", date(2025, 3, 31))
+    third_quarter = raw_itr("45", date(2025, 9, 30))
+    assert CvmFinancialEngine.isolated_quarter(third_quarter, first_quarter) is None
 
 
 def test_isolated_quarter_is_not_calculated_when_periods_are_incompatible():
