@@ -981,3 +981,38 @@ def test_itr_cash_flow_method_switch_starts_a_new_series_without_mixing(
     assert current_source.statement_type == second_method
     assert previous_source.statement_type == second_method
     assert previous_source.version == 2
+
+
+def test_itr_same_version_md_mi_conflict_abstains_from_quarter_derivation(
+    tmp_path, db_session
+):
+    md_q1 = row(
+        "DFC_MD", version=2, code="6.01", value="10",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    mi_q1 = row(
+        "DFC_MI", version=2, code="6.01", value="11",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    mi_q2 = row(
+        "DFC_MI", version=1, code="6.01", value="25",
+        start="2025-01-01", reference="2025-06-30", end="2025-06-30",
+    )
+    entries = {
+        "itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1,
+        "itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1 + mi_q2,
+    }
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    service.import_archive(write_archive(tmp_path, entries), "ITR", COLLECTED)
+
+    calculated = (
+        db_session.query(CvmFinancialAccount)
+        .filter(CvmFinancialAccount.acquisition_method == "calculated")
+        .all()
+    )
+    assert calculated == []
