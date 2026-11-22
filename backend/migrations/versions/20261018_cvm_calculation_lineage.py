@@ -44,17 +44,17 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
-        "ix_cvm_financial_calculation_lineage_derived_document_id",
+        "ix_cvm_calc_lineage_derived_doc",
         "cvm_financial_calculation_lineage",
         ["derived_document_id"],
     )
     op.create_index(
-        "ix_cvm_financial_calculation_lineage_current_source_document_id",
+        "ix_cvm_calc_lineage_current_src_doc",
         "cvm_financial_calculation_lineage",
         ["current_source_document_id"],
     )
     op.create_index(
-        "ix_cvm_financial_calculation_lineage_previous_source_document_id",
+        "ix_cvm_calc_lineage_previous_src_doc",
         "cvm_financial_calculation_lineage",
         ["previous_source_document_id"],
     )
