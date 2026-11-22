@@ -1457,8 +1457,7 @@ class IndicatorResolverService:
             # BPP 2 representa Passivo Total (passivo exigível + PL), não
             # somente obrigações. Reclassifica também o valor legado.
             if (
-                document.statement_type == "BPP"
-                and account.account_code == "2"
+                account.account_code == "2"
                 and normalized_key == "total_liabilities"
             ):
                 normalized_key = "total_liabilities_and_equity"
