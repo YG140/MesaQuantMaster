@@ -42,8 +42,10 @@ class BacktestingEngine:
     """
     Engine puro para simular backtests long-only de um unico ativo.
 
-    A posicao aberta no encerramento e marcada a mercado no ultimo preco e nao
-    entra na lista de trades fechados nem no calculo de taxa de acerto.
+    Cada sinal é considerado conhecido no fechamento de sua data e executado
+    na próxima observação disponível. A posição aberta no encerramento é
+    marcada a mercado no último preço e não entra na lista de trades fechados
+    nem no cálculo de taxa de acerto.
     """
 
     @classmethod
@@ -74,8 +76,15 @@ class BacktestingEngine:
         peak_equity = initial_capital
         max_drawdown = Decimal("0")
 
-        for point in historical_data:
-            signal = signal_by_timestamp.get(point.timestamp, "HOLD")
+        for index, point in enumerate(historical_data):
+            # Sinais são conhecidos somente após o fechamento do candle que
+            # os gerou. Executa na próxima observação disponível, nunca no
+            # mesmo fechamento usado para calcular o sinal.
+            signal = (
+                signal_by_timestamp.get(historical_data[index - 1].timestamp, "HOLD")
+                if index > 0
+                else "HOLD"
+            )
 
             if signal == "BUY" and quantity == 0:
                 fee_multiplier = Decimal("1") + (fee_percent / PERCENT)
