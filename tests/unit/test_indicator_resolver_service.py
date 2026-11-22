@@ -2259,12 +2259,15 @@ def test_f_derived_indicator_from_last_quarter_itr_uses_dfp_linked_deadline_when
     # conhecido ou não — prova que o indicador derivado realmente usa
     # fiscal_year_end, e não apenas document_type/period_end.
     issuer = SimpleNamespace(id="issuer-1", cnpj="12345678000190", cvm_code="12345")
-    document = _cvm_document(
-        period_end=date(2025, 9, 30), document_type="ITR", period_kind="year_to_date"
+    flow_document = _cvm_document(
+        period_end=date(2025, 9, 30), document_type="ITR", period_kind="quarterly_calculated"
+    )
+    balance_document = _cvm_document(
+        period_end=date(2025, 9, 30), document_type="ITR", period_kind="point_in_time"
     )
     rows = [
-        (_cvm_account("net_income", "1000", "3.11"), document, issuer),
-        (_cvm_account("equity", "10000", "2.03"), document, issuer),
+        (_cvm_account("net_income", "1000", "3.11"), flow_document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), balance_document, issuer),
     ]
 
     class CvmKnownFiscalYear:
@@ -2298,12 +2301,15 @@ def test_derived_indicator_uses_conservative_fallback_when_fiscal_year_end_is_un
     # calculado quando o exercício social é conhecido (2026-02-13 <
     # 2026-03-31) — a ausência de informação nunca estende a validade.
     issuer = SimpleNamespace(id="issuer-1", cnpj="12345678000190", cvm_code="12345")
-    document = _cvm_document(
-        period_end=date(2025, 9, 30), document_type="ITR", period_kind="year_to_date"
+    flow_document = _cvm_document(
+        period_end=date(2025, 9, 30), document_type="ITR", period_kind="quarterly_calculated"
+    )
+    balance_document = _cvm_document(
+        period_end=date(2025, 9, 30), document_type="ITR", period_kind="point_in_time"
     )
     rows = [
-        (_cvm_account("net_income", "1000", "3.11"), document, issuer),
-        (_cvm_account("equity", "10000", "2.03"), document, issuer),
+        (_cvm_account("net_income", "1000", "3.11"), flow_document, issuer),
+        (_cvm_account("equity", "10000", "2.03"), balance_document, issuer),
     ]
 
     class Cvm(_UnknownFiscalCalendarCvm):
@@ -2472,7 +2478,7 @@ def test_derived_liabilities_assets_and_current_liquidity():
     issuer = SimpleNamespace(id="issuer-1", cnpj="12345678000190", cvm_code="12345")
     document = _cvm_document()
     rows = [
-        (_cvm_account("total_liabilities_and_equity", "130000", "2"), document, issuer),
+        (_cvm_account("total_liabilities", "130000", "2"), document, issuer),
         (_cvm_account("equity", "100000", "2.03"), document, issuer),
         (_cvm_account("assets", "100000", "1"), document, issuer),
         (_cvm_account("current_assets", "15000", "1.01"), document, issuer),
