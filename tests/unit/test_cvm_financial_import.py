@@ -1038,6 +1038,7 @@ def test_itr_same_version_md_mi_conflict_abstains_from_quarter_derivation(
     )
     assert calculated == []
 
+
 def test_latest_normalized_abstains_when_latest_dfc_marker_has_both_methods(
     tmp_path, db_session
 ):
