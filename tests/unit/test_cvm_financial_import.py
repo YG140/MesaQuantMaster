@@ -873,3 +873,41 @@ def test_restatement_selects_winning_document_before_its_accounts(tmp_path, db_s
     )
     assert previous_source.period_end == date(2025, 3, 31)
     assert previous_source.version == 2
+
+
+def test_newer_non_ytd_restatement_blocks_fallback_to_older_ytd_document(
+    tmp_path, db_session
+):
+    q1_v1 = row(
+        "DRE", version=1, code="3.01", value="10",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    # A versão 2 do mesmo período não contém início do exercício e,
+    # portanto, não pode ser usada para derivar trimestre. Ela ainda assim
+    # substitui a v1: não se deve voltar silenciosamente à versão antiga.
+    q1_v2 = row(
+        "DRE", version=2, code="3.01", value="12",
+        start="", reference="2025-03-31", end="2025-03-31",
+    )
+    q2 = row(
+        "DRE", version=1, code="3.01", value="30",
+        start="2025-01-01", reference="2025-06-30", end="2025-06-30",
+    )
+    path = write_archive(
+        tmp_path,
+        {"itr_cia_aberta_DRE_con_2025.csv": HEADER_FLOW + q1_v1 + q1_v2 + q2},
+    )
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    service.import_archive(path, "ITR", COLLECTED)
+
+    calculated = (
+        db_session.query(CvmFinancialAccount)
+        .filter(CvmFinancialAccount.acquisition_method == "calculated")
+        .all()
+    )
+    assert calculated == []
