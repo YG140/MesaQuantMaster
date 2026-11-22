@@ -469,6 +469,8 @@ def test_itr_compatible_accumulated_values_persist_calculated_quarter(
         provider(tmp_path),
     )
     service.import_archive(path, "ITR", COLLECTED)
+    # Reimportar o mesmo arquivo não pode duplicar a linhagem nem trocar as fontes.
+    service.import_archive(path, "ITR", COLLECTED)
     calculated = (
         db_session.query(CvmFinancialAccount)
         .filter(CvmFinancialAccount.acquisition_method == "calculated")
@@ -478,6 +480,14 @@ def test_itr_compatible_accumulated_values_persist_calculated_quarter(
     assert calculated.normalized_value == Decimal("15000")
     assert document.period_kind == "quarterly_calculated"
 
+    assert (
+        db_session.query(CvmFinancialCalculationLineage)
+        .filter(
+            CvmFinancialCalculationLineage.derived_document_id == document.id
+        )
+        .count()
+        == 1
+    )
     lineage = (
         db_session.query(CvmFinancialCalculationLineage)
         .filter(
