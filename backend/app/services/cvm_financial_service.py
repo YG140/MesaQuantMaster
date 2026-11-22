@@ -155,6 +155,7 @@ class CvmFinancialService:
 
     def _calculate_quarters(self) -> tuple[set, int]:
         previous_by_key = {}
+        previous_document_by_key = {}
         document_ids = set()
         accounts_created = 0
 
@@ -208,16 +209,22 @@ class CvmFinancialService:
                 account.account_code,
                 document.period_start,
             )
-            isolated = CvmFinancialEngine.isolated_quarter(
-                raw, previous_by_key.get(key)
-            )
+            previous_raw = previous_by_key.get(key)
+            previous_document = previous_document_by_key.get(key)
+            isolated = CvmFinancialEngine.isolated_quarter(raw, previous_raw)
             previous_by_key[key] = raw
-            if isolated is None:
+            previous_document_by_key[key] = document
+            if isolated is None or previous_document is None:
                 continue
             calculated_document = self.repository.upsert_document(
                 document.issuer_id, isolated
             )
             document_ids.add(calculated_document.id)
+            self.repository.upsert_calculation_lineage(
+                calculated_document,
+                current_source_document=document,
+                previous_source_document=previous_document,
+            )
             if self.repository.upsert_account(
                 calculated_document.id,
                 isolated,
