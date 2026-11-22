@@ -257,7 +257,11 @@ class CvmOpenDataProvider:
             return "annual"
         if start is None:
             return "point_in_time"
-        return "year_to_date" if start.month == 1 else "quarterly_reported"
+        # ITR pode seguir exercício social não iniciado em janeiro. Para
+        # identificar acumulados sem presumir ano civil, usamos a duração
+        # observada do período: períodos superiores a três meses são YTD.
+        months = (end.year - start.year) * 12 + end.month - start.month
+        return "year_to_date" if months > 3 else "quarterly_reported"
 
     @staticmethod
     def _document_type(value: str) -> str:
