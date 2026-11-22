@@ -257,11 +257,10 @@ class CvmOpenDataProvider:
             return "annual"
         if start is None:
             return "point_in_time"
-        # ITR pode seguir exercício social não iniciado em janeiro. Para
-        # identificar acumulados sem presumir ano civil, usamos a duração
-        # observada do período: períodos superiores a três meses são YTD.
-        months = (end.year - start.year) * 12 + end.month - start.month
-        return "year_to_date" if months > 3 else "quarterly_reported"
+        # DT_INI_EXERC representa o início do exercício da companhia,
+        # que pode não coincidir com janeiro. Os valores de fluxo do ITR
+        # são acumulados desde esse início, inclusive no primeiro trimestre.
+        return "year_to_date"
 
     @staticmethod
     def _document_type(value: str) -> str:
