@@ -189,7 +189,8 @@ def test_unmapped_or_non_fixed_account_remains_unmapped(tmp_path):
 
 
 def raw_itr(
-    value, end, start=date(2025, 1, 1), code="3.11", statement_type="DRE"
+    value, end, start=date(2025, 1, 1), code="3.11", statement_type="DRE",
+    period_kind="year_to_date",
 ):
     return CvmRawAccount(
         "ITR",
@@ -202,7 +203,7 @@ def raw_itr(
         1,
         start,
         end,
-        "year_to_date",
+        period_kind,
         "REAL",
         "MIL",
         code,
@@ -658,3 +659,39 @@ def test_isolated_quarter_rejects_balance_and_unclassified_accounts(
         statement_type=statement_type,
     )
     assert CvmFinancialEngine.isolated_quarter(current, previous) is None
+
+
+def test_itr_non_calendar_fiscal_year_is_classified_as_year_to_date(tmp_path):
+    path = write_archive(
+        tmp_path,
+        {
+            "itr_cia_aberta_DRE_con_2025.csv": HEADER_FLOW
+            + row(
+                "DRE", code="3.11", start="2025-04-01",
+                reference="2025-09-30", end="2025-09-30",
+            )
+        },
+    )
+    account = list(provider(tmp_path).iter_accounts(path, "ITR", COLLECTED))[0]
+    assert account.period_kind == "year_to_date"
+    assert account.period_start == date(2025, 4, 1)
+
+
+def test_isolated_quarter_requires_both_periods_to_be_fiscal_ytd():
+    previous = raw_itr(
+        "10", date(2025, 6, 30), start=date(2025, 4, 1),
+        period_kind="quarterly_reported",
+    )
+    current = raw_itr(
+        "25", date(2025, 9, 30), start=date(2025, 4, 1),
+    )
+    assert CvmFinancialEngine.isolated_quarter(current, previous) is None
+
+
+def test_isolated_quarter_accepts_non_calendar_fiscal_year():
+    previous = raw_itr("90", date(2025, 6, 30), start=date(2025, 4, 1))
+    current = raw_itr("200", date(2025, 9, 30), start=date(2025, 4, 1))
+    result = CvmFinancialEngine.isolated_quarter(current, previous)
+    assert result is not None
+    assert result.normalized_value == Decimal("110000")
+    assert result.period_start == date(2025, 6, 30)
