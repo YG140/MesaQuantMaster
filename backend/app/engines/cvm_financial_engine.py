@@ -58,14 +58,28 @@ class CvmFinancialEngine:
             ) + Decimal(account.normalized_value)
         return values
 
+    # Allowlist defensiva de contas de fluxo que podem ser isoladas.
+    # Os códigos correspondem às contas fixas mapeadas explicitamente acima;
+    # ampliar esta lista exige conferência do plano de contas/dicionário CVM.
+    FLOW_ACCOUNT_CODES = {
+        "DRE": frozenset({"3.01", "3.03", "3.05", "3.06", "3.11"}),
+        "DFC_MD": frozenset({"6.01", "6.02", "6.03", "6.05"}),
+        "DFC_MI": frozenset({"6.01", "6.02", "6.03", "6.05"}),
+    }
+
     @staticmethod
     def isolated_quarter(
         current: CvmRawAccount, previous: CvmRawAccount | None
     ) -> CvmRawAccount | None:
+        allowed_codes = CvmFinancialEngine.FLOW_ACCOUNT_CODES.get(
+            current.statement_type, frozenset()
+        )
+        if current.account_code not in allowed_codes:
+            return None
         if (
             previous is None
             or current.document_type != "ITR"
-            or current.statement_type not in {"DRE", "DFC_MD", "DFC_MI", "DVA"}
+            or current.statement_type not in {"DRE", "DFC_MD", "DFC_MI"}
             or current.period_start is None
             or previous.period_start != current.period_start
             or previous.period_end >= current.period_end
