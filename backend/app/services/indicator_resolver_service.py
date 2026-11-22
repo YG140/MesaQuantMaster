@@ -1894,7 +1894,7 @@ class IndicatorResolverService:
             # period_kind é semanticamente correta, desde que a data e o
             # documento sejam idênticos. YTD não é misturado com saldo.
             return (
-                flow[2] in {"quarterly_calculated", "quarterly_reported"}
+                flow[2] == "quarterly_calculated"
                 and balance[2] == "point_in_time"
             )
 
