@@ -44,8 +44,8 @@ class CvmFinancialService:
 
     def import_archive(self, path: Path, document_type: str, collected_at) -> dict:
         winners = {}
-        preferred_dfc_method = {}
         preferred_scope_by_period = {}
+        preferred_dfc_method = {}
         for account in self.provider.iter_accounts(path, document_type, collected_at):
             is_dfc = account.statement_type in {"DFC_MD", "DFC_MI"}
             # Preserva cada versão CVM no histórico. A escolha de escopo
@@ -67,6 +67,13 @@ class CvmFinancialService:
             priority = (1 if account.scope == "consolidated" else 0,)
             if priority > winners.get(document_key, (-1,)):
                 winners[document_key] = priority
+            # Mantém o comportamento legado de DFP até revisão própria da
+            # seleção anual MD/MI. Em ITR, preservar ambos para que a camada
+            # de cálculo possa detectar conflitos e se abster.
+            if document_type.upper() == "DFP" and is_dfc:
+                method_priority = 2 if account.statement_type == "DFC_MD" else 1
+                if method_priority > preferred_dfc_method.get(document_key, 0):
+                    preferred_dfc_method[document_key] = method_priority
             scope_key = (
                 account.cnpj, account.reference_date, account.statement_type,
                 account.period_start, account.period_end, account.version,
@@ -74,17 +81,6 @@ class CvmFinancialService:
             preferred_scope_by_period[scope_key] = max(
                 preferred_scope_by_period.get(scope_key, 0), priority[0]
             )
-
-            # A versão vigente é selecionada antes da preferência do método.
-            # MD e MI são alternativas dentro do mesmo documento/período/versão.
-            if is_dfc:
-                method_key = (
-                    account.cnpj, account.reference_date, account.period_start,
-                    account.period_end, account.scope, account.version,
-                )
-                method_priority = 2 if account.statement_type == "DFC_MD" else 1
-                if method_priority > preferred_dfc_method.get(method_key, 0):
-                    preferred_dfc_method[method_key] = method_priority
 
         document_ids = set()
         accounts_imported = 0
@@ -119,23 +115,25 @@ class CvmFinancialService:
             priority = (1 if account.scope == "consolidated" else 0,)
             if winners.get(document_key) != priority:
                 continue
+            if document_type.upper() == "DFP" and is_dfc:
+                selected_method = (
+                    "DFC_MD" if preferred_dfc_method[document_key] == 2 else "DFC_MI"
+                )
+                if account.statement_type != selected_method:
+                    continue
             scope_key = (
                 account.cnpj, account.reference_date, account.statement_type,
                 account.period_start, account.period_end, account.version,
             )
             if priority[0] != preferred_scope_by_period.get(scope_key):
                 continue
-            if is_dfc:
-                method_key = (
-                    account.cnpj, account.reference_date, account.period_start,
-                    account.period_end, account.scope, account.version,
-                )
-                selected_method = "DFC_MD" if preferred_dfc_method[method_key] == 2 else "DFC_MI"
-                if account.statement_type != selected_method:
-                    continue
             if not account.cnpj or not account.cvm_code:
                 continue
-            account_dedup_key = (document_key, account.scope, account.version, account.account_code)
+            # MD e MI são documentos distintos: não deduplicar suas contas entre métodos.
+            account_dedup_key = (
+                document_key, account.statement_type, account.scope,
+                account.version, account.account_code,
+            )
             if account_dedup_key in seen_accounts:
                 continue
             seen_accounts.add(account_dedup_key)
@@ -173,27 +171,40 @@ class CvmFinancialService:
         # uma conta omitida/reclassificada na versão nova não reaparece por
         # fallback silencioso a uma versão antiga.
         latest_document_by_period = {}
+        ambiguous_document_periods = set()
         reported_rows = self.repository.reported_itr_flow_rows()
         for account, document, issuer in reported_rows:
+            is_dfc = document.statement_type in {"DFC_MD", "DFC_MI"}
+            statement_family = "DFC" if is_dfc else document.statement_type
             document_key = (
                 document.issuer_id,
                 document.document_type,
-                document.statement_type,
+                statement_family,
                 document.scope,
                 document.reference_date,
+                document.period_start,
                 document.period_end,
             )
-            priority = (document.version, document.collected_at)
-            previous = latest_document_by_period.get(document_key)
-            if previous is None or priority > (
-                previous[1].version, previous[1].collected_at
-            ):
+            current = latest_document_by_period.get(document_key)
+            if current is None or document.version > current[1].version:
                 latest_document_by_period[document_key] = (
                     account, document, issuer
                 )
+                ambiguous_document_periods.discard(document_key)
+            elif document.version == current[1].version:
+                if document.statement_type != current[1].statement_type:
+                    # MD e MI são métodos alternativos. Versões iguais não
+                    # autorizam preferência arbitrária nem soma entre métodos.
+                    ambiguous_document_periods.add(document_key)
+                elif document.collected_at > current[1].collected_at:
+                    latest_document_by_period[document_key] = (
+                        account, document, issuer
+                    )
 
         winning_document_ids = {
-            row[1].id for row in latest_document_by_period.values()
+            row[1].id
+            for key, row in latest_document_by_period.items()
+            if key not in ambiguous_document_periods
         }
         # Mantém todas as contas do documento vencedor; não escolhe versão
         # por account_code. O conjunto de contas é, portanto, exatamente o

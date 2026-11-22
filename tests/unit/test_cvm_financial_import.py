@@ -911,3 +911,221 @@ def test_newer_non_ytd_restatement_blocks_fallback_to_older_ytd_document(
         .all()
     )
     assert calculated == []
+
+
+@pytest.mark.parametrize(
+    ("first_method", "second_method"),
+    [("DFC_MD", "DFC_MI"), ("DFC_MI", "DFC_MD")],
+)
+def test_itr_cash_flow_method_switch_starts_a_new_series_without_mixing(
+    tmp_path, db_session, first_method, second_method
+):
+    # Q1 é reapresentado com troca de método. A série nova começa em Q1;
+    # Q2 só pode ser isolado contra Q1 do mesmo método, nunca contra a série
+    # anterior. A linhagem deve apontar para o método vigente.
+    first_q1 = row(
+        first_method, version=1, code="6.01", value="10",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    replacement_q1 = row(
+        second_method, version=2, code="6.01", value="12",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    q2 = row(
+        second_method, version=1, code="6.01", value="25",
+        start="2025-01-01", reference="2025-06-30", end="2025-06-30",
+    )
+    entries = {
+        f"itr_cia_aberta_{first_method}_con_2025.csv": HEADER_FLOW + first_q1,
+        f"itr_cia_aberta_{second_method}_con_2025.csv": HEADER_FLOW
+        + replacement_q1 + q2,
+    }
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    service.import_archive(write_archive(tmp_path, entries), "ITR", COLLECTED)
+
+    calculated = (
+        db_session.query(CvmFinancialAccount, CvmFinancialDocument)
+        .join(
+            CvmFinancialDocument,
+            CvmFinancialAccount.document_id == CvmFinancialDocument.id,
+        )
+        .filter(CvmFinancialAccount.acquisition_method == "calculated")
+        .all()
+    )
+    assert len(calculated) == 1
+    calculated_account, calculated_document = calculated[0]
+    assert calculated_account.account_code == "6.01"
+    assert calculated_account.normalized_value == Decimal("13000")
+    assert calculated_document.statement_type == second_method
+    assert calculated_document.period_end == date(2025, 6, 30)
+
+    lineage = (
+        db_session.query(CvmFinancialCalculationLineage)
+        .filter(
+            CvmFinancialCalculationLineage.derived_document_id
+            == calculated_document.id
+        )
+        .one()
+    )
+    current_source = db_session.get(
+        CvmFinancialDocument, lineage.current_source_document_id
+    )
+    previous_source = db_session.get(
+        CvmFinancialDocument, lineage.previous_source_document_id
+    )
+    assert current_source.statement_type == second_method
+    assert previous_source.statement_type == second_method
+    assert previous_source.version == 2
+
+
+def test_itr_same_version_md_mi_conflict_abstains_from_quarter_derivation(
+    tmp_path, db_session
+):
+    md_q1 = row(
+        "DFC_MD", version=2, code="6.01", value="10",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    mi_q1 = row(
+        "DFC_MI", version=2, code="6.01", value="11",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    mi_q2 = row(
+        "DFC_MI", version=1, code="6.01", value="25",
+        start="2025-01-01", reference="2025-06-30", end="2025-06-30",
+    )
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    # O caminho normal da sincronização recebe MD e MI no mesmo ZIP.
+    # Ambos devem ser preservados para que a camada de cálculo identifique
+    # a ambiguidade, em vez de aplicar uma preferência silenciosa no importador.
+    archive = write_archive(
+        tmp_path,
+        {
+            "itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1,
+            "itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1 + mi_q2,
+        },
+    )
+    service.import_archive(archive, "ITR", COLLECTED)
+
+    persisted_methods = {
+        document.statement_type
+        for document in db_session.query(CvmFinancialDocument).all()
+    }
+    assert {"DFC_MD", "DFC_MI"} <= persisted_methods
+
+    persisted_q1 = (
+        db_session.query(CvmFinancialDocument)
+        .filter(CvmFinancialDocument.reference_date == date(2025, 3, 31))
+        .all()
+    )
+    assert {document.statement_type for document in persisted_q1} == {
+        "DFC_MD", "DFC_MI"
+    }
+
+    calculated = (
+        db_session.query(CvmFinancialAccount)
+        .filter(CvmFinancialAccount.acquisition_method == "calculated")
+        .all()
+    )
+    assert calculated == []
+
+
+def test_latest_normalized_abstains_when_latest_dfc_marker_has_both_methods(
+    tmp_path, db_session
+):
+    md_q1 = row(
+        "DFC_MD", version=2, code="6.01", value="10",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    mi_q1 = row(
+        "DFC_MI", version=2, code="6.01", value="11",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    repository = CvmFinancialRepository(db_session)
+    service = CvmFinancialService(
+        repository,
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    # O ZIP contém os dois métodos, reproduzindo a sincronização real.
+    archive = write_archive(
+        tmp_path,
+        {
+            "itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1,
+            "itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1,
+        },
+    )
+    service.import_archive(archive, "ITR", COLLECTED)
+
+    persisted_methods = {
+        document.statement_type
+        for document in db_session.query(CvmFinancialDocument).all()
+    }
+    assert {"DFC_MD", "DFC_MI"} <= persisted_methods
+
+    issuer = repository.list_issuers()[0]
+    asset = Asset(
+        ticker="DFCT1", name="Teste DFC", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+    service.link_asset(asset.id, issuer.id)
+
+    rows = repository.latest_normalized(asset.id)
+    assert not any(
+        document.statement_type in {"DFC_MD", "DFC_MI"}
+        for _, document, _ in rows
+    )
+
+
+
+def test_latest_normalized_abstains_when_dfp_and_itr_documents_tie(
+    tmp_path, db_session
+):
+    dfp_row = row(
+        "DFC_MD", code="6.01", value="100", start="",
+        reference="2025-12-31", end="2025-12-31",
+    )
+    itr_row = row(
+        "DFC_MD", code="6.01", value="80", start="",
+        reference="2025-12-31", end="2025-12-31",
+    )
+    repository = CvmFinancialRepository(db_session)
+    service = CvmFinancialService(
+        repository,
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    dfp_archive = write_archive(
+        tmp_path, {"dfp_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + dfp_row}
+    )
+    service.import_archive(dfp_archive, "DFP", COLLECTED)
+    itr_archive = write_archive(
+        tmp_path, {"itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + itr_row}
+    )
+    service.import_archive(itr_archive, "ITR", COLLECTED)
+
+    issuer = repository.list_issuers()[0]
+    asset = Asset(
+        ticker="DFCT2", name="Teste DFC fontes", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+    service.link_asset(asset.id, issuer.id)
+
+    rows = repository.latest_normalized(asset.id)
+    assert not any(
+        account.normalized_key == "operating_cash_flow"
+        for account, _, _ in rows
+    )
