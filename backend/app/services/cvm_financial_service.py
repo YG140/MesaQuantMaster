@@ -192,7 +192,10 @@ class CvmFinancialService:
     def normalized_for_asset(self, asset_id: UUID) -> list[dict]:
         grouped = defaultdict(list)
         for account, document, issuer in self.repository.latest_normalized(asset_id):
-            grouped[account.normalized_key].append((account, document, issuer))
+            key = account.normalized_key
+            if account.account_code == "2" and key == "total_liabilities":
+                key = "total_liabilities_and_equity"
+            grouped[key].append((account, document, issuer))
         results = []
         for key, rows in grouped.items():
             value = sum(
