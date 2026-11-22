@@ -1004,19 +1004,17 @@ def test_itr_same_version_md_mi_conflict_abstains_from_quarter_derivation(
         provider(tmp_path),
     )
 
-    # Imports separados simulam a chegada dos arquivos em sincronizações
-    # distintas. Assim ambos os métodos ficam persistidos para o teste da
-    # seleção conservadora no cálculo, sem o desempate do importador mascarar
-    # o conflito antes de chegar ao _calculate_quarters().
-    md_archive = write_archive(
-        tmp_path, {"itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1}
-    )
-    service.import_archive(md_archive, "ITR", COLLECTED)
-    mi_archive = write_archive(
+    # O caminho normal da sincronização recebe MD e MI no mesmo ZIP.
+    # Ambos devem ser preservados para que a camada de cálculo identifique
+    # a ambiguidade, em vez de aplicar uma preferência silenciosa no importador.
+    archive = write_archive(
         tmp_path,
-        {"itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1 + mi_q2},
+        {
+            "itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1,
+            "itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1 + mi_q2,
+        },
     )
-    service.import_archive(mi_archive, "ITR", COLLECTED)
+    service.import_archive(archive, "ITR", COLLECTED)
 
     persisted_methods = {
         document.statement_type
@@ -1024,13 +1022,21 @@ def test_itr_same_version_md_mi_conflict_abstains_from_quarter_derivation(
     }
     assert {"DFC_MD", "DFC_MI"} <= persisted_methods
 
+    persisted_q1 = (
+        db_session.query(CvmFinancialDocument)
+        .filter(CvmFinancialDocument.reference_date == date(2025, 3, 31))
+        .all()
+    )
+    assert {document.statement_type for document in persisted_q1} == {
+        "DFC_MD", "DFC_MI"
+    }
+
     calculated = (
         db_session.query(CvmFinancialAccount)
         .filter(CvmFinancialAccount.acquisition_method == "calculated")
         .all()
     )
     assert calculated == []
-
 
 def test_latest_normalized_abstains_when_latest_dfc_marker_has_both_methods(
     tmp_path, db_session
