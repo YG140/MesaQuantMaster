@@ -322,15 +322,23 @@ def test_import_is_idempotent_and_prefers_latest_consolidated_version(
     )
     first = service.import_archive(path, "DFP", COLLECTED)
     second = service.import_archive(path, "DFP", COLLECTED)
-    assert first["accounts_imported"] == 1
+    assert first["accounts_imported"] == 2
     assert second["accounts_imported"] == 0
     stored = CvmFinancialRepository(db_session).list_issuers()
     assert len(stored) == 1
-    stored_account = db_session.query(CvmFinancialAccount).one()
-    stored_document = db_session.get(CvmFinancialDocument, stored_account.document_id)
-    assert stored_account.normalized_value == Decimal("20000")
-    assert stored_document.scope == "consolidated"
-    assert stored_document.version == 2
+    stored_accounts = db_session.query(CvmFinancialAccount).all()
+    assert len(stored_accounts) == 2
+    stored_documents = [
+        db_session.get(CvmFinancialDocument, item.document_id)
+        for item in stored_accounts
+    ]
+    assert {item.version for item in stored_documents} == {1, 2}
+    assert {item.scope for item in stored_documents} == {"consolidated"}
+    latest = max(stored_documents, key=lambda item: item.version)
+    latest_account = next(
+        item for item in stored_accounts if item.document_id == latest.id
+    )
+    assert latest_account.normalized_value == Decimal("20000")
 
 
 def test_import_handles_literal_duplicate_rows_in_the_same_document(tmp_path, db_session):
@@ -629,13 +637,22 @@ def test_import_selects_latest_version_before_cash_flow_method(tmp_path, db_sess
     )
     service.import_archive(write_archive(tmp_path, entries), "DFP", COLLECTED)
 
-    documents = db_session.query(CvmFinancialDocument).all()
-    assert len(documents) == 1
-    assert documents[0].version == 2
-    assert documents[0].statement_type == "DFC_MI"
-    accounts = db_session.query(CvmFinancialAccount).all()
-    assert len(accounts) == 1
-    assert accounts[0].normalized_value == Decimal("250000")
+    documents = db_session.query(CvmFinancialDocument).order_by(
+        CvmFinancialDocument.version
+    ).all()
+    # C4: a versão anterior continua preservada para auditoria; a versão
+    # mais recente é a vigente para consumo.
+    assert [(item.version, item.statement_type) for item in documents] == [
+        (1, "DFC_MD"),
+        (2, "DFC_MI"),
+    ]
+    accounts = db_session.query(CvmFinancialAccount).order_by(
+        CvmFinancialAccount.normalized_value
+    ).all()
+    assert [item.normalized_value for item in accounts] == [
+        Decimal("100000"),
+        Decimal("250000"),
+    ]
 
 
 @pytest.mark.parametrize(
