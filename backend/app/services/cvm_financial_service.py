@@ -46,23 +46,31 @@ class CvmFinancialService:
         winners = {}
         preferred_dfc_method = {}
         for account in self.provider.iter_accounts(path, document_type, collected_at):
+            is_dfc = account.statement_type in {"DFC_MD", "DFC_MI"}
             document_key = (
+                account.cnpj,
+                account.reference_date,
+                account.scope,
+                account.period_start,
+                account.period_end,
+            ) if is_dfc else (
                 account.cnpj,
                 account.reference_date,
                 account.statement_type,
                 account.period_end,
             )
-            priority = (1 if account.scope == "consolidated" else 0, account.version)
-            if priority > winners.get(document_key, (-1, -1)):
+            priority = (account.version,) if is_dfc else (
+                1 if account.scope == "consolidated" else 0, account.version
+            )
+            if priority > winners.get(document_key, (-1,)):
                 winners[document_key] = priority
 
-            # DFC_MD e DFC_MI são demonstrações alternativas, não parcelas
-            # aditivas. Preferimos deterministicamente o método direto quando
-            # disponível; caso contrário, usamos o indireto.
-            if account.statement_type in {"DFC_MD", "DFC_MI"}:
+            # A versão vigente é selecionada antes da preferência do método.
+            # MD e MI são alternativas dentro do mesmo documento/período/versão.
+            if is_dfc:
                 method_key = (
                     account.cnpj, account.reference_date, account.period_start,
-                    account.period_end, account.scope,
+                    account.period_end, account.scope, account.version,
                 )
                 method_priority = 2 if account.statement_type == "DFC_MD" else 1
                 if method_priority > preferred_dfc_method.get(method_key, 0):
@@ -81,19 +89,28 @@ class CvmFinancialService:
         # ocorrência — nunca soma nem inventa um valor entre duplicatas.
         seen_accounts: set[tuple] = set()
         for account in self.provider.iter_accounts(path, document_type, collected_at):
+            is_dfc = account.statement_type in {"DFC_MD", "DFC_MI"}
             document_key = (
+                account.cnpj,
+                account.reference_date,
+                account.scope,
+                account.period_start,
+                account.period_end,
+            ) if is_dfc else (
                 account.cnpj,
                 account.reference_date,
                 account.statement_type,
                 account.period_end,
             )
-            priority = (1 if account.scope == "consolidated" else 0, account.version)
+            priority = (account.version,) if is_dfc else (
+                1 if account.scope == "consolidated" else 0, account.version
+            )
             if winners.get(document_key) != priority:
                 continue
-            if account.statement_type in {"DFC_MD", "DFC_MI"}:
+            if is_dfc:
                 method_key = (
                     account.cnpj, account.reference_date, account.period_start,
-                    account.period_end, account.scope,
+                    account.period_end, account.scope, account.version,
                 )
                 selected_method = "DFC_MD" if preferred_dfc_method[method_key] == 2 else "DFC_MI"
                 if account.statement_type != selected_method:
