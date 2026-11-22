@@ -695,3 +695,9 @@ def test_isolated_quarter_accepts_non_calendar_fiscal_year():
     assert result is not None
     assert result.normalized_value == Decimal("110000")
     assert result.period_start == date(2025, 6, 30)
+
+
+def test_isolated_quarter_rejects_non_month_end_periods():
+    previous = raw_itr("10", date(2025, 3, 15))
+    current = raw_itr("25", date(2025, 6, 15))
+    assert CvmFinancialEngine.isolated_quarter(current, previous) is None
