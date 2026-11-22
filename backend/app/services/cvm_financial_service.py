@@ -64,7 +64,7 @@ class CvmFinancialService:
                 account.version,
             )
             priority = (1 if account.scope == "consolidated" else 0,)
-            if priority > winners.get(document_key, (-1, -1) if is_dfc else (-1,)):
+            if priority > winners.get(document_key, (-1,)):
                 winners[document_key] = priority
 
             # A versão vigente é selecionada antes da preferência do método.
