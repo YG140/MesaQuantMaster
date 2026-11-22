@@ -2036,7 +2036,8 @@ def test_a_dfp_recent_stays_available_and_does_not_assume_december_fiscal_year_e
     issuer = SimpleNamespace(id="issuer-1", cnpj="12345678000190", cvm_code="12345")
     document = _cvm_document(period_end=date(2026, 6, 30), document_type="DFP")
     rows = [
-        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("total_liabilities_and_equity", "130000", "2"), document, issuer),
+        (_cvm_account("equity", "100000", "2.03"), document, issuer),
         (_cvm_account("assets", "100000", "1"), document, issuer),
     ]
 
@@ -2111,7 +2112,8 @@ def test_c_itr_recent_stays_available_within_the_quarterly_window():
         period_end=date(2026, 6, 30), document_type="ITR", period_kind="year_to_date"
     )
     rows = [
-        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("total_liabilities_and_equity", "130000", "2"), document, issuer),
+        (_cvm_account("equity", "100000", "2.03"), document, issuer),
         (_cvm_account("assets", "100000", "1"), document, issuer),
     ]
 
@@ -2149,7 +2151,8 @@ def test_d_itr_old_becomes_stale_long_before_the_old_flat_window_would_suggest()
         period_end=date(2025, 3, 31), document_type="ITR", period_kind="year_to_date"
     )
     rows = [
-        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("total_liabilities_and_equity", "130000", "2"), document, issuer),
+        (_cvm_account("equity", "100000", "2.03"), document, issuer),
         (_cvm_account("assets", "100000", "1"), document, issuer),
     ]
 
@@ -2193,7 +2196,8 @@ def test_last_quarter_before_fiscal_year_end_uses_the_dfp_linked_deadline():
         period_end=date(2026, 3, 31), document_type="ITR", period_kind="year_to_date"
     )
     rows = [
-        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("total_liabilities_and_equity", "130000", "2"), document, issuer),
+        (_cvm_account("equity", "100000", "2.03"), document, issuer),
         (_cvm_account("assets", "100000", "1"), document, issuer),
     ]
 
@@ -2367,12 +2371,15 @@ def test_latest_normalized_prefers_more_recent_itr_over_older_dfp_for_the_same_k
 
 def test_g_derived_indicator_provenance_preserves_document_type_and_period_kind():
     issuer = SimpleNamespace(id="issuer-1", cnpj="12345678000190", cvm_code="12345")
-    document = _cvm_document(
+    flow_document = _cvm_document(
         period_end=date(2026, 3, 31), document_type="ITR", period_kind="quarterly_calculated"
     )
+    balance_document = _cvm_document(
+        period_end=date(2026, 3, 31), document_type="ITR", period_kind="point_in_time"
+    )
     rows = [
-        (_cvm_account("net_income", "500", "3.11"), document, issuer),
-        (_cvm_account("assets", "40000", "1"), document, issuer),
+        (_cvm_account("net_income", "500", "3.11"), flow_document, issuer),
+        (_cvm_account("assets", "40000", "1"), balance_document, issuer),
     ]
 
     class Cvm(_UnknownFiscalCalendarCvm):
@@ -2395,6 +2402,7 @@ def test_g_derived_indicator_provenance_preserves_document_type_and_period_kind(
     assert provenance["document_type"] == "ITR"
     assert provenance["period_kind"] == "quarterly_calculated"
     assert provenance["reference_date"] == "2026-03-31"
+    assert result["roa"].value == Decimal("1.25")
 
 
 def test_derived_indicator_does_not_mix_dfp_and_itr_components_even_with_same_period_end():
@@ -2464,7 +2472,8 @@ def test_derived_liabilities_assets_and_current_liquidity():
     issuer = SimpleNamespace(id="issuer-1", cnpj="12345678000190", cvm_code="12345")
     document = _cvm_document()
     rows = [
-        (_cvm_account("total_liabilities", "30000", "2"), document, issuer),
+        (_cvm_account("total_liabilities_and_equity", "130000", "2"), document, issuer),
+        (_cvm_account("equity", "100000", "2.03"), document, issuer),
         (_cvm_account("assets", "100000", "1"), document, issuer),
         (_cvm_account("current_assets", "15000", "1.01"), document, issuer),
         (_cvm_account("current_liabilities", "10000", "2.01"), document, issuer),
