@@ -69,6 +69,16 @@ class CvmFinancialEngine:
             or current.period_start is None
             or previous.period_start != current.period_start
             or previous.period_end >= current.period_end
+            # ITR YTD só permite isolar um trimestre contra o trimestre
+            # imediatamente anterior. Pular um período produziria, por
+            # exemplo, seis meses rotulados incorretamente como um trimestre.
+            or (
+                current.period_end.year * 12
+                + current.period_end.month
+                - previous.period_end.year * 12
+                - previous.period_end.month
+                != 3
+            )
             or previous.cnpj != current.cnpj
             or previous.account_code != current.account_code
             or previous.scope != current.scope
