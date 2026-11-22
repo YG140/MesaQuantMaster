@@ -181,9 +181,7 @@ class CvmFinancialService:
                 document.statement_type,
                 document.scope,
                 document.reference_date,
-                document.period_start,
                 document.period_end,
-                document.period_kind,
             )
             priority = (document.version, document.collected_at)
             previous = latest_document_by_period.get(document_key)
@@ -201,7 +199,10 @@ class CvmFinancialService:
         # por account_code. O conjunto de contas é, portanto, exatamente o
         # que a reapresentação vigente publicou.
         selected_rows = [
-            row for row in reported_rows if row[1].id in winning_document_ids
+            row
+            for row in reported_rows
+            if row[1].id in winning_document_ids
+            and row[1].period_kind == "year_to_date"
         ]
         ordered_rows = sorted(
             selected_rows,
