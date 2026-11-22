@@ -206,7 +206,7 @@ def test_max_drawdown_is_calculated():
     )
 
     assert result.max_drawdown_percent == Decimal("50.00")
-    assert result.equity_curve[1].drawdown_percent == Decimal("50.00")
+    assert result.equity_curve[2].drawdown_percent == Decimal("50.00")
 
 
 def test_win_rate_uses_closed_trades():
