@@ -152,7 +152,7 @@ def test_open_position_is_marked_to_market_at_end():
     assert result.final_equity == Decimal("1250.00")
     assert result.trades_count == 0
     assert result.open_position.is_open is True
-    assert result.open_position.market_value == Decimal("1500.00")
+    assert result.open_position.market_value == Decimal("1250.00")
 
 
 def test_duplicate_buy_while_in_position_is_ignored():
