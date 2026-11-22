@@ -45,6 +45,7 @@ class CvmFinancialService:
     def import_archive(self, path: Path, document_type: str, collected_at) -> dict:
         winners = {}
         preferred_dfc_method = {}
+        preferred_scope_by_period = {}
         for account in self.provider.iter_accounts(path, document_type, collected_at):
             is_dfc = account.statement_type in {"DFC_MD", "DFC_MI"}
             # Preserva cada versão CVM no histórico. A escolha de escopo
@@ -66,6 +67,13 @@ class CvmFinancialService:
             priority = (1 if account.scope == "consolidated" else 0,)
             if priority > winners.get(document_key, (-1,)):
                 winners[document_key] = priority
+            scope_key = (
+                account.cnpj, account.reference_date, account.statement_type,
+                account.period_start, account.period_end,
+            )
+            preferred_scope_by_period[scope_key] = max(
+                preferred_scope_by_period.get(scope_key, 0), priority[0]
+            )
 
             # A versão vigente é selecionada antes da preferência do método.
             # MD e MI são alternativas dentro do mesmo documento/período/versão.
@@ -100,6 +108,7 @@ class CvmFinancialService:
                 account.reference_date,
                 account.period_start,
                 account.period_end,
+                account.version,
             ) if is_dfc else (
                 account.cnpj,
                 account.reference_date,
@@ -107,13 +116,14 @@ class CvmFinancialService:
                 account.period_end,
                 account.version,
             )
-            priority = (
-                account.version,
-                1 if account.scope == "consolidated" else 0,
-            ) if is_dfc else (
-                1 if account.scope == "consolidated" else 0,
-            )
+            priority = (1 if account.scope == "consolidated" else 0,)
             if winners.get(document_key) != priority:
+                continue
+            scope_key = (
+                account.cnpj, account.reference_date, account.statement_type,
+                account.period_start, account.period_end,
+            )
+            if priority[0] != preferred_scope_by_period.get(scope_key):
                 continue
             if is_dfc:
                 method_key = (
