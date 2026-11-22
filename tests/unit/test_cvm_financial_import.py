@@ -660,9 +660,14 @@ def test_import_selects_latest_version_before_cash_flow_method(tmp_path, db_sess
         "DFC_MI", version=2, code="6.01", value="250",
         start="2025-01-01", reference="2025-12-31", end="2025-12-31",
     )
+    individual_v2 = row(
+        "DFC_MI", version=2, scope="ind", code="6.01", value="999",
+        start="2025-01-01", reference="2025-12-31", end="2025-12-31",
+    )
     entries = {
         "dfp_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + direct_v1,
         "dfp_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + indirect_v2,
+        "dfp_cia_aberta_DFC_MI_ind_2025.csv": HEADER_FLOW + individual_v2,
     }
     service = CvmFinancialService(
         CvmFinancialRepository(db_session),
@@ -676,9 +681,11 @@ def test_import_selects_latest_version_before_cash_flow_method(tmp_path, db_sess
     ).all()
     # C4: a versão anterior continua preservada para auditoria; a versão
     # mais recente é a vigente para consumo.
-    assert [(item.version, item.statement_type) for item in documents] == [
-        (1, "DFC_MD"),
-        (2, "DFC_MI"),
+    assert [
+        (item.version, item.statement_type, item.scope) for item in documents
+    ] == [
+        (1, "DFC_MD", "consolidated"),
+        (2, "DFC_MI", "consolidated"),
     ]
     accounts = db_session.query(CvmFinancialAccount).order_by(
         CvmFinancialAccount.normalized_value
