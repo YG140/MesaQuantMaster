@@ -16,6 +16,7 @@ from app.models.cvm_financial import (
     AssetCvmIssuer,
     CvmFinancialAccount,
     CvmFinancialDocument,
+    CvmFinancialCalculationLineage,
 )
 from app.providers.cvm_open_data_provider import (
     CvmArchiveError,
@@ -476,6 +477,29 @@ def test_itr_compatible_accumulated_values_persist_calculated_quarter(
     document = db_session.get(CvmFinancialDocument, calculated.document_id)
     assert calculated.normalized_value == Decimal("15000")
     assert document.period_kind == "quarterly_calculated"
+
+    lineage = (
+        db_session.query(CvmFinancialCalculationLineage)
+        .filter(
+            CvmFinancialCalculationLineage.derived_document_id == document.id
+        )
+        .one()
+    )
+    current_source = db_session.get(
+        CvmFinancialDocument, lineage.current_source_document_id
+    )
+    previous_source = db_session.get(
+        CvmFinancialDocument, lineage.previous_source_document_id
+    )
+    assert current_source.period_end == date(2025, 6, 30)
+    assert previous_source.period_end == date(2025, 3, 31)
+    assert lineage.current_source_version == current_source.version == 1
+    assert lineage.previous_source_version == previous_source.version == 1
+    assert lineage.current_collected_at == current_source.collected_at
+    assert lineage.previous_collected_at == previous_source.collected_at
+    assert lineage.selected_method == "DRE"
+    assert lineage.scope == "consolidated"
+    assert lineage.calculation_rule == "ITR_YTD_CURRENT_MINUS_PREVIOUS_3M"
 
 
 def test_link_asset_does_not_commit_and_rollback_undoes_link_and_unrelated_change(
