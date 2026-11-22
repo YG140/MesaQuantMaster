@@ -1102,3 +1102,41 @@ def test_rejected_redirect_never_destroys_a_previously_valid_cache(tmp_path):
     assert archive.exists()
     assert archive.read_bytes() == original_bytes
     assert list(tmp_path.glob("*.part")) == []
+
+
+# --- Hardening XML: DTD/entities are rejected before parsing --------------
+
+@pytest.mark.parametrize(
+    ("parser", "payload"),
+    [
+        (
+            B3DailyPriceSource.parse,
+            b'<!DOCTYPE x [<!ENTITY secret "expanded">]><PriceReport><PricRpt><TckrSymb>&secret;</TckrSymb><Dt>2026-08-19</Dt></PricRpt></PriceReport>',
+        ),
+        (
+            B3InstrumentRegistrySource.parse,
+            b'<!DOCTYPE x [<!ENTITY secret "expanded">]><InstrumentReport><Instrm><TckrSymb>&secret;</TckrSymb></Instrm></InstrumentReport>',
+        ),
+    ],
+)
+def test_b3_xml_parsers_reject_dtd_and_entity_declarations(parser, payload):
+    with pytest.raises(B3ParseError, match="XML .* inválido ou inseguro"):
+        parser(payload)
+
+
+@pytest.mark.parametrize(
+    ("parser", "payload"),
+    [
+        (
+            B3DailyPriceSource.parse,
+            b'<PriceReport><PricRpt><TckrSymb>PETR4</TckrSymb><Dt>2026-08-19</Dt></PricRpt>',
+        ),
+        (
+            B3InstrumentRegistrySource.parse,
+            b'<InstrumentReport><Instrm><TckrSymb>PETR4</TckrSymb></InstrumentReport>',
+        ),
+    ],
+)
+def test_b3_xml_parsers_keep_rejecting_malformed_xml(parser, payload):
+    with pytest.raises(B3ParseError, match="XML .* inválido ou inseguro"):
+        parser(payload)
