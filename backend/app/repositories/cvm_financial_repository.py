@@ -9,6 +9,7 @@ from app.models.cvm_financial import (
     AssetCvmIssuer,
     CvmFinancialAccount,
     CvmFinancialDocument,
+    CvmFinancialCalculationLineage,
     CvmIssuer,
     CvmSyncRun,
 )
@@ -93,6 +94,38 @@ class CvmFinancialRepository:
         row.acquisition_method = acquisition_method
         row.is_fixed_account = account.is_fixed_account
         return created
+
+    def upsert_calculation_lineage(
+        self,
+        derived_document: CvmFinancialDocument,
+        current_source_document: CvmFinancialDocument,
+        previous_source_document: CvmFinancialDocument,
+    ) -> CvmFinancialCalculationLineage:
+        """Persiste, de forma idempotente, a origem de um trimestre isolado."""
+        lineage = (
+            self.db.query(CvmFinancialCalculationLineage)
+            .filter(
+                CvmFinancialCalculationLineage.derived_document_id
+                == derived_document.id
+            )
+            .first()
+        )
+        if lineage is None:
+            lineage = CvmFinancialCalculationLineage(
+                derived_document_id=derived_document.id,
+            )
+            self.db.add(lineage)
+        lineage.current_source_document_id = current_source_document.id
+        lineage.previous_source_document_id = previous_source_document.id
+        lineage.current_source_version = current_source_document.version
+        lineage.previous_source_version = previous_source_document.version
+        lineage.current_collected_at = current_source_document.collected_at
+        lineage.previous_collected_at = previous_source_document.collected_at
+        lineage.selected_method = current_source_document.statement_type
+        lineage.scope = current_source_document.scope
+        lineage.calculation_rule = "ITR_YTD_CURRENT_MINUS_PREVIOUS_3M"
+        self.db.flush()
+        return lineage
 
     def linked_issuer(self, asset_id: UUID) -> CvmIssuer | None:
         link = (
@@ -335,7 +368,6 @@ class CvmFinancialRepository:
             .join(CvmIssuer, CvmFinancialDocument.issuer_id == CvmIssuer.id)
             .filter(
                 CvmFinancialDocument.document_type == "ITR",
-                CvmFinancialDocument.period_kind == "year_to_date",
                 CvmFinancialDocument.statement_type.in_(
                     ["DRE", "DFC_MD", "DFC_MI", "DVA"]
                 ),

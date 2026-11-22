@@ -16,6 +16,7 @@ from app.models.cvm_financial import (
     AssetCvmIssuer,
     CvmFinancialAccount,
     CvmFinancialDocument,
+    CvmFinancialCalculationLineage,
 )
 from app.providers.cvm_open_data_provider import (
     CvmArchiveError,
@@ -134,6 +135,44 @@ def test_direct_and_indirect_cash_flow_are_supported(tmp_path):
     }
 
 
+@pytest.mark.parametrize(
+    "expected_method",
+    ["DFC_MD", "DFC_MI"],
+)
+def test_import_selects_one_cash_flow_method_per_period(
+    tmp_path, db_session, expected_method
+):
+    direct = row(
+        "DFC_MD", code="6.01", value="100", start="2025-01-01",
+        reference="2025-12-31", end="2025-12-31",
+    )
+    indirect = row(
+        "DFC_MI", code="6.01", value="200", start="2025-01-01",
+        reference="2025-12-31", end="2025-12-31",
+    )
+    entries = {}
+    if expected_method == "DFC_MD":
+        entries["dfp_cia_aberta_DFC_MD_con_2025.csv"] = HEADER_FLOW + direct
+        entries["dfp_cia_aberta_DFC_MI_con_2025.csv"] = HEADER_FLOW + indirect
+    else:
+        entries["dfp_cia_aberta_DFC_MI_con_2025.csv"] = HEADER_FLOW + indirect
+
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    service.import_archive(write_archive(tmp_path, entries), "DFP", COLLECTED)
+
+    documents = db_session.query(CvmFinancialDocument).all()
+    assert {document.statement_type for document in documents} == {expected_method}
+    accounts = db_session.query(CvmFinancialAccount).all()
+    assert len(accounts) == 1
+    assert accounts[0].normalized_value == (
+        Decimal("100000") if expected_method == "DFC_MD" else Decimal("200000")
+    )
+
+
 def test_bpp_total_passivo_is_not_mapped_as_liabilities_only(tmp_path):
     path = write_archive(
         tmp_path, {"dfp_cia_aberta_BPP_con_2025.csv": HEADER_BALANCE + row("BPP", code="2")}
@@ -150,10 +189,13 @@ def test_unmapped_or_non_fixed_account_remains_unmapped(tmp_path):
     assert CvmFinancialEngine.normalized_key(account) is None
 
 
-def raw_itr(value, end, start=date(2025, 1, 1)):
+def raw_itr(
+    value, end, start=date(2025, 1, 1), code="3.11", statement_type="DRE",
+    period_kind="year_to_date",
+):
     return CvmRawAccount(
         "ITR",
-        "DRE",
+        statement_type,
         "consolidated",
         "123",
         "1",
@@ -162,11 +204,11 @@ def raw_itr(value, end, start=date(2025, 1, 1)):
         1,
         start,
         end,
-        "year_to_date",
+        period_kind,
         "REAL",
         "MIL",
-        "3.11",
-        "Lucro",
+        code,
+        "Conta de teste",
         Decimal(value),
         Decimal(value) * 1000,
         True,
@@ -181,6 +223,12 @@ def test_isolated_quarter_is_calculated_only_from_compatible_accumulated_periods
     assert result is not None
     assert result.normalized_value == Decimal("15000")
     assert result.period_kind == "quarterly_calculated"
+
+
+def test_isolated_quarter_rejects_non_adjacent_accumulated_periods():
+    first_quarter = raw_itr("10", date(2025, 3, 31))
+    third_quarter = raw_itr("45", date(2025, 9, 30))
+    assert CvmFinancialEngine.isolated_quarter(third_quarter, first_quarter) is None
 
 
 def test_isolated_quarter_is_not_calculated_when_periods_are_incompatible():
@@ -256,7 +304,7 @@ def test_stale_cache_uses_conditional_headers_and_304(tmp_path):
     assert cvm.download_year("DFP", 2025).cache_hit is True
 
 
-def test_import_is_idempotent_and_prefers_latest_consolidated_version(
+def test_import_is_idempotent_and_preserves_versions_with_scope_preference(
     tmp_path, db_session
 ):
     content = HEADER_BALANCE + row(version=1, value="10") + row(version=2, value="20")
@@ -275,15 +323,32 @@ def test_import_is_idempotent_and_prefers_latest_consolidated_version(
     )
     first = service.import_archive(path, "DFP", COLLECTED)
     second = service.import_archive(path, "DFP", COLLECTED)
-    assert first["accounts_imported"] == 1
+    assert first["accounts_imported"] == 3
     assert second["accounts_imported"] == 0
     stored = CvmFinancialRepository(db_session).list_issuers()
     assert len(stored) == 1
-    stored_account = db_session.query(CvmFinancialAccount).one()
-    stored_document = db_session.get(CvmFinancialDocument, stored_account.document_id)
-    assert stored_account.normalized_value == Decimal("20000")
-    assert stored_document.scope == "consolidated"
-    assert stored_document.version == 2
+    stored_accounts = db_session.query(CvmFinancialAccount).all()
+    assert len(stored_accounts) == 3
+    stored_documents = [
+        db_session.get(CvmFinancialDocument, item.document_id)
+        for item in stored_accounts
+    ]
+    # As versões 1 e 2 têm escopo consolidado e descartam o individual
+    # concorrente; a versão 3 só existe no escopo individual e deve ser
+    # preservada para não apagar uma versão histórica disponível.
+    assert {item.version for item in stored_documents} == {1, 2, 3}
+    assert {
+        (item.version, item.scope) for item in stored_documents
+    } == {
+        (1, "consolidated"),
+        (2, "consolidated"),
+        (3, "individual"),
+    }
+    latest = max(stored_documents, key=lambda item: item.version)
+    latest_account = next(
+        item for item in stored_accounts if item.document_id == latest.id
+    )
+    assert latest_account.normalized_value == Decimal("99000")
 
 
 def test_import_handles_literal_duplicate_rows_in_the_same_document(tmp_path, db_session):
@@ -413,6 +478,8 @@ def test_itr_compatible_accumulated_values_persist_calculated_quarter(
         provider(tmp_path),
     )
     service.import_archive(path, "ITR", COLLECTED)
+    # Reimportar o mesmo arquivo não pode duplicar a linhagem nem trocar as fontes.
+    service.import_archive(path, "ITR", COLLECTED)
     calculated = (
         db_session.query(CvmFinancialAccount)
         .filter(CvmFinancialAccount.acquisition_method == "calculated")
@@ -421,6 +488,37 @@ def test_itr_compatible_accumulated_values_persist_calculated_quarter(
     document = db_session.get(CvmFinancialDocument, calculated.document_id)
     assert calculated.normalized_value == Decimal("15000")
     assert document.period_kind == "quarterly_calculated"
+
+    assert (
+        db_session.query(CvmFinancialCalculationLineage)
+        .filter(
+            CvmFinancialCalculationLineage.derived_document_id == document.id
+        )
+        .count()
+        == 1
+    )
+    lineage = (
+        db_session.query(CvmFinancialCalculationLineage)
+        .filter(
+            CvmFinancialCalculationLineage.derived_document_id == document.id
+        )
+        .one()
+    )
+    current_source = db_session.get(
+        CvmFinancialDocument, lineage.current_source_document_id
+    )
+    previous_source = db_session.get(
+        CvmFinancialDocument, lineage.previous_source_document_id
+    )
+    assert current_source.period_end == date(2025, 6, 30)
+    assert previous_source.period_end == date(2025, 3, 31)
+    assert lineage.current_source_version == current_source.version == 1
+    assert lineage.previous_source_version == previous_source.version == 1
+    assert lineage.current_collected_at == current_source.collected_at
+    assert lineage.previous_collected_at == previous_source.collected_at
+    assert lineage.selected_method == "DRE"
+    assert lineage.scope == "consolidated"
+    assert lineage.calculation_rule == "ITR_YTD_CURRENT_MINUS_PREVIOUS_3M"
 
 
 def test_link_asset_does_not_commit_and_rollback_undoes_link_and_unrelated_change(
@@ -560,3 +658,256 @@ def test_service_link_asset_can_change_an_existing_link_to_a_different_issuer(
         assert link.issuer_id == issuer_b.id
     finally:
         fresh.close()
+
+
+def test_import_selects_latest_version_before_cash_flow_method(tmp_path, db_session):
+    direct_v1 = row(
+        "DFC_MD", version=1, code="6.01", value="100",
+        start="2025-01-01", reference="2025-12-31", end="2025-12-31",
+    )
+    indirect_v2 = row(
+        "DFC_MI", version=2, code="6.01", value="250",
+        start="2025-01-01", reference="2025-12-31", end="2025-12-31",
+    )
+    individual_v2 = row(
+        "DFC_MI", version=2, scope="ind", code="6.01", value="999",
+        start="2025-01-01", reference="2025-12-31", end="2025-12-31",
+    )
+    entries = {
+        "dfp_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + direct_v1,
+        "dfp_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + indirect_v2,
+        "dfp_cia_aberta_DFC_MI_ind_2025.csv": HEADER_FLOW + individual_v2,
+    }
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    service.import_archive(write_archive(tmp_path, entries), "DFP", COLLECTED)
+
+    documents = db_session.query(CvmFinancialDocument).order_by(
+        CvmFinancialDocument.version
+    ).all()
+    # C4: a versão anterior continua preservada para auditoria; a versão
+    # mais recente é a vigente para consumo.
+    assert [
+        (item.version, item.statement_type, item.scope) for item in documents
+    ] == [
+        (1, "DFC_MD", "consolidated"),
+        (2, "DFC_MI", "consolidated"),
+    ]
+    accounts = db_session.query(CvmFinancialAccount).order_by(
+        CvmFinancialAccount.normalized_value
+    ).all()
+    assert [item.normalized_value for item in accounts] == [
+        Decimal("100000"),
+        Decimal("250000"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("statement_type", "account_code"),
+    [
+        ("BPA", "1.01.01"),
+        ("DRE", "3.99"),
+        ("DFC_MD", "6.99"),
+        ("DFC_MI", "6.99"),
+    ],
+)
+def test_isolated_quarter_rejects_balance_and_unclassified_accounts(
+    statement_type, account_code
+):
+    previous = raw_itr(
+        "10", date(2025, 3, 31), code=account_code,
+        statement_type=statement_type,
+    )
+    current = raw_itr(
+        "25", date(2025, 6, 30), code=account_code,
+        statement_type=statement_type,
+    )
+    assert CvmFinancialEngine.isolated_quarter(current, previous) is None
+
+
+def test_itr_non_calendar_fiscal_year_is_classified_as_year_to_date(tmp_path):
+    path = write_archive(
+        tmp_path,
+        {
+            "itr_cia_aberta_DRE_con_2025.csv": HEADER_FLOW
+            + row(
+                "DRE", code="3.11", start="2025-04-01",
+                reference="2025-09-30", end="2025-09-30",
+            )
+        },
+    )
+    account = list(provider(tmp_path).iter_accounts(path, "ITR", COLLECTED))[0]
+    assert account.period_kind == "year_to_date"
+    assert account.period_start == date(2025, 4, 1)
+
+
+def test_isolated_quarter_requires_both_periods_to_be_fiscal_ytd():
+    previous = raw_itr(
+        "10", date(2025, 6, 30), start=date(2025, 4, 1),
+        period_kind="quarterly_reported",
+    )
+    current = raw_itr(
+        "25", date(2025, 9, 30), start=date(2025, 4, 1),
+    )
+    assert CvmFinancialEngine.isolated_quarter(current, previous) is None
+
+
+def test_isolated_quarter_accepts_non_calendar_fiscal_year():
+    previous = raw_itr("90", date(2025, 6, 30), start=date(2025, 4, 1))
+    current = raw_itr("200", date(2025, 9, 30), start=date(2025, 4, 1))
+    result = CvmFinancialEngine.isolated_quarter(current, previous)
+    assert result is not None
+    assert result.normalized_value == Decimal("110000")
+    assert result.period_start == date(2025, 6, 30)
+
+
+def test_isolated_quarter_rejects_non_month_end_periods():
+    previous = raw_itr("10", date(2025, 3, 15))
+    current = raw_itr("25", date(2025, 6, 15))
+    assert CvmFinancialEngine.isolated_quarter(current, previous) is None
+
+def test_isolated_quarter_preserves_negative_cash_flow():
+    previous = raw_itr(
+        "100", date(2025, 3, 31), code="6.01", statement_type="DFC_MD"
+    )
+    current = raw_itr(
+        "70", date(2025, 6, 30), code="6.01", statement_type="DFC_MD"
+    )
+    result = CvmFinancialEngine.isolated_quarter(current, previous)
+    assert result is not None
+    assert result.original_value == Decimal("-30")
+    assert result.normalized_value == Decimal("-30000")
+
+
+def test_isolated_quarter_uses_decimal_without_float_rounding():
+    previous = raw_itr(
+        "0.01", date(2025, 3, 31), code="3.11"
+    )
+    current = raw_itr(
+        "12345678901234567.88", date(2025, 6, 30), code="3.11"
+    )
+    result = CvmFinancialEngine.isolated_quarter(current, previous)
+    assert result is not None
+    assert result.original_value == Decimal("12345678901234567.87")
+    assert result.normalized_value == Decimal("12345678901234567870.00")
+
+
+@pytest.mark.parametrize(
+    "field, previous_value",
+    [
+        ("cnpj", "99999999000199"),
+        ("scope", "individual"),
+        ("account_code", "3.01"),
+    ],
+)
+def test_isolated_quarter_rejects_mismatched_source_identity(field, previous_value):
+    previous = raw_itr("10", date(2025, 3, 31))
+    current = raw_itr("25", date(2025, 6, 30))
+    previous = __import__("dataclasses").replace(
+        previous, **{field: previous_value}
+    )
+    assert CvmFinancialEngine.isolated_quarter(current, previous) is None
+
+
+def test_restatement_selects_winning_document_before_its_accounts(tmp_path, db_session):
+    # Q1 v1 publica A+B; a reapresentação v2 publica somente A.
+    # Q2 acumulado publica A+B. B não pode ser recuperada de Q1 v1.
+    q1_v1 = (
+        row("DRE", version=1, code="3.01", value="10",
+            start="2025-01-01", reference="2025-03-31", end="2025-03-31")
+        + row("DRE", version=1, code="3.11", value="20",
+              start="2025-01-01", reference="2025-03-31", end="2025-03-31")
+    )
+    q1_v2 = row(
+        "DRE", version=2, code="3.01", value="12",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    q2 = (
+        row("DRE", version=1, code="3.01", value="30",
+            start="2025-01-01", reference="2025-06-30", end="2025-06-30")
+        + row("DRE", version=1, code="3.11", value="50",
+              start="2025-01-01", reference="2025-06-30", end="2025-06-30")
+    )
+    path = write_archive(
+        tmp_path,
+        {"itr_cia_aberta_DRE_con_2025.csv": HEADER_FLOW + q1_v1 + q1_v2 + q2},
+    )
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    service.import_archive(path, "ITR", COLLECTED)
+    # Reimportar a mesma fonte não pode restaurar a conta B da v1.
+    service.import_archive(path, "ITR", COLLECTED)
+
+    calculated = (
+        db_session.query(CvmFinancialAccount, CvmFinancialDocument)
+        .join(
+            CvmFinancialDocument,
+            CvmFinancialAccount.document_id == CvmFinancialDocument.id,
+        )
+        .filter(CvmFinancialAccount.acquisition_method == "calculated")
+        .all()
+    )
+    assert len(calculated) == 1
+    calculated_account, calculated_document = calculated[0]
+    assert calculated_account.account_code == "3.01"
+    assert calculated_account.normalized_value == Decimal("18000")
+    assert calculated_document.period_end == date(2025, 6, 30)
+
+    lineage = (
+        db_session.query(CvmFinancialCalculationLineage)
+        .filter(
+            CvmFinancialCalculationLineage.derived_document_id
+            == calculated_document.id
+        )
+        .one()
+    )
+    previous_source = db_session.get(
+        CvmFinancialDocument, lineage.previous_source_document_id
+    )
+    assert previous_source.period_end == date(2025, 3, 31)
+    assert previous_source.version == 2
+
+
+def test_newer_non_ytd_restatement_blocks_fallback_to_older_ytd_document(
+    tmp_path, db_session
+):
+    q1_v1 = row(
+        "DRE", version=1, code="3.01", value="10",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    # A versão 2 do mesmo período não contém início do exercício e,
+    # portanto, não pode ser usada para derivar trimestre. Ela ainda assim
+    # substitui a v1: não se deve voltar silenciosamente à versão antiga.
+    q1_v2 = row(
+        "DRE", version=2, code="3.01", value="12",
+        start="", reference="2025-03-31", end="2025-03-31",
+    )
+    q2 = row(
+        "DRE", version=1, code="3.01", value="30",
+        start="2025-01-01", reference="2025-06-30", end="2025-06-30",
+    )
+    path = write_archive(
+        tmp_path,
+        {"itr_cia_aberta_DRE_con_2025.csv": HEADER_FLOW + q1_v1 + q1_v2 + q2},
+    )
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    service.import_archive(path, "ITR", COLLECTED)
+
+    calculated = (
+        db_session.query(CvmFinancialAccount)
+        .filter(CvmFinancialAccount.acquisition_method == "calculated")
+        .all()
+    )
+    assert calculated == []

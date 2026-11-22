@@ -94,6 +94,51 @@ class CvmFinancialDocument(Base):
     issuer = relationship("CvmIssuer")
 
 
+class CvmFinancialCalculationLineage(Base):
+    """Rastreia os documentos oficiais usados em um trimestre derivado."""
+
+    __tablename__ = "cvm_financial_calculation_lineage"
+    __table_args__ = (
+        UniqueConstraint(
+            "derived_document_id",
+            name="uq_cvm_calculation_lineage_derived_document",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    derived_document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cvm_financial_documents.id"), nullable=False, index=True
+    )
+    current_source_document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cvm_financial_documents.id"), nullable=False, index=True
+    )
+    previous_source_document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cvm_financial_documents.id"), nullable=False, index=True
+    )
+    current_source_version: Mapped[int] = mapped_column(nullable=False)
+    previous_source_version: Mapped[int] = mapped_column(nullable=False)
+    current_collected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    previous_collected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    selected_method: Mapped[str] = mapped_column(String(10), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    calculation_rule: Mapped[str] = mapped_column(String(80), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+    derived_document = relationship(
+        "CvmFinancialDocument", foreign_keys=[derived_document_id]
+    )
+    current_source_document = relationship(
+        "CvmFinancialDocument", foreign_keys=[current_source_document_id]
+    )
+    previous_source_document = relationship(
+        "CvmFinancialDocument", foreign_keys=[previous_source_document_id]
+    )
+
+
 class CvmFinancialAccount(Base):
     __tablename__ = "cvm_financial_accounts"
     __table_args__ = (
