@@ -7,7 +7,7 @@ from sqlalchemy.pool import NullPool
 
 import app.models  # noqa: F401
 from app.core.config import settings
-from app.core.database import Base
+from app.core.database import Base, normalize_database_url
 
 
 config = context.config
@@ -22,7 +22,7 @@ def get_database_url() -> str:
     environment_url = os.getenv("DATABASE_URL", "").strip()
     if environment_url:
         return environment_url
-    return settings.DATABASE_URL
+    return normalize_database_url(environment_url or settings.DATABASE_URL)
 
 
 def run_migrations_offline() -> None:
