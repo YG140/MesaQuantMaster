@@ -27,7 +27,22 @@ _connection_options = {
         if _is_postgres else {}
     ),
 }
-engine = create_engine(settings.DATABASE_URL, **_connection_options)
+def normalize_database_url(database_url: str) -> str:
+    """Use the installed psycopg2 driver for generic PostgreSQL URLs.
+
+    SQLAlchemy 2.1 changed the default driver for postgresql:// URLs to
+    psycopg (v3). The backend currently installs psycopg2-binary, so make
+    that driver explicit while preserving URLs that already select a driver.
+    """
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + database_url.removeprefix("postgresql://")
+    return database_url
+
+
+engine = create_engine(
+    normalize_database_url(settings.DATABASE_URL),
+    **_connection_options,
+)
 
 
 SessionLocal = sessionmaker(
