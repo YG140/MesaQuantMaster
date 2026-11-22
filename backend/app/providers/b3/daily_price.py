@@ -4,6 +4,9 @@ import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
+
 from app.providers.b3.exceptions import B3NotConfiguredError, B3ParseError
 from app.providers.b3.models import B3DailyPrice
 
@@ -61,9 +64,9 @@ class B3DailyPriceSource:
     @staticmethod
     def parse(xml_bytes: bytes) -> list[B3DailyPrice]:
         try:
-            root = ET.fromstring(xml_bytes)
-        except ET.ParseError as exc:
-            raise B3ParseError(f"XML BVBG.186 inválido: {exc}") from exc
+            root = SafeET.fromstring(xml_bytes)
+        except (ET.ParseError, DefusedXmlException) as exc:
+            raise B3ParseError(f"XML BVBG.186 inválido ou inseguro: {exc}") from exc
 
         blocks = _find_all(root, _RECORD_WRAPPER)
         if not blocks:

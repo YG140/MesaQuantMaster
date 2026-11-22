@@ -3,6 +3,9 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from datetime import date, datetime
 
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
+
 from app.providers.b3.exceptions import B3NotConfiguredError, B3ParseError
 from app.providers.b3.models import B3Instrument
 
@@ -22,9 +25,9 @@ class B3InstrumentRegistrySource:
     de Instrumento"). Metadados apenas -- nunca preço/volume.
 
     `parse()` é totalmente funcional e testável com fixtures sintéticas
-    baseadas no schema oficial. `fetch()` levanta B3NotConfiguredError por
-    padrão pelo mesmo motivo documentado em B3DailyPriceSource (produto do
-    Legacy Channel/UP2DATA, sem URL pública confirmada durante a
+    baseadas no schema oficial. `fetch()` levanta B3NotConfiguredError
+    por padrão pelo mesmo motivo documentado em B3DailyPriceSource (produto
+    do Legacy Channel/UP2DATA, sem URL pública confirmada durante a
     auditoria)."""
 
     dataset = "bvbg028_instruments"
@@ -51,9 +54,9 @@ class B3InstrumentRegistrySource:
     @staticmethod
     def parse(xml_bytes: bytes) -> list[B3Instrument]:
         try:
-            root = ET.fromstring(xml_bytes)
-        except ET.ParseError as exc:
-            raise B3ParseError(f"XML BVBG.028 inválido: {exc}") from exc
+            root = SafeET.fromstring(xml_bytes)
+        except (ET.ParseError, DefusedXmlException) as exc:
+            raise B3ParseError(f"XML BVBG.028 inválido ou inseguro: {exc}") from exc
 
         blocks = _find_all(root, _RECORD_WRAPPER)
         if not blocks:
