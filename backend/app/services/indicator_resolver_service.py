@@ -1941,7 +1941,7 @@ class IndicatorResolverService:
                     DerivedIndicatorEngine.roe(
                         net_income=components["net_income"], equity=components["equity"]
                     ),
-                    source["equity"],
+                    source["net_income"],
                 )
             )
         if (
@@ -1954,7 +1954,7 @@ class IndicatorResolverService:
                     DerivedIndicatorEngine.roa(
                         net_income=components["net_income"], assets=components["assets"]
                     ),
-                    source["assets"],
+                    source["net_income"],
                 )
             )
         if (
