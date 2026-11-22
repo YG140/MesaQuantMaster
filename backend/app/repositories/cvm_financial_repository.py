@@ -368,7 +368,6 @@ class CvmFinancialRepository:
             .join(CvmIssuer, CvmFinancialDocument.issuer_id == CvmIssuer.id)
             .filter(
                 CvmFinancialDocument.document_type == "ITR",
-                CvmFinancialDocument.period_kind == "year_to_date",
                 CvmFinancialDocument.statement_type.in_(
                     ["DRE", "DFC_MD", "DFC_MI", "DVA"]
                 ),
