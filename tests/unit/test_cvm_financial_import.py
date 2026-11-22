@@ -1018,6 +1018,12 @@ def test_itr_same_version_md_mi_conflict_abstains_from_quarter_derivation(
     )
     service.import_archive(mi_archive, "ITR", COLLECTED)
 
+    persisted_methods = {
+        document.statement_type
+        for document in db_session.query(CvmFinancialDocument).all()
+    }
+    assert {"DFC_MD", "DFC_MI"} <= persisted_methods
+
     calculated = (
         db_session.query(CvmFinancialAccount)
         .filter(CvmFinancialAccount.acquisition_method == "calculated")
@@ -1056,6 +1062,12 @@ def test_latest_normalized_abstains_when_latest_dfc_marker_has_both_methods(
         tmp_path, {"itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1}
     )
     service.import_archive(mi_archive, "ITR", COLLECTED)
+
+    persisted_methods = {
+        document.statement_type
+        for document in db_session.query(CvmFinancialDocument).all()
+    }
+    assert {"DFC_MD", "DFC_MI"} <= persisted_methods
 
     issuer = repository.list_issuers()[0]
     asset = Asset(
