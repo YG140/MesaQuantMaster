@@ -6,6 +6,7 @@ on:
     paths:
       - backend/app/providers/b3/daily_price.py
       - backend/app/providers/b3/instruments.py
+      - .github/workflows/verify-b314-temporary.yml
 permissions:
   contents: write
 jobs:
