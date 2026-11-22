@@ -25,7 +25,7 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             zricethezav/gitleaks:v8.24.3 \
-            git --source=/repo --log-opts="--all" --redact --exit-code=1
+            git --log-opts="--all" --redact --exit-code=1 /repo
 
   python-sast:
     name: SAST Python — Bandit (diagnostico inicial)
