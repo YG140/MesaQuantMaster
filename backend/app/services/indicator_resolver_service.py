@@ -1452,7 +1452,17 @@ class IndicatorResolverService:
         for account, document, issuer_row in self.cvm_repository.latest_normalized(
             asset_id
         ):
-            grouped.setdefault(account.normalized_key, []).append(
+            normalized_key = account.normalized_key
+            # Compatibilidade com registros importados antes da correção:
+            # BPP 2 representa Passivo Total (passivo exigível + PL), não
+            # somente obrigações. Reclassifica também o valor legado.
+            if (
+                document.statement_type == "BPP"
+                and account.account_code == "2"
+                and normalized_key == "total_liabilities"
+            ):
+                normalized_key = "total_liabilities_and_equity"
+            grouped.setdefault(normalized_key, []).append(
                 (account, document, issuer_row)
             )
 
@@ -1853,7 +1863,7 @@ class IndicatorResolverService:
             "equity",
             "assets",
             "net_debt",
-            "total_liabilities",
+            "total_liabilities_and_equity",
             "current_assets",
             "current_liabilities",
             "gross_debt",
@@ -1873,6 +1883,37 @@ class IndicatorResolverService:
             values = {source[k] for k in keys if k in source}
             return len(values) == 1
 
+        def _compatible_flow_and_balance(flow_key: str, balance_key: str) -> bool:
+            flow = source.get(flow_key)
+            balance = source.get(balance_key)
+            if flow is None or balance is None or flow[:2] != balance[:2]:
+                return False
+            if flow[2] == balance[2]:
+                return True
+            # Em ITR, resultado trimestral isolado é fluxo; patrimônio e
+            # ativos são saldos pontuais na mesma data. A diferença de
+            # period_kind é semanticamente correta, desde que a data e o
+            # documento sejam idênticos. YTD não é misturado com saldo.
+            return (
+                flow[2] in {"quarterly_calculated", "quarterly_reported"}
+                and balance[2] == "point_in_time"
+            )
+
+        # BPP 2 = passivo total (passivo exigível + patrimônio líquido).
+        # Para medir obrigações, subtrai o PL do mesmo balanço. Se faltar PL,
+        # a razão não é calculada: não tratamos o passivo total como dívida.
+        if (
+            "total_liabilities_and_equity" in components
+            and "equity" in components
+            and _compatible("total_liabilities_and_equity", "equity")
+        ):
+            liabilities = (
+                components["total_liabilities_and_equity"] - components["equity"]
+            )
+            if liabilities >= 0:
+                components["total_liabilities"] = liabilities
+                source["total_liabilities"] = source["total_liabilities_and_equity"]
+
         net_debt_value = components.get("net_debt")
         net_debt_source = source.get("net_debt")
         calculations: list[tuple] = []
@@ -1891,8 +1932,10 @@ class IndicatorResolverService:
                 net_debt_source = source["gross_debt"]
                 calculations.append((net_debt_result, net_debt_source))
 
-        if "net_income" in components and "equity" in components and _compatible(
-            "net_income", "equity"
+        if (
+            "net_income" in components
+            and "equity" in components
+            and _compatible_flow_and_balance("net_income", "equity")
         ):
             calculations.append(
                 (
@@ -1902,8 +1945,10 @@ class IndicatorResolverService:
                     source["equity"],
                 )
             )
-        if "net_income" in components and "assets" in components and _compatible(
-            "net_income", "assets"
+        if (
+            "net_income" in components
+            and "assets" in components
+            and _compatible_flow_and_balance("net_income", "assets")
         ):
             calculations.append(
                 (
