@@ -19,6 +19,7 @@ EXPECTED_CHAIN = (
     EXPANSION_REVISION,
     "20260716_add_brokerages_operation_metadata",
     "20260717_add_portfolio_policy",
+    "20261017_core_schema_bootstrap",
     "20260720_manual_indicators",
     "20260720_indicator_snapshots",
     "20260721_cvm_financial",
@@ -26,6 +27,9 @@ EXPECTED_CHAIN = (
     "20260727_email_auth_tokens",
     "20260817_investor_profile",
     "20260818_cvm_fii_vacancy",
+    "20261017_financial_goal",
+    "20261017_recommendation_history",
+    "20261018_cvm_calculation_lineage",
 )
 REQUIRED_SECURITY_FILES = {
     "backend/alembic.ini",
