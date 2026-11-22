@@ -44,7 +44,6 @@ class CvmFinancialService:
 
     def import_archive(self, path: Path, document_type: str, collected_at) -> dict:
         winners = {}
-        preferred_dfc_method = {}
         preferred_scope_by_period = {}
         for account in self.provider.iter_accounts(path, document_type, collected_at):
             is_dfc = account.statement_type in {"DFC_MD", "DFC_MI"}
@@ -74,17 +73,6 @@ class CvmFinancialService:
             preferred_scope_by_period[scope_key] = max(
                 preferred_scope_by_period.get(scope_key, 0), priority[0]
             )
-
-            # A versão vigente é selecionada antes da preferência do método.
-            # MD e MI são alternativas dentro do mesmo documento/período/versão.
-            if is_dfc:
-                method_key = (
-                    account.cnpj, account.reference_date, account.period_start,
-                    account.period_end, account.scope, account.version,
-                )
-                method_priority = 2 if account.statement_type == "DFC_MD" else 1
-                if method_priority > preferred_dfc_method.get(method_key, 0):
-                    preferred_dfc_method[method_key] = method_priority
 
         document_ids = set()
         accounts_imported = 0
@@ -125,17 +113,13 @@ class CvmFinancialService:
             )
             if priority[0] != preferred_scope_by_period.get(scope_key):
                 continue
-            if is_dfc:
-                method_key = (
-                    account.cnpj, account.reference_date, account.period_start,
-                    account.period_end, account.scope, account.version,
-                )
-                selected_method = "DFC_MD" if preferred_dfc_method[method_key] == 2 else "DFC_MI"
-                if account.statement_type != selected_method:
-                    continue
             if not account.cnpj or not account.cvm_code:
                 continue
-            account_dedup_key = (document_key, account.scope, account.version, account.account_code)
+            # MD e MI são documentos distintos: não deduplicar suas contas entre métodos.
+            account_dedup_key = (
+                document_key, account.statement_type, account.scope,
+                account.version, account.account_code,
+            )
             if account_dedup_key in seen_accounts:
                 continue
             seen_accounts.add(account_dedup_key)
