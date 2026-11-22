@@ -45,6 +45,7 @@ class CvmFinancialService:
     def import_archive(self, path: Path, document_type: str, collected_at) -> dict:
         winners = {}
         preferred_scope_by_period = {}
+        preferred_dfc_method = {}
         for account in self.provider.iter_accounts(path, document_type, collected_at):
             is_dfc = account.statement_type in {"DFC_MD", "DFC_MI"}
             # Preserva cada versão CVM no histórico. A escolha de escopo
@@ -66,6 +67,13 @@ class CvmFinancialService:
             priority = (1 if account.scope == "consolidated" else 0,)
             if priority > winners.get(document_key, (-1,)):
                 winners[document_key] = priority
+            # Mantém o comportamento legado de DFP até revisão própria da
+            # seleção anual MD/MI. Em ITR, preservar ambos para que a camada
+            # de cálculo possa detectar conflitos e se abster.
+            if document_type.upper() == "DFP" and is_dfc:
+                method_priority = 2 if account.statement_type == "DFC_MD" else 1
+                if method_priority > preferred_dfc_method.get(document_key, 0):
+                    preferred_dfc_method[document_key] = method_priority
             scope_key = (
                 account.cnpj, account.reference_date, account.statement_type,
                 account.period_start, account.period_end, account.version,
@@ -107,6 +115,12 @@ class CvmFinancialService:
             priority = (1 if account.scope == "consolidated" else 0,)
             if winners.get(document_key) != priority:
                 continue
+            if document_type.upper() == "DFP" and is_dfc:
+                selected_method = (
+                    "DFC_MD" if preferred_dfc_method[document_key] == 2 else "DFC_MI"
+                )
+                if account.statement_type != selected_method:
+                    continue
             scope_key = (
                 account.cnpj, account.reference_date, account.statement_type,
                 account.period_start, account.period_end, account.version,
