@@ -22,10 +22,19 @@ jobs:
           fetch-depth: 0
       - name: Gitleaks — varredura historica com valores mascarados
         run: |
+          set +e
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
+            -v "${{ runner.temp }}:/reports" \
             zricethezav/gitleaks:v8.24.3 \
-            git --log-opts="--all" --redact --exit-code=1 /repo
+            git --log-opts="--all" --redact --report-format=json \
+              --report-path=/reports/gitleaks-report.json --exit-code=1 /repo
+          scan_status=$?
+          if [ -f "${{ runner.temp }}/gitleaks-report.json" ]; then
+            echo "Relatorio Gitleaks (segredos mascarados):"
+            cat "${{ runner.temp }}/gitleaks-report.json"
+          fi
+          exit "$scan_status"
 
   python-sast:
     name: SAST Python — Bandit (diagnostico inicial)
