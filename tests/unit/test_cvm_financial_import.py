@@ -604,3 +604,32 @@ def test_service_link_asset_can_change_an_existing_link_to_a_different_issuer(
         assert link.issuer_id == issuer_b.id
     finally:
         fresh.close()
+
+
+def test_import_selects_latest_version_before_cash_flow_method(tmp_path, db_session):
+    direct_v1 = row(
+        "DFC_MD", version=1, code="6.01", value="100",
+        start="2025-01-01", reference="2025-12-31", end="2025-12-31",
+    )
+    indirect_v2 = row(
+        "DFC_MI", version=2, code="6.01", value="250",
+        start="2025-01-01", reference="2025-12-31", end="2025-12-31",
+    )
+    entries = {
+        "dfp_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + direct_v1,
+        "dfp_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + indirect_v2,
+    }
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    service.import_archive(write_archive(tmp_path, entries), "DFP", COLLECTED)
+
+    documents = db_session.query(CvmFinancialDocument).all()
+    assert len(documents) == 1
+    assert documents[0].version == 2
+    assert documents[0].statement_type == "DFC_MI"
+    accounts = db_session.query(CvmFinancialAccount).all()
+    assert len(accounts) == 1
+    assert accounts[0].normalized_value == Decimal("250000")
