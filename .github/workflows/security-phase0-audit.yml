@@ -37,7 +37,7 @@ jobs:
           exit "$scan_status"
 
   python-sast:
-    name: SAST Python — Bandit (diagnostico inicial)
+    name: SAST Python — Bandit
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -47,8 +47,8 @@ jobs:
           python-version: "3.13"
       - name: Instalar Bandit
         run: python -m pip install bandit==1.8.6
-      - name: Gerar diagnostico sem bloquear a primeira linha de base
-        run: bandit -r backend/app -ll --exit-zero --format txt
+      - name: Bloquear achados medios ou altos
+        run: bandit -r backend/app -ll --format txt
 
   frontend-dependencies:
     name: Dependencias frontend — npm audit
@@ -66,5 +66,5 @@ jobs:
           cache-dependency-path: frontend_web/package-lock.json
       - name: Instalar dependencias travadas
         run: npm ci
-      - name: Bloquear vulnerabilidades altas ou criticas
-        run: npm audit --audit-level=high
+      - name: Bloquear vulnerabilidades moderadas, altas ou criticas
+        run: npm audit --audit-level=moderate
