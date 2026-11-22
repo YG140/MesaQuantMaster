@@ -304,7 +304,7 @@ def test_stale_cache_uses_conditional_headers_and_304(tmp_path):
     assert cvm.download_year("DFP", 2025).cache_hit is True
 
 
-def test_import_is_idempotent_and_prefers_latest_consolidated_version(
+def test_import_is_idempotent_and_preserves_versions_with_scope_preference(
     tmp_path, db_session
 ):
     content = HEADER_BALANCE + row(version=1, value="10") + row(version=2, value="20")
@@ -323,23 +323,32 @@ def test_import_is_idempotent_and_prefers_latest_consolidated_version(
     )
     first = service.import_archive(path, "DFP", COLLECTED)
     second = service.import_archive(path, "DFP", COLLECTED)
-    assert first["accounts_imported"] == 2
+    assert first["accounts_imported"] == 3
     assert second["accounts_imported"] == 0
     stored = CvmFinancialRepository(db_session).list_issuers()
     assert len(stored) == 1
     stored_accounts = db_session.query(CvmFinancialAccount).all()
-    assert len(stored_accounts) == 2
+    assert len(stored_accounts) == 3
     stored_documents = [
         db_session.get(CvmFinancialDocument, item.document_id)
         for item in stored_accounts
     ]
-    assert {item.version for item in stored_documents} == {1, 2}
-    assert {item.scope for item in stored_documents} == {"consolidated"}
+    # As versões 1 e 2 têm escopo consolidado e descartam o individual
+    # concorrente; a versão 3 só existe no escopo individual e deve ser
+    # preservada para não apagar uma versão histórica disponível.
+    assert {item.version for item in stored_documents} == {1, 2, 3}
+    assert {
+        (item.version, item.scope) for item in stored_documents
+    } == {
+        (1, "consolidated"),
+        (2, "consolidated"),
+        (3, "individual"),
+    }
     latest = max(stored_documents, key=lambda item: item.version)
     latest_account = next(
         item for item in stored_accounts if item.document_id == latest.id
     )
-    assert latest_account.normalized_value == Decimal("20000")
+    assert latest_account.normalized_value == Decimal("99000")
 
 
 def test_import_handles_literal_duplicate_rows_in_the_same_document(tmp_path, db_session):
