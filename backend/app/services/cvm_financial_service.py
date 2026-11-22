@@ -69,7 +69,7 @@ class CvmFinancialService:
                 winners[document_key] = priority
             scope_key = (
                 account.cnpj, account.reference_date, account.statement_type,
-                account.period_start, account.period_end,
+                account.period_start, account.period_end, account.version,
             )
             preferred_scope_by_period[scope_key] = max(
                 preferred_scope_by_period.get(scope_key, 0), priority[0]
@@ -121,7 +121,7 @@ class CvmFinancialService:
                 continue
             scope_key = (
                 account.cnpj, account.reference_date, account.statement_type,
-                account.period_start, account.period_end,
+                account.period_start, account.period_end, account.version,
             )
             if priority[0] != preferred_scope_by_period.get(scope_key):
                 continue
