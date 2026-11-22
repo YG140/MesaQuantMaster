@@ -15,6 +15,7 @@ from app.models.cvm_financial import (
     AssetCvmIssuer,
     CvmFinancialAccount,
     CvmFinancialDocument,
+    CvmFinancialCalculationLineage,
     CvmIssuer,
     CvmSyncRun,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "CvmIssuer",
     "AssetCvmIssuer",
     "CvmFinancialDocument",
+    "CvmFinancialCalculationLineage",
     "CvmFinancialAccount",
     "CvmSyncRun",
     "FiiIssuer",
