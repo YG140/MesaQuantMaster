@@ -998,17 +998,25 @@ def test_itr_same_version_md_mi_conflict_abstains_from_quarter_derivation(
         "DFC_MI", version=1, code="6.01", value="25",
         start="2025-01-01", reference="2025-06-30", end="2025-06-30",
     )
-    entries = {
-        "itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1,
-        "itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1 + mi_q2,
-    }
     service = CvmFinancialService(
         CvmFinancialRepository(db_session),
         AssetRepository(db_session),
         provider(tmp_path),
     )
 
-    service.import_archive(write_archive(tmp_path, entries), "ITR", COLLECTED)
+    # Imports separados simulam a chegada dos arquivos em sincronizações
+    # distintas. Assim ambos os métodos ficam persistidos para o teste da
+    # seleção conservadora no cálculo, sem o desempate do importador mascarar
+    # o conflito antes de chegar ao _calculate_quarters().
+    md_archive = write_archive(
+        tmp_path, {"itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1}
+    )
+    service.import_archive(md_archive, "ITR", COLLECTED)
+    mi_archive = write_archive(
+        tmp_path,
+        {"itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1 + mi_q2},
+    )
+    service.import_archive(mi_archive, "ITR", COLLECTED)
 
     calculated = (
         db_session.query(CvmFinancialAccount)
@@ -1029,17 +1037,25 @@ def test_latest_normalized_abstains_when_latest_dfc_marker_has_both_methods(
         "DFC_MI", version=2, code="6.01", value="11",
         start="2025-01-01", reference="2025-03-31", end="2025-03-31",
     )
-    entries = {
-        "itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1,
-        "itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1,
-    }
     repository = CvmFinancialRepository(db_session)
     service = CvmFinancialService(
         repository,
         AssetRepository(db_session),
         provider(tmp_path),
     )
-    service.import_archive(write_archive(tmp_path, entries), "ITR", COLLECTED)
+
+    # Arquivos importados em execuções separadas garantem que o banco contenha
+    # os dois métodos na mesma referência/versão. Importá-los juntos acionaria
+    # o desempate do importador e tornaria este teste de latest_normalized()
+    # incapaz de exercitar o cenário ambíguo.
+    md_archive = write_archive(
+        tmp_path, {"itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1}
+    )
+    service.import_archive(md_archive, "ITR", COLLECTED)
+    mi_archive = write_archive(
+        tmp_path, {"itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1}
+    )
+    service.import_archive(mi_archive, "ITR", COLLECTED)
 
     issuer = repository.list_issuers()[0]
     asset = Asset(
