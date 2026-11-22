@@ -1,0 +1,48 @@
+name: Remediacao temporaria minimatch
+on:
+  push:
+    branches:
+      - security/fix-frontend-minimatch-audit
+    paths:
+      - frontend_web/package.json
+permissions:
+  contents: write
+jobs:
+  regenerate-lock-and-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend_web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/fix-frontend-minimatch-audit
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend_web/package-lock.json
+      - name: Regenerate lockfile with npm (no lifecycle scripts)
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Clean install
+        run: npm ci
+      - name: Require zero moderate/high/critical advisories
+        run: npm audit --audit-level=moderate
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+      - name: Commit generated lockfile and remove temporary workflow
+        working-directory: .
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend_web/package-lock.json
+          git rm .github/workflows/remediate-minimatch-temporary.yml
+          git commit -m "fix(deps): update typescript-eslint and lock patched minimatch"
+          git push origin security/fix-frontend-minimatch-audit
