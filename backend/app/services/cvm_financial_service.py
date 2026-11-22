@@ -55,6 +55,7 @@ class CvmFinancialService:
                 account.reference_date,
                 account.period_start,
                 account.period_end,
+                account.version,
             ) if is_dfc else (
                 account.cnpj,
                 account.reference_date,
@@ -62,12 +63,7 @@ class CvmFinancialService:
                 account.period_end,
                 account.version,
             )
-            priority = (
-                account.version,
-                1 if account.scope == "consolidated" else 0,
-            ) if is_dfc else (
-                1 if account.scope == "consolidated" else 0,
-            )
+            priority = (1 if account.scope == "consolidated" else 0,)
             if priority > winners.get(document_key, (-1, -1) if is_dfc else (-1,)):
                 winners[document_key] = priority
 
