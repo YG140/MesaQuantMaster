@@ -79,6 +79,9 @@ class CvmFinancialEngine:
         if (
             previous is None
             or current.document_type != "ITR"
+            or previous.document_type != "ITR"
+            or current.period_kind != "year_to_date"
+            or previous.period_kind != "year_to_date"
             or current.statement_type not in {"DRE", "DFC_MD", "DFC_MI"}
             or current.period_start is None
             or previous.period_start != current.period_start
