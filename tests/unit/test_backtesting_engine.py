@@ -92,49 +92,53 @@ def test_no_trades_keeps_capital_and_builds_curve():
     assert len(result.equity_curve) == 3
 
 
-def test_buy_and_sell_with_profit():
-    result = run(signals=[signal(0, "BUY"), signal(2, "SELL")])
+def test_buy_and_sell_with_profit_executes_after_signal_close():
+    result = run(signals=[signal(0, "BUY"), signal(1, "SELL")])
 
-    assert result.final_equity == Decimal("1500.00")
+    assert result.final_equity == Decimal("1250.00")
     assert result.trades_count == 1
-    assert result.trades[0].net_profit == Decimal("500.00")
+    assert result.trades[0].entry_price == Decimal("12")
+    assert result.trades[0].exit_price == Decimal("15")
+    assert result.trades[0].net_profit == Decimal("250.00")
     assert result.winning_trades == 1
     assert result.losing_trades == 0
 
 
 def test_buy_and_sell_with_loss():
     result = run(
-        historical_data=[price(0, "10"), price(1, "8")],
+        historical_data=[price(0, "10"), price(1, "8"), price(2, "7")],
         signals=[signal(0, "BUY"), signal(1, "SELL")],
     )
 
-    assert result.final_equity == Decimal("800.00")
-    assert result.trades[0].net_profit == Decimal("-200.00")
+    assert result.final_equity == Decimal("875.00")
+    assert result.trades[0].entry_price == Decimal("8")
+    assert result.trades[0].exit_price == Decimal("7")
+    assert result.trades[0].net_profit == Decimal("-125.00")
     assert result.winning_trades == 0
     assert result.losing_trades == 1
 
 
 def test_fixed_fees_reduce_result():
     result = run(
-        historical_data=[price(0, "10"), price(1, "20")],
+        historical_data=[price(0, "10"), price(1, "20"), price(2, "20")],
         signals=[signal(0, "BUY"), signal(1, "SELL")],
         fixed_fee="10",
     )
 
-    assert result.final_equity == Decimal("1970.00")
+    assert result.final_equity == Decimal("980.00")
     assert result.total_fees == Decimal("20.00")
     assert result.trades[0].fees == Decimal("20.00")
 
 
 def test_percent_fees_reduce_result():
     result = run(
-        historical_data=[price(0, "10"), price(1, "20")],
+        historical_data=[price(0, "10"), price(1, "20"), price(2, "20")],
         signals=[signal(0, "BUY"), signal(1, "SELL")],
         fee_percent="1",
     )
 
-    assert result.final_equity == Decimal("1960.40")
-    assert result.total_fees == Decimal("29.70")
+    assert result.final_equity == Decimal("980.20")
+    assert result.total_fees == Decimal("19.80")
 
 
 def test_negative_costs_raise_error():
@@ -145,30 +149,37 @@ def test_negative_costs_raise_error():
 def test_open_position_is_marked_to_market_at_end():
     result = run(signals=[signal(0, "BUY")])
 
-    assert result.final_equity == Decimal("1500.00")
+    assert result.final_equity == Decimal("1250.00")
     assert result.trades_count == 0
     assert result.open_position.is_open is True
     assert result.open_position.market_value == Decimal("1500.00")
 
 
 def test_duplicate_buy_while_in_position_is_ignored():
-    result = run(signals=[signal(0, "BUY"), signal(1, "BUY"), signal(2, "SELL")])
-
-    assert result.trades_count == 1
-    assert result.trades[0].entry_price == Decimal("10")
-    assert result.trades[0].exit_price == Decimal("15")
-
-
-def test_sell_without_position_is_ignored():
-    result = run(signals=[signal(0, "SELL"), signal(1, "BUY"), signal(2, "SELL")])
+    result = run(
+        historical_data=[price(0, "10"), price(1, "12"), price(2, "15"), price(3, "14")],
+        signals=[signal(0, "BUY"), signal(1, "BUY"), signal(2, "SELL")],
+    )
 
     assert result.trades_count == 1
     assert result.trades[0].entry_price == Decimal("12")
+    assert result.trades[0].exit_price == Decimal("14")
+
+
+def test_sell_without_position_is_ignored():
+    result = run(
+        historical_data=[price(0, "10"), price(1, "12"), price(2, "15"), price(3, "16")],
+        signals=[signal(0, "SELL"), signal(1, "BUY"), signal(2, "SELL")],
+    )
+
+    assert result.trades_count == 1
+    assert result.trades[0].entry_price == Decimal("15")
+    assert result.trades[0].exit_price == Decimal("16")
 
 
 def test_final_equity_is_cash_plus_open_position_value():
     result = run(
-        historical_data=[price(0, "25"), price(1, "30")],
+        historical_data=[price(0, "25"), price(1, "30"), price(2, "36")],
         signals=[signal(0, "BUY")],
     )
 
@@ -180,14 +191,17 @@ def test_equity_curve_tracks_cash_position_value_and_equity():
     result = run(signals=[signal(0, "BUY"), signal(2, "SELL")])
 
     first = result.equity_curve[0]
-    assert first.cash == Decimal("0.00")
-    assert first.position_value == Decimal("1000.00")
+    assert first.cash == Decimal("1000.00")
+    assert first.position_value == Decimal("0.00")
     assert first.equity == Decimal("1000.00")
+    second = result.equity_curve[1]
+    assert second.cash == Decimal("0.00")
+    assert second.position_value == Decimal("1000.00")
 
 
 def test_max_drawdown_is_calculated():
     result = run(
-        historical_data=[price(0, "10"), price(1, "5"), price(2, "15")],
+        historical_data=[price(0, "10"), price(1, "10"), price(2, "5"), price(3, "15")],
         signals=[signal(0, "BUY"), signal(2, "SELL")],
     )
 
@@ -199,15 +213,17 @@ def test_win_rate_uses_closed_trades():
     result = run(
         historical_data=[
             price(0, "10"),
-            price(1, "20"),
+            price(1, "10"),
             price(2, "20"),
-            price(3, "10"),
+            price(3, "20"),
+            price(4, "10"),
+            price(5, "8"),
         ],
         signals=[
             signal(0, "BUY"),
-            signal(1, "SELL"),
-            signal(2, "BUY"),
-            signal(3, "SELL"),
+            signal(2, "SELL"),
+            signal(3, "BUY"),
+            signal(4, "SELL"),
         ],
     )
 
@@ -227,13 +243,14 @@ def test_benchmark_buy_and_hold_uses_optional_series():
 
 def test_excess_return_is_strategy_return_minus_benchmark():
     result = run(
+        historical_data=[price(0, "10"), price(1, "12"), price(2, "15"), price(3, "15")],
         signals=[signal(0, "BUY"), signal(2, "SELL")],
-        benchmark_data=[price(0, "100"), price(1, "110"), price(2, "125")],
+        benchmark_data=[price(0, "100"), price(1, "110"), price(2, "125"), price(3, "125")],
     )
 
-    assert result.total_return_percent == Decimal("50.00")
+    assert result.total_return_percent == Decimal("25.00")
     assert result.benchmark_return_percent == Decimal("25.00")
-    assert result.excess_return_percent == Decimal("25.00")
+    assert result.excess_return_percent == Decimal("0.00")
 
 
 def test_momentum_strategy_generates_transition_signals():
@@ -250,6 +267,18 @@ def test_momentum_strategy_generates_transition_signals():
     )
 
     assert [item.signal for item in signals] == ["HOLD", "BUY", "HOLD", "SELL"]
+
+
+def test_signal_generated_at_close_executes_on_next_available_observation():
+    result = run(
+        historical_data=[price(0, "10"), price(1, "20"), price(2, "30")],
+        signals=[signal(0, "BUY"), signal(1, "SELL")],
+    )
+
+    assert result.trades[0].entry_date == price(1, "20").timestamp
+    assert result.trades[0].entry_price == Decimal("20")
+    assert result.trades[0].exit_date == price(2, "30").timestamp
+    assert result.trades[0].exit_price == Decimal("30")
 
 
 def test_same_input_produces_deterministic_result():
