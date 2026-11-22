@@ -283,38 +283,32 @@ class CvmFinancialRepository:
             "point_in_time": 1,
         }
         latest_markers = {}
-        latest_dfc_methods = {}
+        latest_document_ids = {}
         for account, document in rows:
             key = account.normalized_key
             marker = (
                 document.reference_date,
+                document.period_end,
                 document.version,
                 period_priority.get(document.period_kind, 0),
             )
             previous_marker = latest_markers.get(key)
             if previous_marker is None or marker > previous_marker:
                 latest_markers[key] = marker
-                latest_dfc_methods[key] = set()
-            elif marker < previous_marker:
-                continue
-            if document.statement_type in {"DFC_MD", "DFC_MI"}:
-                latest_dfc_methods.setdefault(key, set()).add(
-                    document.statement_type
-                )
+                latest_document_ids[key] = {document.id}
+            elif marker == previous_marker:
+                latest_document_ids.setdefault(key, set()).add(document.id)
 
-        # Se ambos os métodos alternativos empatarem no documento mais
-        # recente, não escolher um silenciosamente nem somar seus valores.
-        ambiguous_dfc_keys = {
-            key
-            for key, methods in latest_dfc_methods.items()
-            if methods == {"DFC_MD", "DFC_MI"}
-        }
+        # Uma chave normalizada deve vir de um único documento vencedor.
+        # Se fontes/documentos distintos empatarem no mesmo marcador, abster-se
+        # evita somar valores duplicados ou métodos DFC alternativos.
         return [
             (account, document, issuer)
             for account, document in rows
-            if account.normalized_key not in ambiguous_dfc_keys
+            if latest_document_ids.get(account.normalized_key) == {document.id}
             and (
                 document.reference_date,
+                document.period_end,
                 document.version,
                 period_priority.get(document.period_kind, 0),
             )
