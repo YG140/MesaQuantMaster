@@ -768,3 +768,45 @@ def test_isolated_quarter_rejects_non_month_end_periods():
     previous = raw_itr("10", date(2025, 3, 15))
     current = raw_itr("25", date(2025, 6, 15))
     assert CvmFinancialEngine.isolated_quarter(current, previous) is None
+
+def test_isolated_quarter_preserves_negative_cash_flow():
+    previous = raw_itr(
+        "100", date(2025, 3, 31), code="6.01", statement_type="DFC_MD"
+    )
+    current = raw_itr(
+        "70", date(2025, 6, 30), code="6.01", statement_type="DFC_MD"
+    )
+    result = CvmFinancialEngine.isolated_quarter(current, previous)
+    assert result is not None
+    assert result.original_value == Decimal("-30")
+    assert result.normalized_value == Decimal("-30000")
+
+
+def test_isolated_quarter_uses_decimal_without_float_rounding():
+    previous = raw_itr(
+        "0.01", date(2025, 3, 31), code="3.11"
+    )
+    current = raw_itr(
+        "12345678901234567.88", date(2025, 6, 30), code="3.11"
+    )
+    result = CvmFinancialEngine.isolated_quarter(current, previous)
+    assert result is not None
+    assert result.original_value == Decimal("12345678901234567.87")
+    assert result.normalized_value == Decimal("12345678901234567870.00")
+
+
+@pytest.mark.parametrize(
+    "field, previous_value",
+    [
+        ("cnpj", "99999999000199"),
+        ("scope", "individual"),
+        ("account_code", "3.01"),
+    ],
+)
+def test_isolated_quarter_rejects_mismatched_source_identity(field, previous_value):
+    previous = raw_itr("10", date(2025, 3, 31))
+    current = raw_itr("25", date(2025, 6, 30))
+    previous = __import__("dataclasses").replace(
+        previous, **{field: previous_value}
+    )
+    assert CvmFinancialEngine.isolated_quarter(current, previous) is None
