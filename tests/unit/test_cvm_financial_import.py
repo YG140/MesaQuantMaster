@@ -188,10 +188,12 @@ def test_unmapped_or_non_fixed_account_remains_unmapped(tmp_path):
     assert CvmFinancialEngine.normalized_key(account) is None
 
 
-def raw_itr(value, end, start=date(2025, 1, 1)):
+def raw_itr(
+    value, end, start=date(2025, 1, 1), code="3.11", statement_type="DRE"
+):
     return CvmRawAccount(
         "ITR",
-        "DRE",
+        statement_type,
         "consolidated",
         "123",
         "1",
@@ -203,8 +205,8 @@ def raw_itr(value, end, start=date(2025, 1, 1)):
         "year_to_date",
         "REAL",
         "MIL",
-        "3.11",
-        "Lucro",
+        code,
+        "Conta de teste",
         Decimal(value),
         Decimal(value) * 1000,
         True,
@@ -633,3 +635,26 @@ def test_import_selects_latest_version_before_cash_flow_method(tmp_path, db_sess
     accounts = db_session.query(CvmFinancialAccount).all()
     assert len(accounts) == 1
     assert accounts[0].normalized_value == Decimal("250000")
+
+
+@pytest.mark.parametrize(
+    ("statement_type", "account_code"),
+    [
+        ("BPA", "1.01.01"),
+        ("DRE", "3.99"),
+        ("DFC_MD", "6.99"),
+        ("DFC_MI", "6.99"),
+    ],
+)
+def test_isolated_quarter_rejects_balance_and_unclassified_accounts(
+    statement_type, account_code
+):
+    previous = raw_itr(
+        "10", date(2025, 3, 31), code=account_code,
+        statement_type=statement_type,
+    )
+    current = raw_itr(
+        "25", date(2025, 6, 30), code=account_code,
+        statement_type=statement_type,
+    )
+    assert CvmFinancialEngine.isolated_quarter(current, previous) is None
