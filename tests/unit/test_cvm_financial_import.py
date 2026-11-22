@@ -1093,11 +1093,11 @@ def test_latest_normalized_abstains_when_dfp_and_itr_documents_tie(
     tmp_path, db_session
 ):
     dfp_row = row(
-        "DFC_MD", code="6.01", value="100", start=None,
+        "DFC_MD", code="6.01", value="100", start="",
         reference="2025-12-31", end="2025-12-31",
     )
     itr_row = row(
-        "DFC_MD", code="6.01", value="80", start=None,
+        "DFC_MD", code="6.01", value="80", start="",
         reference="2025-12-31", end="2025-12-31",
     )
     repository = CvmFinancialRepository(db_session)
