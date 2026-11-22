@@ -53,10 +53,8 @@ class CvmFinancialService:
             document_key = (
                 account.cnpj,
                 account.reference_date,
-                account.scope,
                 account.period_start,
                 account.period_end,
-                account.version,
             ) if is_dfc else (
                 account.cnpj,
                 account.reference_date,
@@ -64,10 +62,13 @@ class CvmFinancialService:
                 account.period_end,
                 account.version,
             )
-            priority = (0,) if is_dfc else (
+            priority = (
+                account.version,
+                1 if account.scope == "consolidated" else 0,
+            ) if is_dfc else (
                 1 if account.scope == "consolidated" else 0,
             )
-            if priority > winners.get(document_key, (-1,)):
+            if priority > winners.get(document_key, (-1, -1) if is_dfc else (-1,)):
                 winners[document_key] = priority
 
             # A versão vigente é selecionada antes da preferência do método.
@@ -101,10 +102,8 @@ class CvmFinancialService:
             document_key = (
                 account.cnpj,
                 account.reference_date,
-                account.scope,
                 account.period_start,
                 account.period_end,
-                account.version,
             ) if is_dfc else (
                 account.cnpj,
                 account.reference_date,
