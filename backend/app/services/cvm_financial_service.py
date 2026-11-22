@@ -111,7 +111,10 @@ class CvmFinancialService:
                 account.period_end,
                 account.version,
             )
-            priority = (0,) if is_dfc else (
+            priority = (
+                account.version,
+                1 if account.scope == "consolidated" else 0,
+            ) if is_dfc else (
                 1 if account.scope == "consolidated" else 0,
             )
             if winners.get(document_key) != priority:
