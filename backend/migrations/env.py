@@ -20,8 +20,10 @@ target_metadata = Base.metadata
 
 def get_database_url() -> str:
     environment_url = os.getenv("DATABASE_URL", "").strip()
-    if environment_url:
-        return environment_url
+    # Normalize both environment-provided and configured URLs. SQLAlchemy
+    # 2.1 defaults postgresql:// to psycopg (v3), while this project installs
+    # psycopg2-binary. The application engine already applies this helper;
+    # Alembic must use the same explicit driver to keep migrations working.
     return normalize_database_url(environment_url or settings.DATABASE_URL)
 
 
