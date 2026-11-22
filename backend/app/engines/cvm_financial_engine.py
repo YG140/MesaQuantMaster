@@ -21,7 +21,7 @@ class CvmFinancialEngine:
         ("BPA", "1"): "assets",
         ("BPA", "1.01"): "current_assets",
         ("BPA", "1.01.01"): "cash_and_equivalents",
-        ("BPP", "2"): "total_liabilities",
+        ("BPP", "2"): "total_liabilities_and_equity",
         ("BPP", "2.01"): "current_liabilities",
         ("BPP", "2.03"): "equity",
         ("BPP", "2.01.04"): "gross_debt",
