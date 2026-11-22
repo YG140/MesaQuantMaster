@@ -283,19 +283,37 @@ class CvmFinancialRepository:
             "point_in_time": 1,
         }
         latest_markers = {}
+        latest_dfc_methods = {}
         for account, document in rows:
+            key = account.normalized_key
             marker = (
                 document.reference_date,
                 document.version,
                 period_priority.get(document.period_kind, 0),
             )
-            latest_markers[account.normalized_key] = max(
-                marker, latest_markers.get(account.normalized_key, marker)
-            )
+            previous_marker = latest_markers.get(key)
+            if previous_marker is None or marker > previous_marker:
+                latest_markers[key] = marker
+                latest_dfc_methods[key] = set()
+            elif marker < previous_marker:
+                continue
+            if document.statement_type in {"DFC_MD", "DFC_MI"}:
+                latest_dfc_methods.setdefault(key, set()).add(
+                    document.statement_type
+                )
+
+        # Se ambos os métodos alternativos empatarem no documento mais
+        # recente, não escolher um silenciosamente nem somar seus valores.
+        ambiguous_dfc_keys = {
+            key
+            for key, methods in latest_dfc_methods.items()
+            if methods == {"DFC_MD", "DFC_MI"}
+        }
         return [
             (account, document, issuer)
             for account, document in rows
-            if (
+            if account.normalized_key not in ambiguous_dfc_keys
+            and (
                 document.reference_date,
                 document.version,
                 period_priority.get(document.period_kind, 0),
