@@ -167,25 +167,48 @@ class CvmFinancialService:
         document_ids = set()
         accounts_created = 0
 
-        # Reapresentações podem deixar várias versões do mesmo período no
-        # banco. Selecionamos a maior versão por período antes de percorrer
-        # a série cronologicamente e calcular diferenças.
-        latest_by_period = {}
-        for account, document, issuer in self.repository.reported_itr_flow_rows():
-            period_key = (
-                document.issuer_id, document.statement_type, document.scope,
-                account.account_code, document.period_start, document.period_end,
+        # Reapresentações substituem o documento/período inteiro, não
+        # cada conta isoladamente. Primeiro escolhemos o documento vigente;
+        # só depois aceitamos as contas efetivamente presentes nele. Assim,
+        # uma conta omitida/reclassificada na versão nova não reaparece por
+        # fallback silencioso a uma versão antiga.
+        latest_document_by_period = {}
+        reported_rows = self.repository.reported_itr_flow_rows()
+        for account, document, issuer in reported_rows:
+            document_key = (
+                document.issuer_id,
+                document.document_type,
+                document.statement_type,
+                document.scope,
+                document.reference_date,
+                document.period_start,
+                document.period_end,
+                document.period_kind,
             )
             priority = (document.version, document.collected_at)
-            previous = latest_by_period.get(period_key)
-            if previous is None or priority > (previous[1].version, previous[1].collected_at):
-                latest_by_period[period_key] = (account, document, issuer)
+            previous = latest_document_by_period.get(document_key)
+            if previous is None or priority > (
+                previous[1].version, previous[1].collected_at
+            ):
+                latest_document_by_period[document_key] = (
+                    account, document, issuer
+                )
 
+        winning_document_ids = {
+            row[1].id for row in latest_document_by_period.values()
+        }
+        # Mantém todas as contas do documento vencedor; não escolhe versão
+        # por account_code. O conjunto de contas é, portanto, exatamente o
+        # que a reapresentação vigente publicou.
+        selected_rows = [
+            row for row in reported_rows if row[1].id in winning_document_ids
+        ]
         ordered_rows = sorted(
-            latest_by_period.values(),
+            selected_rows,
             key=lambda row: (
                 str(row[1].issuer_id), row[1].statement_type, row[1].scope,
-                row[0].account_code, row[1].period_start or date.min, row[1].period_end,
+                row[0].account_code, row[1].period_start or date.min,
+                row[1].period_end,
             ),
         )
         for account, document, issuer in ordered_rows:
