@@ -173,27 +173,40 @@ class CvmFinancialService:
         # uma conta omitida/reclassificada na versão nova não reaparece por
         # fallback silencioso a uma versão antiga.
         latest_document_by_period = {}
+        ambiguous_document_periods = set()
         reported_rows = self.repository.reported_itr_flow_rows()
         for account, document, issuer in reported_rows:
+            is_dfc = document.statement_type in {"DFC_MD", "DFC_MI"}
+            statement_family = "DFC" if is_dfc else document.statement_type
             document_key = (
                 document.issuer_id,
                 document.document_type,
-                document.statement_type,
+                statement_family,
                 document.scope,
                 document.reference_date,
+                document.period_start,
                 document.period_end,
             )
-            priority = (document.version, document.collected_at)
-            previous = latest_document_by_period.get(document_key)
-            if previous is None or priority > (
-                previous[1].version, previous[1].collected_at
-            ):
+            current = latest_document_by_period.get(document_key)
+            if current is None or document.version > current[1].version:
                 latest_document_by_period[document_key] = (
                     account, document, issuer
                 )
+                ambiguous_document_periods.discard(document_key)
+            elif document.version == current[1].version:
+                if document.statement_type != current[1].statement_type:
+                    # MD e MI são métodos alternativos. Versões iguais não
+                    # autorizam preferência arbitrária nem soma entre métodos.
+                    ambiguous_document_periods.add(document_key)
+                elif document.collected_at > current[1].collected_at:
+                    latest_document_by_period[document_key] = (
+                        account, document, issuer
+                    )
 
         winning_document_ids = {
-            row[1].id for row in latest_document_by_period.values()
+            row[1].id
+            for key, row in latest_document_by_period.items()
+            if key not in ambiguous_document_periods
         }
         # Mantém todas as contas do documento vencedor; não escolhe versão
         # por account_code. O conjunto de contas é, portanto, exatamente o
