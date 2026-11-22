@@ -14,6 +14,7 @@ dependencies = [
     "certifi>=2026.10.19",
     "pillow==13.0.0",
     "gitpython==3.2.1",
+    "defusedxml==0.7.1",
 
     # Banco de Dados
     "sqlalchemy==2.0.43",
@@ -26,10 +27,10 @@ dependencies = [
     "python-dotenv==1.2.4",
 
     # Autenticação
-"PyJWT==2.15.1",
-"cryptography==50.0.0",
-"pwdlib[argon2]>=0.3.0",
-"python-multipart>=0.0.32",
+    "PyJWT==2.15.1",
+    "cryptography==50.0.0",
+    "pwdlib[argon2]>=0.3.0",
+    "python-multipart>=0.0.32",
 
     # Utilitários
     "email-validator>=2.2.0",
