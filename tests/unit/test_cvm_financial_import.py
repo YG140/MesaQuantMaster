@@ -1057,18 +1057,15 @@ def test_latest_normalized_abstains_when_latest_dfc_marker_has_both_methods(
         provider(tmp_path),
     )
 
-    # Arquivos importados em execuções separadas garantem que o banco contenha
-    # os dois métodos na mesma referência/versão. Importá-los juntos acionaria
-    # o desempate do importador e tornaria este teste de latest_normalized()
-    # incapaz de exercitar o cenário ambíguo.
-    md_archive = write_archive(
-        tmp_path, {"itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1}
+    # O ZIP contém os dois métodos, reproduzindo a sincronização real.
+    archive = write_archive(
+        tmp_path,
+        {
+            "itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1,
+            "itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1,
+        },
     )
-    service.import_archive(md_archive, "ITR", COLLECTED)
-    mi_archive = write_archive(
-        tmp_path, {"itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1}
-    )
-    service.import_archive(mi_archive, "ITR", COLLECTED)
+    service.import_archive(archive, "ITR", COLLECTED)
 
     persisted_methods = {
         document.statement_type
@@ -1088,4 +1085,47 @@ def test_latest_normalized_abstains_when_latest_dfc_marker_has_both_methods(
     assert not any(
         document.statement_type in {"DFC_MD", "DFC_MI"}
         for _, document, _ in rows
+    )
+
+
+
+def test_latest_normalized_abstains_when_dfp_and_itr_documents_tie(
+    tmp_path, db_session
+):
+    dfp_row = row(
+        "DFC_MD", code="6.01", value="100", start=None,
+        reference="2025-12-31", end="2025-12-31",
+    )
+    itr_row = row(
+        "DFC_MD", code="6.01", value="80", start=None,
+        reference="2025-12-31", end="2025-12-31",
+    )
+    repository = CvmFinancialRepository(db_session)
+    service = CvmFinancialService(
+        repository,
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    dfp_archive = write_archive(
+        tmp_path, {"dfp_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + dfp_row}
+    )
+    service.import_archive(dfp_archive, "DFP", COLLECTED)
+    itr_archive = write_archive(
+        tmp_path, {"itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + itr_row}
+    )
+    service.import_archive(itr_archive, "ITR", COLLECTED)
+
+    issuer = repository.list_issuers()[0]
+    asset = Asset(
+        ticker="DFCT2", name="Teste DFC fontes", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+    service.link_asset(asset.id, issuer.id)
+
+    rows = repository.latest_normalized(asset.id)
+    assert not any(
+        account.normalized_key == "operating_cash_flow"
+        for account, _, _ in rows
     )
