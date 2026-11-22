@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from dataclasses import replace
 from decimal import Decimal
 
@@ -86,6 +87,12 @@ class CvmFinancialEngine:
             or current.period_start is None
             or previous.period_start != current.period_start
             or previous.period_end >= current.period_end
+            or previous.period_end.day != calendar.monthrange(
+                previous.period_end.year, previous.period_end.month
+            )[1]
+            or current.period_end.day != calendar.monthrange(
+                current.period_end.year, current.period_end.month
+            )[1]
             # ITR YTD só permite isolar um trimestre contra o trimestre
             # imediatamente anterior. Pular um período produziria, por
             # exemplo, seis meses rotulados incorretamente como um trimestre.
