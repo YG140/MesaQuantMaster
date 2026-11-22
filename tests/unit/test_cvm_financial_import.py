@@ -134,6 +134,14 @@ def test_direct_and_indirect_cash_flow_are_supported(tmp_path):
     }
 
 
+def test_bpp_total_passivo_is_not_mapped_as_liabilities_only(tmp_path):
+    path = write_archive(
+        tmp_path, {"dfp_cia_aberta_BPP_con_2025.csv": HEADER_BALANCE + row("BPP", code="2")}
+    )
+    account = list(provider(tmp_path).iter_accounts(path, "DFP"))[0]
+    assert CvmFinancialEngine.normalized_key(account) == "total_liabilities_and_equity"
+
+
 def test_unmapped_or_non_fixed_account_remains_unmapped(tmp_path):
     path = write_archive(
         tmp_path, {"dfp_cia_aberta_BPA_con_2025.csv": HEADER_BALANCE + row(code="1.99")}

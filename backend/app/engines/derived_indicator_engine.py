@@ -101,7 +101,7 @@ class DerivedIndicatorEngine:
             key="liabilities_assets",
             value=(ratio * Decimal("100")).quantize(Decimal("0.01")),
             unit="percent",
-            formula="passivos totais / ativos totais",
+            formula="passivo exigível / ativos totais",
             components={"total_liabilities": total_liabilities, "assets": assets},
         )
 
