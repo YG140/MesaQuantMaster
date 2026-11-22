@@ -47,20 +47,25 @@ class CvmFinancialService:
         preferred_dfc_method = {}
         for account in self.provider.iter_accounts(path, document_type, collected_at):
             is_dfc = account.statement_type in {"DFC_MD", "DFC_MI"}
+            # Preserva cada versão CVM no histórico. A escolha de escopo
+            # ocorre dentro da versão; para DFC, MD/MI continuam agrupados
+            # para selecionar um único método por versão.
             document_key = (
                 account.cnpj,
                 account.reference_date,
                 account.scope,
                 account.period_start,
                 account.period_end,
+                account.version,
             ) if is_dfc else (
                 account.cnpj,
                 account.reference_date,
                 account.statement_type,
                 account.period_end,
+                account.version,
             )
-            priority = (account.version,) if is_dfc else (
-                1 if account.scope == "consolidated" else 0, account.version
+            priority = (0,) if is_dfc else (
+                1 if account.scope == "consolidated" else 0,
             )
             if priority > winners.get(document_key, (-1,)):
                 winners[document_key] = priority
@@ -90,20 +95,25 @@ class CvmFinancialService:
         seen_accounts: set[tuple] = set()
         for account in self.provider.iter_accounts(path, document_type, collected_at):
             is_dfc = account.statement_type in {"DFC_MD", "DFC_MI"}
+            # Preserva cada versão CVM no histórico. A escolha de escopo
+            # ocorre dentro da versão; para DFC, MD/MI continuam agrupados
+            # para selecionar um único método por versão.
             document_key = (
                 account.cnpj,
                 account.reference_date,
                 account.scope,
                 account.period_start,
                 account.period_end,
+                account.version,
             ) if is_dfc else (
                 account.cnpj,
                 account.reference_date,
                 account.statement_type,
                 account.period_end,
+                account.version,
             )
-            priority = (account.version,) if is_dfc else (
-                1 if account.scope == "consolidated" else 0, account.version
+            priority = (0,) if is_dfc else (
+                1 if account.scope == "consolidated" else 0,
             )
             if winners.get(document_key) != priority:
                 continue
