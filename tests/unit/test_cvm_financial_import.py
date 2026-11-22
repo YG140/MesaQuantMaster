@@ -1016,3 +1016,41 @@ def test_itr_same_version_md_mi_conflict_abstains_from_quarter_derivation(
         .all()
     )
     assert calculated == []
+
+
+def test_latest_normalized_abstains_when_latest_dfc_marker_has_both_methods(
+    tmp_path, db_session
+):
+    md_q1 = row(
+        "DFC_MD", version=2, code="6.01", value="10",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    mi_q1 = row(
+        "DFC_MI", version=2, code="6.01", value="11",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    entries = {
+        "itr_cia_aberta_DFC_MD_con_2025.csv": HEADER_FLOW + md_q1,
+        "itr_cia_aberta_DFC_MI_con_2025.csv": HEADER_FLOW + mi_q1,
+    }
+    repository = CvmFinancialRepository(db_session)
+    service = CvmFinancialService(
+        repository,
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+    service.import_archive(write_archive(tmp_path, entries), "ITR", COLLECTED)
+
+    issuer = repository.list_issuers()[0]
+    asset = Asset(
+        ticker="DFCT1", name="Teste DFC", asset_type="STOCK", currency="BRL"
+    )
+    db_session.add(asset)
+    db_session.commit()
+    service.link_asset(asset.id, issuer.id)
+
+    rows = repository.latest_normalized(asset.id)
+    assert not any(
+        document.statement_type in {"DFC_MD", "DFC_MI"}
+        for _, document, _ in rows
+    )
