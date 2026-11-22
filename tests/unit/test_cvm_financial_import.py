@@ -810,3 +810,66 @@ def test_isolated_quarter_rejects_mismatched_source_identity(field, previous_val
         previous, **{field: previous_value}
     )
     assert CvmFinancialEngine.isolated_quarter(current, previous) is None
+
+
+def test_restatement_selects_winning_document_before_its_accounts(tmp_path, db_session):
+    # Q1 v1 publica A+B; a reapresentação v2 publica somente A.
+    # Q2 acumulado publica A+B. B não pode ser recuperada de Q1 v1.
+    q1_v1 = (
+        row("DRE", version=1, code="3.01", value="10",
+            start="2025-01-01", reference="2025-03-31", end="2025-03-31")
+        + row("DRE", version=1, code="3.11", value="20",
+              start="2025-01-01", reference="2025-03-31", end="2025-03-31")
+    )
+    q1_v2 = row(
+        "DRE", version=2, code="3.01", value="12",
+        start="2025-01-01", reference="2025-03-31", end="2025-03-31",
+    )
+    q2 = (
+        row("DRE", version=1, code="3.01", value="30",
+            start="2025-01-01", reference="2025-06-30", end="2025-06-30")
+        + row("DRE", version=1, code="3.11", value="50",
+              start="2025-01-01", reference="2025-06-30", end="2025-06-30")
+    )
+    path = write_archive(
+        tmp_path,
+        {"itr_cia_aberta_DRE_con_2025.csv": HEADER_FLOW + q1_v1 + q1_v2 + q2},
+    )
+    service = CvmFinancialService(
+        CvmFinancialRepository(db_session),
+        AssetRepository(db_session),
+        provider(tmp_path),
+    )
+
+    service.import_archive(path, "ITR", COLLECTED)
+    # Reimportar a mesma fonte não pode restaurar a conta B da v1.
+    service.import_archive(path, "ITR", COLLECTED)
+
+    calculated = (
+        db_session.query(CvmFinancialAccount, CvmFinancialDocument)
+        .join(
+            CvmFinancialDocument,
+            CvmFinancialAccount.document_id == CvmFinancialDocument.id,
+        )
+        .filter(CvmFinancialAccount.acquisition_method == "calculated")
+        .all()
+    )
+    assert len(calculated) == 1
+    calculated_account, calculated_document = calculated[0]
+    assert calculated_account.account_code == "3.01"
+    assert calculated_account.normalized_value == Decimal("18000")
+    assert calculated_document.period_end == date(2025, 6, 30)
+
+    lineage = (
+        db_session.query(CvmFinancialCalculationLineage)
+        .filter(
+            CvmFinancialCalculationLineage.derived_document_id
+            == calculated_document.id
+        )
+        .one()
+    )
+    previous_source = db_session.get(
+        CvmFinancialDocument, lineage.previous_source_document_id
+    )
+    assert previous_source.period_end == date(2025, 3, 31)
+    assert previous_source.version == 2
