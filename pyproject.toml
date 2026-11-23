@@ -41,7 +41,7 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
-    "pytest-asyncio==1.4.0",
+    "pytest-asyncio==1.5.0",
     "ruff==0.12.4",
     "black==26.10.1",
     "mypy==2.3.1",
